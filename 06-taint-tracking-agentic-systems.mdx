@@ -1,0 +1,261 @@
+---
+title: "Taint Tracking for Agentic Systems"
+description: "Following untrusted and sensitive data from source to sink reveals risks that isolated pattern matching cannot see."
+date: "2026-07-29"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - software-architecture
+tags:
+  - Taint Analysis
+  - Data Flow
+  - Secrets
+  - Static Analysis
+featured: false
+draft: true
+series:
+  slug: agentic-security-engineering
+  title: "Agentic Security Engineering"
+  order: 6
+---
+
+A scanner can find a secret read.
+
+It can find a network call.
+
+The higher-value question is whether **the secret reaches the network call**.
+
+That is the job of taint analysis.
+
+## Sources, sinks, and propagation
+
+Taint tracking starts with three concepts.
+
+### Sources
+
+Data that requires special trust handling:
+
+```text
+user input
+tool output
+model output
+environment variables
+credential files
+private workspace data
+```
+
+### Sinks
+
+Operations that cross a boundary:
+
+```text
+network request
+process execution
+filesystem write
+log output
+privileged context
+another agent
+```
+
+### Propagation
+
+Assignments and transformations that carry the value:
+
+```python
+token = os.environ["API_TOKEN"]
+payload = {"credential": token}
+requests.post(url, json=payload)
+```
+
+A useful finding is:
+
+```text
+secret source
+   ↓
+assignment
+   ↓
+payload
+   ↓
+network sink
+```
+
+not merely "environment variable exists."
+
+## Agentic systems add unusual sources
+
+Traditional taint systems focus on user input.
+
+Agentic systems also need to treat these as untrusted:
+
+```text
+LLM output
+MCP tool output
+remote agent response
+retrieved document content
+memory entries
+```
+
+For example:
+
+```python
+command = tool_result["suggested_command"]
+subprocess.run(command, shell=True)
+```
+
+The problem is not process execution alone.
+
+It is:
+
+```text
+external tool output
+        ↓
+command execution
+```
+
+<KeyTakeaway>
+In agentic systems, outputs from models and tools are inputs to the next trust boundary.
+</KeyTakeaway>
+
+## Multi-step aliases matter
+
+Simple taint logic sees:
+
+```python
+subprocess.run(user_input)
+```
+
+Real code looks more like:
+
+```python
+request = user_input
+value = request.strip()
+command = value
+subprocess.run(command, shell=True)
+```
+
+A bounded scanner should propagate through straightforward assignments.
+
+It does not need a full theorem prover to catch high-value flows.
+
+## Sanitizers need explicit semantics
+
+Some transformations break the dangerous relationship.
+
+For example, an allowlist:
+
+```python
+if command not in {"status", "diff"}:
+    raise ValueError()
+
+subprocess.run(["git", command], shell=False)
+```
+
+is different from:
+
+```python
+command = user_input.replace(";", "")
+subprocess.run(command, shell=True)
+```
+
+The scanner should only treat transformations as sanitizers when their security effect is understood.
+
+Calling every function named `sanitize()` safe would be wishful thinking.
+
+## Cross-file wrappers are common
+
+Security-sensitive APIs often sit behind helpers.
+
+```python title="network.py"
+def send(data):
+    requests.post(API, json=data)
+```
+
+```python title="main.py"
+secret = read_secret()
+send(secret)
+```
+
+A whole-artifact summary can record:
+
+```text
+send(arg0)
+  -> network sink consumes arg0
+```
+
+Then the caller can be analyzed without inlining the entire function.
+
+This gives useful cross-file coverage while remaining bounded.
+
+## Argument positions matter
+
+Suppose:
+
+```python
+def send(public_id, secret):
+    requests.post(API, json={"id": public_id})
+```
+
+The second parameter never reaches the sink.
+
+A function summary that says merely:
+
+```text
+function contains network sink
+```
+
+would produce a false positive when `secret` is passed.
+
+Better:
+
+```text
+network sink consumes parameter 0
+```
+
+That precision matters.
+
+## Useful agentic flow classes
+
+A practical scanner can target a small number of high-value relationships:
+
+```text
+secret         -> network
+file           -> network
+external input -> execution
+external input -> filesystem write
+tool output    -> execution
+model output   -> execution
+tool output    -> privileged prompt/context
+```
+
+Each is more informative than detecting the source or sink in isolation.
+
+## Static taint has limits
+
+Hard cases include:
+
+- dynamic dispatch
+- reflection
+- implicit control flow
+- runtime-generated code
+- complex containers
+- unknown library semantics
+
+Do not hide those limits.
+
+Static taint should report what it can establish, and behavioral evaluation should cover what cannot be proven statically.
+
+## Why this is worth the complexity
+
+Pattern scanning finds local clues.
+
+Taint tracking finds **relationships**.
+
+And security failures are often relationships:
+
+```text
+trusted data reaches untrusted destination
+
+untrusted data reaches privileged operation
+```
+
+That is why taint analysis belongs near the center of an agent security scanner.

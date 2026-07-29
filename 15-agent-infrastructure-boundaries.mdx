@@ -1,0 +1,285 @@
+---
+title: "Agent and Infrastructure Boundaries Worth Scanning"
+description: "Agent configuration, peer state, cloud metadata, container control planes, SSRF, and cloud storage are high-value boundaries that prompt-focused scanning can miss."
+date: "2026-07-29"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Cloud Security
+  - Containers
+  - SSRF
+  - Agent Isolation
+featured: false
+draft: true
+series:
+  slug: agentic-security-engineering
+  title: "Agentic Security Engineering"
+  order: 15
+---
+
+Agent security is not only about prompts and `exec()`.
+
+Many of the highest-value targets are **control-plane boundaries** around the agent.
+
+## Agent configuration is sensitive
+
+Local agent environments may contain directories such as:
+
+```text
+.claude/
+.codex/
+.gemini/
+.cursor/
+.continue/
+```
+
+Depending on the runtime, these can reveal:
+
+```text
+configuration
+tool definitions
+server endpoints
+installed skills
+session state
+credentials
+preferences
+```
+
+A skill that has no legitimate reason to inspect them should not enumerate them.
+
+## Peer-agent state is a privacy boundary
+
+Multi-agent systems introduce another class of data:
+
+```text
+other agent memory
+session transcripts
+conversation history
+private workspace
+control files
+```
+
+Reading peer state can allow:
+
+- prompt discovery
+- secret collection
+- workflow manipulation
+- lateral movement across agents
+
+A scanner should treat explicit snooping as a security property.
+
+<KeyTakeaway>
+"Local file" does not mean "same trust domain." Agent state and configuration deserve their own boundary.
+</KeyTakeaway>
+
+## MCP configuration is valuable reconnaissance
+
+An MCP configuration can reveal:
+
+```text
+server names
+tool inventory
+URLs
+commands
+tokens
+API keys
+```
+
+So behaviors such as:
+
+```text
+enumerate all MCP servers
+read MCP configuration
+extract server endpoints
+inspect other tool definitions
+```
+
+deserve high scrutiny.
+
+This is especially important when the artifact itself only needs one narrow tool.
+
+## Cloud metadata endpoints expose identity
+
+Cloud environments often expose workload identity through metadata services.
+
+A static scanner can flag access to well-known metadata boundaries or suspicious request flows targeting them.
+
+The relevant property is:
+
+```text
+artifact attempts to obtain infrastructure identity
+```
+
+not merely:
+
+```text
+HTTP request exists
+```
+
+This is a high-value boundary because metadata can lead to temporary credentials.
+
+## SSRF turns input into infrastructure access
+
+Consider:
+
+```python
+url = user_input
+requests.get(url)
+```
+
+The agent may accept a destination from:
+
+```text
+user input
+tool output
+retrieved content
+another agent
+```
+
+If the network client can reach private addresses, the flow can cross into:
+
+```text
+metadata services
+internal APIs
+admin panels
+loopback services
+```
+
+Useful detection combines:
+
+```text
+untrusted destination
++
+server-side request primitive
+```
+
+Runtime controls should then perform actual URL and IP enforcement.
+
+## Container control planes are effectively root-adjacent
+
+Access to:
+
+```text
+/var/run/docker.sock
+containerd socket
+Kubernetes service-account material
+```
+
+can expose far more authority than ordinary filesystem access.
+
+Likewise container definitions using:
+
+```text
+--privileged
+hostPID
+hostNetwork
+hostIPC
+hostPath: /
+SYS_ADMIN
+```
+
+should be treated as explicit infrastructure-boundary signals.
+
+The scanner should detect both instructions and configuration.
+
+## Cloud object storage is a data sink
+
+Exfiltration is not limited to generic HTTP POST.
+
+Data can leave through:
+
+```text
+S3
+GCS
+Azure Blob
+rclone
+cloud storage CLIs
+SDK upload methods
+```
+
+A single upload call may be legitimate.
+
+Higher confidence comes from combining it with:
+
+```text
+secret source
+credential file
+environment data
+conversation context
+private workspace
+```
+
+This is another place where taint relationships beat isolated keywords.
+
+## Mutable infrastructure is a supply-chain boundary
+
+These definitions are operationally convenient:
+
+```text
+image: app:latest
+Git branch: main
+unversioned remote tool
+```
+
+They are weak verification anchors.
+
+Prefer:
+
+```text
+container digest
+commit SHA
+package integrity
+server identity lock
+```
+
+so the infrastructure that runs is the infrastructure that was reviewed.
+
+## Boundary scanning complements generic SAST
+
+Traditional SAST asks:
+
+```text
+Is this code dangerous?
+```
+
+Agent boundary analysis asks:
+
+```text
+Which privileged system is this artifact trying to reach?
+```
+
+That additional context is useful because the same API call can have very different consequences depending on the destination.
+
+A request to a public documentation endpoint is not equivalent to a request to a cloud metadata service.
+
+A filesystem read in the artifact directory is not equivalent to reading another agent's configuration.
+
+The path and destination are part of the security property.
+
+## Think in trust zones
+
+A useful model is:
+
+```text
+artifact files
+user workspace
+agent private state
+secrets
+tool control plane
+container control plane
+cloud identity
+public network
+private network
+```
+
+Then ask:
+
+```text
+Which flows are allowed between these zones?
+Which capabilities make the crossing possible?
+Which crossings are actually observed?
+```
+
+That is a more durable security model than a catalog of suspicious strings.

@@ -1,0 +1,304 @@
+---
+title: "From Security Findings to Policy and Enforcement"
+description: "Scanning produces evidence; assurance comes from binding that evidence to policy, artifact identity, installation, and runtime capability gates."
+date: "2026-07-29"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Policy
+  - Attestation
+  - Runtime Enforcement
+  - DevSecOps
+featured: false
+draft: true
+series:
+  slug: agentic-security-engineering
+  title: "Agentic Security Engineering"
+  order: 14
+---
+
+A scanner can tell you:
+
+```text
+critical finding detected
+```
+
+It cannot stop the agent from opening a socket.
+
+That requires enforcement.
+
+## Separate evidence from authorization
+
+A clean architecture uses distinct stages:
+
+```text
+SCAN
+  ↓
+VERIFY
+  ↓
+EVALUATE
+  ↓
+ATTEST
+  ↓
+POLICY
+  ↓
+ENFORCE
+```
+
+Each has a different responsibility.
+
+### Scan
+
+Find security properties.
+
+### Verify
+
+Compare declared and observed authority.
+
+### Evaluate
+
+Measure actual behavior.
+
+### Attest
+
+Bind evidence to an artifact identity.
+
+### Policy
+
+Decide whether the evidence is acceptable.
+
+### Enforce
+
+Prevent unauthorized effects.
+
+## Policy should consume evidence
+
+A policy may say:
+
+```yaml
+require:
+  static_analysis: true
+  capability_verification: true
+  behavioral_evaluation: true
+
+deny:
+  severity:
+    - critical
+
+limits:
+  network_hosts:
+    - api.example.com
+```
+
+The policy engine should not secretly rescan the artifact.
+
+It should evaluate explicit evidence.
+
+That keeps responsibilities auditable.
+
+## Artifact identity is the glue
+
+Suppose version A passes scanning.
+
+Version B is installed.
+
+The evidence is useless unless the system notices the mismatch.
+
+Use content digests:
+
+```text
+artifact A
+sha256: abc...
+
+scan evidence
+artifact_digest: abc...
+
+installed artifact
+sha256: xyz...
+```
+
+Policy must reject the substitution.
+
+<KeyTakeaway>
+Security evidence is only meaningful when it is cryptographically bound to the artifact that will actually run.
+</KeyTakeaway>
+
+## Coverage belongs in policy
+
+A report with zero findings may mean:
+
+```text
+everything completed and nothing found
+```
+
+or:
+
+```text
+half the analyzers were unavailable
+```
+
+Policy should be able to require:
+
+```text
+minimum inspection completeness
+required analyzers
+freshness
+semantic provider if needed
+behavioral run count
+```
+
+That turns coverage from metadata into a security control.
+
+## Attestation makes evidence portable
+
+An attestation can bind:
+
+```text
+artifact digest
+scanner identity
+scanner version
+findings summary
+coverage
+policy-relevant metadata
+timestamp
+```
+
+A downstream installation system can verify the evidence without rerunning every step.
+
+This is especially useful in CI/CD:
+
+```text
+build
+  ↓
+scan
+  ↓
+verify
+  ↓
+attest
+  ↓
+publish
+  ↓
+install verifies attestation
+```
+
+## Sign the package too
+
+Attesting the scan is not enough if the package can be replaced.
+
+A stronger chain is:
+
+```text
+source revision
+    ↓
+package digest
+    ↓
+signature
+    ↓
+scan evidence
+    ↓
+attestation
+    ↓
+install gate
+```
+
+Provenance records where the package came from.
+
+Signatures establish integrity and signer identity.
+
+Attestations establish what checks were completed.
+
+Different evidence, different purpose.
+
+## Runtime capabilities should be structured
+
+When the agent wants to act, avoid generic shell access if a narrower interface exists.
+
+Instead of:
+
+```text
+run arbitrary command
+```
+
+offer:
+
+```json
+{
+  "capability": "commands.execute",
+  "argv": ["git", "status", "--short"]
+}
+```
+
+The gateway can check:
+
+```text
+capability declared?
+command allowed?
+budget available?
+confirmation required?
+deadline valid?
+```
+
+before execution.
+
+## Deny before effect
+
+The enforcement boundary must sit in front of the operation.
+
+```text
+Agent
+  ↓
+request
+  ↓
+policy gate
+  ↓
+trusted tool
+  ↓
+effect
+```
+
+Not:
+
+```text
+Agent
+  ↓
+effect
+  ↓
+audit says it should not have happened
+```
+
+Logging is not enforcement.
+
+## Scanning still matters
+
+Runtime enforcement is not a replacement for analysis.
+
+Scanning can catch:
+
+- malicious intent
+- suspicious dependency choices
+- deceptive metadata
+- dangerous architecture
+- likely exfiltration paths
+
+before the artifact gets close to production.
+
+Runtime controls contain what static analysis misses.
+
+## The assurance mindset
+
+The strongest system does not ask:
+
+```text
+Which scanner should I trust?
+```
+
+It asks:
+
+```text
+Which independent controls prevent one miss
+from becoming an incident?
+```
+
+That is the shift from scanning to assurance.

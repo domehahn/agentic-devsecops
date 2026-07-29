@@ -1,0 +1,267 @@
+---
+title: "Why Agent Security Scanners Need AST Analysis"
+description: "Regex can find suspicious strings; syntax trees can tell whether dangerous code is actually being executed."
+date: "2026-07-29"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - software-architecture
+tags:
+  - AST
+  - Static Analysis
+  - Python
+  - JavaScript
+featured: false
+draft: true
+series:
+  slug: agentic-security-engineering
+  title: "Agentic Security Engineering"
+  order: 5
+---
+
+Agent skills increasingly contain executable helpers.
+
+That changes the scanner from a prompt reviewer into a lightweight SAST engine.
+
+Searching raw text is not enough.
+
+## Strings are not execution
+
+This Markdown example is harmless:
+
+```markdown
+Avoid code such as `subprocess.run(user_input, shell=True)`.
+```
+
+A text scanner sees:
+
+```text
+subprocess.run
+shell=True
+```
+
+A syntax-aware scanner sees documentation, not a Python call.
+
+That distinction is the reason to parse code.
+
+## What the AST gives you
+
+An abstract syntax tree turns source into structured operations:
+
+```python
+import subprocess
+
+subprocess.run(["git", "status"])
+```
+
+becomes conceptually:
+
+```text
+Import
+  subprocess
+
+Call
+  target: subprocess.run
+  arguments:
+    List["git", "status"]
+```
+
+Now the scanner can reason about:
+
+- the called function
+- literal vs dynamic arguments
+- keyword arguments
+- aliases
+- assignment flow
+- source location
+
+## Dangerous primitives are only the beginning
+
+Common high-risk Python operations include:
+
+```text
+exec
+eval
+compile
+__import__
+os.system
+os.exec*
+subprocess.*
+dynamic getattr
+PTY spawning
+```
+
+But mature analysis should distinguish safe and unsafe forms.
+
+Compare:
+
+```python
+subprocess.run(["git", "status"], shell=False)
+```
+
+with:
+
+```python
+subprocess.run(user_input, shell=True)
+```
+
+Both execute a process.
+
+Only the second combines dynamic input with shell interpretation.
+
+<Architecture>
+Security findings and capability observations are different outputs. A safe command can still prove that the artifact requires command-execution authority.
+</Architecture>
+
+## Alias resolution matters
+
+Real code rarely uses only canonical names.
+
+```python
+import subprocess as sp
+sp.run(...)
+```
+
+or:
+
+```python
+from subprocess import run as execute
+execute(...)
+```
+
+A useful scanner resolves these symbols before applying rules.
+
+The same applies to JavaScript:
+
+```javascript
+const cp = require("child_process");
+cp.exec(command);
+```
+
+Static analysis does not need perfect whole-program resolution to cover common aliasing well.
+
+## Reflection makes things harder
+
+Consider:
+
+```python
+runner = getattr(subprocess, "run")
+runner(command)
+```
+
+The scanner has to connect the reflective lookup to the eventual call.
+
+Some variants can be resolved statically. Others cannot.
+
+That is where bounded analysis needs an honest limitation:
+
+```text
+statically resolved
+partially resolved
+dynamic / unknown
+```
+
+Coverage should reflect the difference.
+
+## Parse the right languages
+
+Agent artifacts commonly mix:
+
+```text
+Python
+JavaScript
+TypeScript
+TSX
+Bash
+YAML
+JSON
+Markdown
+```
+
+Each needs appropriate handling.
+
+For JavaScript and TypeScript, useful security boundaries include:
+
+- `child_process`
+- `eval`
+- `Function`
+- filesystem mutation
+- environment access
+- network calls
+
+For shell:
+
+- pipelines
+- command substitution
+- redirects
+- process execution
+- environment access
+- download-and-execute chains
+
+## Shell pipelines are security semantics
+
+This:
+
+```bash
+curl https://example.invalid/install.sh | bash
+```
+
+is not just two suspicious words.
+
+The pipeline creates a direct trust flow:
+
+```text
+remote network content
+        ↓
+shell interpreter
+```
+
+A shell parser can identify that relation much more reliably than line-level pattern matching.
+
+## AST analysis should be non-executing
+
+Do not import a Python module to inspect it.
+
+Do not run JavaScript to discover exports.
+
+Do not source shell scripts.
+
+Parse source bytes into syntax trees.
+
+<Warning>
+Dynamic language features create analysis limits. The correct response is visible uncertainty, not executing the untrusted code to "find out."
+</Warning>
+
+## Reuse parsed structure
+
+Once an AST exists, multiple analyzers can consume it:
+
+```text
+AST
+ ├── dangerous-call detector
+ ├── capability observations
+ ├── source/sink extraction
+ ├── dependency usage hints
+ └── semantic summaries
+```
+
+That reduces duplicate parsing and keeps evidence consistent.
+
+## Where AST analysis is strongest
+
+Syntax-aware scanning generalizes well when the security property is structural:
+
+```text
+this call exists
+this argument is dynamic
+this command is piped
+this source flows into this sink
+```
+
+It is less suited to questions like:
+
+```text
+Does this prose attempt to manipulate the agent's authority?
+```
+
+That is why agent security needs both code analysis and intent analysis rather than forcing one technique to solve both.

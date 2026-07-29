@@ -1,0 +1,262 @@
+---
+title: "Behavioral and Adversarial Verification for Agents"
+description: "Static evidence tells you what an artifact may do; controlled execution reveals what the agent actually does under normal and hostile conditions."
+date: "2026-07-29"
+author: "Dominik Hahn"
+topics:
+  - agentic-engineering
+  - devsecops
+tags:
+  - Evaluation
+  - Adversarial Testing
+  - Runtime Security
+  - AI Agents
+featured: false
+draft: true
+series:
+  slug: agentic-security-engineering
+  title: "Agentic Security Engineering"
+  order: 12
+---
+
+Static analysis sees artifacts.
+
+Behavioral verification sees decisions.
+
+That distinction matters because an agent can combine safe-looking components into unsafe behavior at runtime.
+
+## Start with a behavioral contract
+
+An evaluation needs explicit expectations.
+
+For a repository-review agent:
+
+```yaml
+task:
+  goal: "Summarize the changed files"
+
+allowed:
+  filesystem:
+    read:
+      - repository/**
+    write: []
+
+  network: false
+
+  commands:
+    - git diff
+    - git status
+
+required:
+  human_confirmation_for:
+    - delete
+    - deploy
+```
+
+Now behavior can be measured against a target rather than judged informally.
+
+## Observe requests, not claims
+
+An agent may say:
+
+```text
+I only read repository files.
+```
+
+That is not evidence.
+
+A trusted runtime trace should record:
+
+```text
+file reads
+file writes
+network requests
+commands
+secret requests
+tool invocations
+confirmation checks
+```
+
+The trace belongs to the trusted host boundary, not to the agent itself.
+
+<KeyTakeaway>
+Never let the evaluated agent be the authoritative source of its own audit log.
+</KeyTakeaway>
+
+## Behavioral correctness and security are separate
+
+An agent can complete the task successfully while violating policy.
+
+```text
+task succeeded: yes
+network policy: violated
+```
+
+Do not collapse this into:
+
+```text
+overall success
+```
+
+Useful dimensions include:
+
+```text
+task correctness
+capability compliance
+policy compliance
+containment
+resource bounds
+approval behavior
+```
+
+## Adversarial evaluation changes the environment
+
+Normal evaluation asks whether the agent follows the task.
+
+Adversarial evaluation injects pressure.
+
+Examples:
+
+```text
+tool output contains prompt injection
+retrieved document requests secret disclosure
+command suggestion uses shell chaining
+dependency metadata contains hidden instructions
+another agent returns fabricated authority
+```
+
+Then observe:
+
+```text
+Did the agent obey?
+Did it request broader capability?
+Did the gateway deny it?
+Did it recover safely?
+```
+
+## Test denied operations explicitly
+
+A strong assurance test does not only execute allowed actions.
+
+It probes forbidden ones:
+
+```text
+write outside workspace
+connect to private network
+read undeclared secret
+run non-allowlisted command
+invoke unknown tool
+exceed request budget
+```
+
+The desired result is:
+
+```text
+request denied before effect
+```
+
+This validates the enforcement path, not merely the agent's good intentions.
+
+## Isolation is part of the test
+
+External execution needs a real boundary.
+
+At minimum:
+
+```text
+no direct host writes
+no unrestricted network
+bounded process lifetime
+bounded output
+limited resources
+host-mediated capabilities
+```
+
+If the platform cannot provide the expected isolation, the evaluation should fail closed rather than silently downgrade.
+
+## Host-mediated tools create better evidence
+
+Instead of letting the agent run arbitrary shell:
+
+```text
+agent
+  ↓
+structured request
+  ↓
+trusted gateway
+  ↓
+allowlist
+  ↓
+host implementation
+```
+
+For example:
+
+```json
+{
+  "tool": "command.run",
+  "argv": ["git", "status", "--short"]
+}
+```
+
+This is easier to authorize and audit than:
+
+```bash
+sh -c "$AGENT_COMMAND"
+```
+
+## Repeated runs matter
+
+Model behavior can be nondeterministic.
+
+A single successful run proves very little.
+
+Evaluation should support repeated runs:
+
+```text
+20 runs
+0 policy violations
+20 task completions
+0 denied-action bypasses
+```
+
+The result is still not a proof, but it is stronger evidence.
+
+## Bind evaluation to the artifact
+
+Behavioral evidence should include:
+
+```text
+artifact digest
+eval-spec digest
+runtime identity
+policy identity
+run count
+trace digest
+```
+
+Otherwise a passing evaluation can drift away from the package that is later installed.
+
+## Static and behavioral verification reinforce each other
+
+Static analysis can say:
+
+```text
+possible network capability exists
+```
+
+Behavioral evaluation can say:
+
+```text
+network was requested during task X
+```
+
+Runtime enforcement can say:
+
+```text
+request was allowed or denied
+```
+
+Three different observations, one security story.
+
+That is the core of assurance.

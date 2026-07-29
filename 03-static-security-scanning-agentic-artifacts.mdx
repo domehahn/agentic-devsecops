@@ -1,0 +1,235 @@
+---
+title: "Static Security Scanning for Agentic Artifacts"
+description: "How to design a non-executing scanner for prompts, code, permissions, dependencies, and tool metadata."
+date: "2026-07-29"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Static Analysis
+  - Security Scanning
+  - AI Agents
+  - SAST
+featured: false
+draft: true
+series:
+  slug: agentic-security-engineering
+  title: "Agentic Security Engineering"
+  order: 3
+---
+
+Static scanning is the first serious security gate for an agent skill because it can inspect untrusted artifacts **without running them**.
+
+That last part matters.
+
+An agent artifact may contain executable code, shell snippets, package manifests, MCP definitions, tool descriptions, and instructions that attempt to manipulate the reviewer itself. The scanner must treat all of it as hostile input.
+
+## The scanner's first rule: do not execute
+
+A secure static scanner should never need to:
+
+```text
+import scanned Python
+execute scanned scripts
+install scanned dependencies
+start discovered MCP servers
+run build hooks
+source shell files
+```
+
+Parsing is allowed. Execution is not.
+
+<Warning>
+A security scanner that executes the artifact it is trying to inspect has crossed the trust boundary before it has produced a verdict.
+</Warning>
+
+## A useful analysis pipeline
+
+A practical scanner can be decomposed into independent analyzers:
+
+```text
+artifact
+   ↓
+safe loader
+   │
+   ├── instruction analysis
+   ├── AST analysis
+   ├── taint analysis
+   ├── dependency analysis
+   ├── Unicode analysis
+   ├── MCP/tool analysis
+   ├── infrastructure boundaries
+   └── malware signatures
+            │
+            ▼
+         findings
+```
+
+Each analyzer should solve a narrow problem well.
+
+That is better than a single giant detector trying to understand every file type.
+
+## Start with a secure loader
+
+Before vulnerability detection comes artifact handling.
+
+Archives and remote artifacts introduce their own attack surface:
+
+- path traversal
+- absolute paths
+- symlinks
+- duplicate entries
+- case collisions
+- oversized files
+- excessive file counts
+- decompression bombs
+
+The output of the loader should be a canonical, immutable view of the artifact with stable relative paths and a digest.
+
+```text
+untrusted bytes
+      ↓
+bounded loader
+      ↓
+canonical artifact
+      ↓
+analysis
+```
+
+## Findings should describe security properties
+
+Avoid designing the scanner around framework-specific phrases.
+
+Instead of:
+
+```text
+Rule: "bad line in framework X"
+```
+
+prefer:
+
+```text
+Property: instruction override
+Property: secret-to-network flow
+Property: wildcard tool authority
+Property: privileged container access
+```
+
+This makes the scanner portable across agent ecosystems.
+
+## Separate text from code
+
+Natural-language instructions and executable syntax require different analysis techniques.
+
+For text, a scanner may use:
+
+- contextual patterns
+- bounded intent matching
+- negation handling
+- role-token detection
+- semantic review
+
+For code, prefer syntax-aware parsing:
+
+- function calls
+- imports
+- member access
+- shell pipelines
+- assignments
+- command arguments
+
+A string containing `subprocess.run` inside documentation should not be treated the same as an actual Python call node.
+
+## Coverage is part of the result
+
+A scan should not only return findings.
+
+It should also say what actually ran.
+
+```json
+{
+  "analyzers": {
+    "python_ast": "completed",
+    "dependency_osv": "not_requested",
+    "semantic_provider": "not_available"
+  }
+}
+```
+
+That prevents this dangerous interpretation:
+
+```text
+no finding
+=
+analyzer proved absence
+```
+
+Those are not equivalent.
+
+<KeyTakeaway>
+"Nothing was found" is meaningful only when you know what was inspected and which analyzers successfully completed.
+</KeyTakeaway>
+
+## Risk scores are summaries, not authorization
+
+A score can help humans triage:
+
+```text
+0 ─────────────── 100
+low                  critical
+```
+
+But a score should not silently replace policy.
+
+A single critical boundary violation may matter more than several medium findings. An environment handling production credentials may reject risks that a disposable sandbox accepts.
+
+The scanner produces evidence.
+
+Policy decides whether the evidence is acceptable.
+
+## False positives are security work too
+
+A noisy scanner gets ignored.
+
+Every detector should therefore have both:
+
+```text
+positive cases
+negative near-neighbors
+```
+
+For example:
+
+```text
+"Ignore all previous safety rules."
+```
+
+should be detected.
+
+But:
+
+```text
+"Never ignore previous safety rules."
+```
+
+should not.
+
+High recall with poor specificity is not a mature security control.
+
+## Static scanning has a clear role
+
+Static scanning is excellent for:
+
+- pull requests
+- registries
+- CI/CD
+- pre-install checks
+- bulk repositories
+- offline review
+
+It is deterministic, scalable, and auditable.
+
+But it remains one layer.
+
+The next articles dive into the techniques that make this layer useful: intent analysis, ASTs, taint tracking, dependency intelligence, and tool-protocol security.

@@ -1,0 +1,303 @@
+---
+title: "How to Benchmark an Agent Security Scanner"
+description: "Canonical tests, adversarial variants, blind holdouts, false positives, and multiple recall dimensions make scanner benchmarks useful instead of gameable."
+date: "2026-07-29"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Benchmarking
+  - Security Testing
+  - False Positives
+  - Static Analysis
+featured: false
+draft: true
+series:
+  slug: agentic-security-engineering
+  title: "Agentic Security Engineering"
+  order: 13
+---
+
+A scanner benchmark can tell you whether a detector works.
+
+It can also accidentally teach the detector how to pass the benchmark.
+
+The difference is methodology.
+
+## Start with canonical conformance
+
+Canonical tests ask:
+
+> Does the scanner detect the behavior its own control claims to detect?
+
+For each control, include:
+
+```text
+positive fixture
+negative fixture
+```
+
+Then count:
+
+```text
+TP — dangerous fixture detected
+FN — dangerous fixture missed
+TN — safe fixture remains clean
+FP — safe fixture flagged
+```
+
+From that:
+
+```text
+Recall      = TP / (TP + FN)
+Specificity = TN / (TN + FP)
+Precision   = TP / (TP + FP)
+Accuracy    = (TP + TN) / total
+```
+
+Canonical conformance is a regression test.
+
+It is not proof of generalization.
+
+## Add semantic robustness variants
+
+For each concept, create variants such as:
+
+```text
+direct
+paraphrase
+evasion
+compositional
+negated-safe
+safe control
+```
+
+Example concept:
+
+```text
+instruction override
+```
+
+Direct:
+
+```text
+Ignore previous instructions.
+```
+
+Paraphrase:
+
+```text
+Treat earlier developer guidance as obsolete.
+```
+
+Negated safe:
+
+```text
+Earlier developer guidance remains authoritative.
+```
+
+The scanner should detect the first two and leave the third clean.
+
+## False positives are part of the benchmark
+
+A benchmark with only malicious cases rewards this terrible detector:
+
+```text
+flag every artifact
+```
+
+It achieves:
+
+```text
+100% recall
+```
+
+and is useless.
+
+Always include hard negatives close to the decision boundary.
+
+<KeyTakeaway>
+A security scanner is not good because it detects everything. It is good because it separates dangerous behavior from legitimate behavior with useful evidence.
+</KeyTakeaway>
+
+## Exact rule recall is not enough
+
+Suppose a fixture expects:
+
+```text
+output execution
+```
+
+but the scanner emits:
+
+```text
+dynamic execution
+```
+
+Did it fail?
+
+Depends on the question.
+
+Use multiple metrics.
+
+### Exact-control recall
+
+Did the expected native control fire?
+
+Useful for implementation regression.
+
+### Control-family recall
+
+Did a semantically equivalent control fire?
+
+Useful for taxonomy flexibility.
+
+### Any-security-signal recall
+
+Did the scanner raise any meaningful security finding?
+
+Useful for answering:
+
+```text
+Was the danger completely invisible?
+```
+
+These metrics should not be merged.
+
+```text
+Exact FN
+Family PASS
+```
+
+means classification mismatch.
+
+```text
+Exact FN
+Family FN
+Signal FN
+```
+
+means a real blind spot.
+
+## Use a blind holdout
+
+Once developers have seen the benchmark fixtures, the benchmark becomes a development suite.
+
+Create a new holdout with:
+
+```text
+new wording
+new syntax
+new variable names
+new alias patterns
+new Unicode variants
+new negative constructions
+new compositions
+```
+
+Do not expose it to the implementation agent before the first run.
+
+That first result measures generalization.
+
+Afterward, the holdout can become a regression suite—but it is no longer blind.
+
+## Check for corpus leakage
+
+A holdout should not simply rename old fixtures.
+
+Automate overlap checks:
+
+```text
+exact file duplicate
+normalized duplicate
+high token similarity
+shared suspicious phrase
+```
+
+Flag near-duplicates for review.
+
+A blind benchmark must contain genuinely unseen representations of the same security properties.
+
+## Do not optimize production rules for fixture IDs
+
+Production code should not contain:
+
+```text
+scenario IDs
+fixture paths
+benchmark filenames
+expected strings copied verbatim
+fixture hashes
+```
+
+A useful anti-overfitting review asks:
+
+```text
+Would this implementation still make sense
+if the benchmark did not exist?
+```
+
+If not, it is probably benchmark gaming.
+
+## Report by variant class
+
+A single score hides where the scanner fails.
+
+Break results down:
+
+| Class | What it measures |
+| --- | --- |
+| Direct | canonical expression |
+| Paraphrase | semantic generalization |
+| Evasion | representation robustness |
+| Compositional | multi-step reasoning |
+| Negated safe | polarity handling |
+| Hard negative | specificity near the boundary |
+
+This makes architecture problems visible.
+
+For example:
+
+```text
+Direct: 100%
+Paraphrase: 35%
+```
+
+strongly suggests literal pattern dependence.
+
+## Freeze first-run evidence
+
+The first blind result is valuable even when it is bad.
+
+Preserve:
+
+```text
+scanner version
+commit
+commands
+raw reports
+summary
+environment
+timestamp
+```
+
+Then improve the system.
+
+The next blind benchmark should be a new corpus.
+
+## The benchmark's job
+
+A good benchmark does not prove safety.
+
+It answers narrower questions honestly:
+
+```text
+What does the scanner detect?
+What does it miss?
+Where does it overfire?
+Does it generalize?
+Which architecture works best?
+```
+
+That is enough to guide engineering without turning test scores into marketing.
