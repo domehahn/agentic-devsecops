@@ -36,7 +36,7 @@ tags:                                # optional, freeform, powers /tags/[tag]
   - MCP
   - Kubernetes
 featured: false                     # optional, at most one article should be true
-draft: true                         # required to publish: set to false
+draft: false                         # required to publish: set to false
 series:                             # optional, groups articles into a series
   slug: agentic-engineering-foundations
   title: "Agentic Engineering Foundations"
