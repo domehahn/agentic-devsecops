@@ -1,0 +1,202 @@
+---
+title: "DevSecOps Made Security Part of the Delivery System"
+description: "Why security moved from a late review gate toward continuous, automated, risk-based practices embedded in software delivery."
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+tags:
+  - DevSecOps
+  - Secure SDLC
+  - SSDF
+  - Software Supply Chain
+featured: false
+draft: true
+series:
+  slug: software-to-ai-engineering
+  title: "From Software Engineering to AI Engineering"
+  order: 5
+---
+
+A high-speed delivery system creates a problem if security still operates as a late manual checkpoint.
+
+Imagine:
+
+```text
+hundreds of changes
+      ↓
+automated pipeline
+      ↓
+production
+```
+
+with security reviewing the system only after a large release.
+
+The feedback loop is now mismatched.
+
+DevSecOps is the broader attempt to integrate security into the same continuous lifecycle as development and operations.
+
+## The name was not the important part
+
+During the 2010s, practitioners used several labels, including **DevSecOps**, **SecDevOps**, and **DevOpsSec**. A 2016 O'Reilly publication explicitly discussed all of these names while focusing on how Continuous Delivery and Infrastructure as Code could be used to build, deploy, and operate systems securely.[^devopssec]
+
+The historical point is therefore not that one exact spelling suddenly invented secure development.
+
+The important change was architectural:
+
+```text
+security outside delivery
+```
+
+became:
+
+```text
+security inside delivery
+```
+
+## Security becomes continuous evidence
+
+A DevSecOps pipeline can create evidence on every change:
+
+```text
+source
+  ↓
+secret scanning
+  ↓
+SAST
+  ↓
+dependency analysis
+  ↓
+tests
+  ↓
+container / IaC checks
+  ↓
+SBOM
+  ↓
+policy
+  ↓
+signed artifact
+```
+
+This does not eliminate security specialists.
+
+It changes where security knowledge is encoded.
+
+<KeyTakeaway>
+DevSecOps is not "developers doing security alone." It is the integration of security requirements, controls, evidence, and feedback into the software lifecycle.
+</KeyTakeaway>
+
+## Secure development becomes a lifecycle concern
+
+NIST's Secure Software Development Framework (SSDF) Version 1.1, published in February 2022, states that many SDLC models do not explicitly address software security in sufficient detail and provides secure development practices intended to be integrated into each SDLC implementation.[^ssdf]
+
+That language is important.
+
+Security is not defined as a separate lifecycle that runs after software engineering.
+
+It is integrated into the existing lifecycle.
+
+## Institutional DevSecOps made the model explicit
+
+The U.S. Department of Defense published its DevSecOps Fundamentals Playbook Version 2.0 in 2021.[^dod-playbook] Later DoD guidance described a lifecycle spanning plan, develop, build, test, release, deliver, deploy, operate, monitor, and feedback.[^dod-fundamentals]
+
+That is wider than a CI pipeline.
+
+It treats security, software delivery, operations, supply chain, and feedback as one operational system.
+
+## The software supply chain becomes central
+
+Modern software is assembled from:
+
+```text
+source
+dependencies
+base images
+build systems
+registries
+CI runners
+signing systems
+deployment platforms
+```
+
+So securing the application alone is insufficient.
+
+DevSecOps increasingly includes:
+
+- dependency trust,
+- artifact identity,
+- build provenance,
+- SBOMs,
+- registry policy,
+- credential boundaries,
+- infrastructure configuration.
+
+A modern delivery pipeline is itself part of the trusted computing base.
+
+## Security must move both left and right
+
+"Shift left" is useful shorthand for finding problems earlier:
+
+```text
+design → code → build → test
+```
+
+But production still matters.
+
+Security also needs:
+
+```text
+runtime monitoring
+incident feedback
+vulnerability response
+configuration verification
+supply-chain updates
+```
+
+So a more complete model is a loop:
+
+```text
+design
+  ↓
+build
+  ↓
+secure
+  ↓
+deploy
+  ↓
+operate
+  ↓
+observe
+  ↓
+improve
+  ↺
+```
+
+## The next disruption: software is no longer only code
+
+DevSecOps assumes that the artifact being engineered is software and its supply chain.
+
+Machine learning complicates that model.
+
+Behavior now depends on:
+
+```text
+code
++
+data
++
+model
++
+training process
++
+runtime inputs
+```
+
+A new operational discipline becomes necessary—not because DevSecOps stops mattering, but because the system being delivered has acquired new state and new failure modes.
+
+That is the path toward MLOps and AI Engineering.
+
+[^devopssec]: Jim Bird, *DevOpsSec: Securing software through continuous delivery*, O'Reilly, 2016. [oreilly.com](https://www.oreilly.com/content/devopssec-securing-software-through-continuous-delivery/).
+[^ssdf]: NIST SP 800-218, *Secure Software Development Framework (SSDF) Version 1.1*, February 2022. [csrc.nist.gov](https://csrc.nist.gov/pubs/sp/800/218/final).
+[^dod-playbook]: U.S. Department of Defense, *DevSecOps Fundamentals Playbook*, Version 2.0, March 2021. [dodcio.defense.gov PDF](https://dodcio.defense.gov/Portals/0/Documents/Library/DevSecOpsFundamentalsPlaybook.pdf).
+[^dod-fundamentals]: U.S. Department of Defense, *Enterprise DevSecOps Fundamentals*, including the Plan through Feedback lifecycle. [dodcio.defense.gov PDF](https://dodcio.defense.gov/Portals/0/Documents/Library/DoD%20Enterprise%20DevSecOps%20Fundamentals%20v2.5.pdf).

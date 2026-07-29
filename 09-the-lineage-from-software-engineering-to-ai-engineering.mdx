@@ -1,0 +1,255 @@
+---
+title: "The Lineage from Software Engineering to AI Engineering"
+description: "Software Engineering, Agile, DevOps, DevSecOps, MLOps, and AI Engineering are best understood as accumulating responses to expanding system complexity."
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - agentic-engineering
+  - devsecops
+  - software-architecture
+tags:
+  - AI Engineering
+  - DevSecOps
+  - DevOps
+  - Software Engineering
+featured: false
+draft: true
+series:
+  slug: software-to-ai-engineering
+  title: "From Software Engineering to AI Engineering"
+  order: 9
+---
+
+It is easy to tell the history of software as a ladder:
+
+```text
+Software Engineering
+      ↓
+Agile
+      ↓
+DevOps
+      ↓
+DevSecOps
+      ↓
+MLOps
+      ↓
+AI Engineering
+```
+
+That diagram is useful—and wrong if interpreted literally.
+
+These disciplines did not simply replace one another.
+
+They accumulated because the boundary of the engineered system kept expanding.
+
+## 1. Software Engineering: manage system complexity
+
+The NATO conference in Garmisch in 1968 is an important historical marker for the effort to treat software construction as an engineering problem.[^nato]
+
+The boundary was approximately:
+
+```text
+program
++
+software system
++
+development process
+```
+
+The core problem was scale.
+
+## 2. Agile: reduce the cost of learning
+
+The Agile Manifesto in 2001 emphasized working software, collaboration, responsiveness, and short feedback cycles.[^agile]
+
+The engineering boundary did not fundamentally change.
+
+The feedback model did.
+
+```text
+build less
+learn sooner
+adapt faster
+```
+
+## 3. CI/CD: engineer the path to production
+
+Continuous Integration and Continuous Delivery turned frequent feedback into technical infrastructure.[^ci][^cd]
+
+The engineered system now included:
+
+```text
+source
+build
+tests
+artifact
+deployment path
+```
+
+Delivery itself became software.
+
+## 4. DevOps: include operations
+
+The 2009 Flickr "10+ Deploys Per Day" presentation and the first devopsdays in Ghent are useful milestones in the early DevOps movement.[^flickr][^devopsdays]
+
+The boundary expanded again:
+
+```text
+development
++
+delivery
++
+production operations
+```
+
+Production became part of the feedback loop.
+
+## 5. DevSecOps: include continuous security
+
+As automated delivery gained authority, security increasingly had to move into the same lifecycle.
+
+NIST's SSDF formalizes secure practices that can be integrated into SDLC implementations rather than treated as a separate late phase.[^ssdf]
+
+The boundary now includes:
+
+```text
+code
+pipeline
+dependencies
+artifacts
+infrastructure
+security evidence
+```
+
+## 6. MLOps: include data and models
+
+Production ML breaks the assumption that behavior is determined primarily by code.
+
+Google's research on hidden ML technical debt and production-readiness testing documented engineering concerns around ML systems well beyond model accuracy alone.[^debt][^testscore]
+
+The lifecycle expands to:
+
+```text
+code
++
+data
++
+training
++
+model
++
+monitoring
+```
+
+## 7. AI Engineering: include AI behavior and system risk
+
+SEI began publishing explicit AI Engineering practices in 2019 and later described the field as combining systems engineering, software engineering, computer science, and human-centered design.[^sei]
+
+NIST's AI RMF then provided a broader lifecycle framework for managing risks of AI systems.[^airmf]
+
+The system boundary becomes:
+
+```text
+software
+data
+models
+humans
+environment
+evaluation
+risk
+```
+
+## The common pattern
+
+Every stage can be described using the same transformation:
+
+```text
+new source of complexity
+        ↓
+old engineering model becomes incomplete
+        ↓
+new practices expand the lifecycle
+```
+
+<KeyTakeaway>
+AI Engineering is not the successor that makes DevSecOps obsolete. It depends on DevSecOps and extends it to new artifacts, behaviors, and risks.
+</KeyTakeaway>
+
+## What carries forward
+
+AI systems still need:
+
+```text
+requirements
+architecture
+version control
+testing
+CI/CD
+observability
+incident response
+security
+supply-chain integrity
+```
+
+And they additionally need:
+
+```text
+data lineage
+model identity
+evaluation
+behavioral monitoring
+AI risk management
+tool boundaries
+human oversight
+```
+
+This is why "AI engineering" should not mean "calling an AI API."
+
+It means applying engineering discipline to systems whose behavior depends on AI.
+
+## A modern engineering lifecycle
+
+A useful synthesis is:
+
+```text
+SPECIFY
+   ↓
+BUILD
+   ↓
+TEST
+   ↓
+SCAN
+   ↓
+VERIFY
+   ↓
+EVALUATE
+   ↓
+DELIVER
+   ↓
+ENFORCE
+   ↓
+OBSERVE
+   ↓
+LEARN
+   ↺
+```
+
+Different systems require different controls.
+
+But the direction is clear: as software gains more autonomy and more access to real-world capabilities, **verification and enforcement become more important, not less**.
+
+The history is therefore not a migration away from software engineering.
+
+It is software engineering expanding to meet a larger system.
+
+[^nato]: Naur and Randell (eds.), *Software Engineering*, NATO Science Committee conference report, 1969. [WorldCat](https://search.worldcat.org/title/Software-engineering-%3A-report-on-a-conference-sponsored-by-the-NATO-Science-Committee-Garmisch-Germany-7th-to-11th-October-1968/oclc/35337842).
+[^agile]: Beck et al., *Manifesto for Agile Software Development*, 2001. [agilemanifesto.org](https://agilemanifesto.org/).
+[^ci]: Martin Fowler, *Continuous Integration*. [martinfowler.com](https://martinfowler.com/articles/continuousIntegration.html).
+[^cd]: Jez Humble, *Continuous Delivery*, 2010. [continuousdelivery.com](https://continuousdelivery.com/2010/02/continuous-delivery/).
+[^flickr]: Flickr Engineering, *Slides from Velocity 2009*. [code.flickr.net](https://code.flickr.net/2009/06/26/slides-from-velocity-2009/).
+[^devopsdays]: devopsdays, *About devopsdays*. [devopsdays.org](https://devopsdays.org/about).
+[^ssdf]: NIST SP 800-218, *Secure Software Development Framework Version 1.1*, 2022. [csrc.nist.gov](https://csrc.nist.gov/pubs/sp/800/218/final).
+[^debt]: D. Sculley et al., *Hidden Technical Debt in Machine Learning Systems*, NIPS 2015. [Google Research](https://research.google/pubs/hidden-technical-debt-in-machine-learning-systems/).
+[^testscore]: Eric Breck et al., *The ML Test Score*, IEEE Big Data 2017. [Google Research](https://research.google/pubs/the-ml-test-score-a-rubric-for-ml-production-readiness-and-technical-debt-reduction/).
+[^sei]: Carnegie Mellon SEI, *AI Engineering: 11 Foundational Practices* (2019) and subsequent AI Engineering work. [sei.cmu.edu](https://www.sei.cmu.edu/library/ai-engineering-11-foundational-practices/).
+[^airmf]: NIST, *Artificial Intelligence Risk Management Framework (AI RMF 1.0)*, 2023. [nist.gov](https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-ai-rmf-10).

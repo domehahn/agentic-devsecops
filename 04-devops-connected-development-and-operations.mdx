@@ -1,0 +1,164 @@
+---
+title: "DevOps Connected Development and Operations"
+description: "How high-frequency delivery, shared responsibility, automation, and operational feedback helped dissolve the traditional handoff between development and operations."
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+tags:
+  - DevOps
+  - Operations
+  - CI/CD
+  - DORA
+featured: false
+draft: true
+series:
+  slug: software-to-ai-engineering
+  title: "From Software Engineering to AI Engineering"
+  order: 4
+---
+
+By the late 2000s, many internet services had a delivery problem that Agile alone did not solve.
+
+Development wanted rapid change.
+
+Operations was responsible for production stability.
+
+If those goals were optimized independently, organizations created a structural conflict:
+
+```text
+Dev: change faster
+Ops: reduce change
+```
+
+DevOps grew around a different idea: improve delivery and reliability by treating development and operations as one system.
+
+## 2009 is a useful historical marker
+
+At O'Reilly Velocity in June 2009, Flickr's John Allspaw and Paul Hammond presented **"10+ Deploys Per Day: Dev and Ops Cooperation at Flickr."** Flickr's own engineering blog described the talk as showing how engineering and operations worked together to iterate quickly without causing stability problems.[^flickr]
+
+Later that year, the first devopsdays event was held in Ghent, Belgium.[^devopsdays] O'Reilly's historical summary connects Patrick Debois and the first event in Ghent with the early spread of the DevOps label.[^oreilly-devops]
+
+It is safer to describe these events as important milestones in the movement than to reduce DevOps to a single inventor or date.
+
+## The unit of optimization changed
+
+A siloed organization may optimize:
+
+```text
+development productivity
+```
+
+and:
+
+```text
+operations stability
+```
+
+separately.
+
+DevOps asks teams to optimize:
+
+```text
+the delivery and operation of software
+as one socio-technical system
+```
+
+That creates shared concerns:
+
+- deployment automation,
+- infrastructure automation,
+- monitoring,
+- incident response,
+- change risk,
+- feedback,
+- ownership.
+
+<KeyTakeaway>
+DevOps expanded software engineering beyond building the application. The delivery system and production environment became part of the product engineering problem.
+</KeyTakeaway>
+
+## Smaller changes can improve both speed and stability
+
+One of the persistent misconceptions around DevOps is that delivery speed and reliability are necessarily opposites.
+
+The DORA research program has spent more than a decade studying software delivery and operations performance.[^dora] Its well-known delivery metrics include deployment frequency, lead time for changes, change failure rate, and time to restore service.[^four-keys]
+
+Those metrics reflect two dimensions:
+
+```text
+speed
++
+stability
+```
+
+The engineering goal is not simply "deploy more."
+
+It is to build a delivery system capable of changing quickly **without losing control of reliability**.
+
+## Operations becomes observable software behavior
+
+DevOps also changes what counts as engineering feedback.
+
+Before deployment, teams can measure:
+
+```text
+tests
+build results
+static analysis
+```
+
+After deployment, they can measure:
+
+```text
+availability
+latency
+errors
+resource behavior
+incidents
+user outcomes
+```
+
+This closes a loop:
+
+```text
+develop
+  ↓
+deliver
+  ↓
+operate
+  ↓
+observe
+  ↓
+learn
+  ↺
+```
+
+That loop will later become important for machine learning and AI systems, where production behavior cannot be fully understood from code alone.
+
+## Automation creates both opportunity and risk
+
+As pipelines become more powerful, they gain authority:
+
+```text
+build artifacts
+access registries
+deploy infrastructure
+read credentials
+sign releases
+modify production
+```
+
+This makes delivery infrastructure itself security-critical.
+
+The next evolution is therefore not surprising.
+
+If development and operations are integrated continuously, security cannot remain a late external review.
+
+It has to enter the same engineering loop.
+
+[^flickr]: Flickr Engineering, *Slides from Velocity 2009*, 26 June 2009, including "10+ Deploys Per Day: Dev and Ops Cooperation at Flickr." [code.flickr.net](https://code.flickr.net/2009/06/26/slides-from-velocity-2009/).
+[^devopsdays]: devopsdays, *About devopsdays*: the first devopsdays was held in Ghent, Belgium, in 2009. [devopsdays.org](https://devopsdays.org/about).
+[^oreilly-devops]: O'Reilly, *DevOps in Practice*, historical introduction and references to the 2009 Flickr talk and first DevOpsDays. [oreilly.com](https://www.oreilly.com/content/devops-in-practice/).
+[^dora]: DORA, Google Cloud's research program on software delivery and operations performance. [dora.dev](https://dora.dev/).
+[^four-keys]: Google Cloud, *Use Four Keys metrics like change failure rate to measure your DevOps performance*, 7 September 2020. [cloud.google.com](https://cloud.google.com/blog/products/devops-sre/using-the-four-keys-to-measure-your-devops-performance).
