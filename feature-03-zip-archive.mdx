@@ -1,0 +1,156 @@
+---
+title: "ZIP-Archive sicher prüfen: Inhalte analysieren, ohne ihnen zu vertrauen"
+description: "ZIP ist ein typisches Transportformat für Quellpakete, Erweiterungen und exportierte Artefakte. Ein ZIP-Scan ermöglicht die Prüfung vor Installation, Import oder Ausführung."
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Features
+  - ZIP
+  - Security Scanning
+featured: false
+draft: false
+series:
+  slug: scanner-features
+  title: "Scanner Features"
+  order: 3
+---
+
+ZIP ist ein typisches Transportformat für Quellpakete, Erweiterungen und exportierte Artefakte. Ein ZIP-Scan ermöglicht die Prüfung vor Installation, Import oder Ausführung.
+
+Das Feature ist damit nicht nur eine Komfortfunktion.
+
+Es verändert, **welcher Kontext geprüft wird, welche Vertrauensgrenzen gelten und wie belastbar das Ergebnis später in CI/CD oder Security-Governance verwendet werden kann**.
+
+## Was das Feature leistet
+
+Ein sicherer ZIP-Workflow liest zunächst die Archivstruktur, prüft Pfade und Größen und extrahiert anschließend in einen isolierten Arbeitsbereich oder verarbeitet Einträge direkt im Stream. Danach werden die enthaltenen Dateien wie ein normales Artefakt inventarisiert und analysiert.
+
+Wesentlich ist die Reihenfolge: Sicherheitsprüfungen des Containers müssen vor der inhaltlichen Analyse stattfinden. Sonst kann bereits das Entpacken selbst zur Angriffsfläche werden.
+
+## Typischer Ablauf
+
+Unabhängig von der konkreten Implementierung sollte der Ablauf klar getrennte Phasen besitzen:
+
+```text
+Input
+  ↓
+Validierung und Normalisierung
+  ↓
+Feature-spezifische Verarbeitung
+  ↓
+Security-Analyse
+  ↓
+Findings + Coverage + technischer Status
+  ↓
+Policy-Entscheidung
+```
+
+Diese Trennung ist wichtig, weil ein technischer Fehler bei Beschaffung, Parsing oder Providerzugriff nicht dieselbe Bedeutung hat wie ein tatsächlich unauffälliges Prüfergebnis.
+
+## Negatives Beispiel
+
+Ein Dienst entpackt jedes eingehende Archiv blind nach `/tmp/work`:
+
+```text
+../../etc/cron.d/update
+project/config.yaml
+project/run.sh
+```
+
+Ein manipuliertes Archiv kann dadurch Dateien außerhalb des Zielverzeichnisses überschreiben. Zusätzlich kann ein kleines Archiv beim Entpacken mehrere Gigabyte erzeugen und Ressourcen erschöpfen.
+
+Die Inhaltsanalyse wäre fachlich korrekt, käme aber zu spät: Der Verarbeitungsschritt selbst hat bereits Schaden ermöglicht.
+
+## Positives Beispiel
+
+Vor der Extraktion werden alle Einträge validiert:
+
+```text
+1. Pfad normalisieren
+2. absolute Pfade ablehnen
+3. ".."-Traversal ablehnen
+4. Anzahl Einträge begrenzen
+5. komprimierte und entpackte Größe prüfen
+6. erst danach analysieren
+```
+
+Ein sicherer Aufruf kann konzeptionell so aussehen:
+
+```bash
+scanner scan ./artifact.zip
+```
+
+Die Befunde werden zusätzlich mit dem Hash des ursprünglichen ZIP-Containers verknüpft. So bleibt nachvollziehbar, welches konkrete Archiv geprüft wurde.
+
+<KeyTakeaway>
+Ein Archiv ist nicht nur Verpackung, sondern untrusted input. Sichere Pfadbehandlung und Ressourcenlimits gehören genauso zum Feature wie die eigentliche Inhaltsanalyse.
+</KeyTakeaway>
+
+## Security- und Betriebsaspekte
+
+Zu berücksichtigen sind Zip Slip, Zip Bombs, verschachtelte Archive, ungewöhnliche Kompressionsmethoden, Dateinamen-Encoding und symbolische Links. Ein Produktionsscanner sollte außerdem maximale Rekursionstiefe und ein globales Entpackbudget definieren.
+
+Für Auditierbarkeit sind sowohl Container-Hash als auch normalisierte Dateiliste relevant. Werden Einträge ausgelassen, muss die Ausgabe dies sichtbar machen.
+
+Ein professioneller Betrieb sollte außerdem drei Zustände konsequent auseinanderhalten:
+
+```text
+clean      = geprüft, kein relevanter Befund
+finding    = geprüft, mindestens ein relevanter Befund
+incomplete = Prüfung technisch oder fachlich nicht vollständig
+```
+
+Gerade der dritte Zustand ist für DevSecOps entscheidend.
+
+Ein Scanner darf fehlende Coverage nicht als positives Sicherheitsurteil darstellen.
+
+## Wo das Feature sinnvoll eingesetzt wird
+
+ZIP-Scanning passt gut vor Upload, Installation, Import oder Freigabe in internen Katalogen. Es kann auch in CI eingesetzt werden, wenn Releases als ZIP gebaut werden und genau das distributierte Artefakt geprüft werden soll.
+
+Wenn bereits ein entpacktes, unverändertes Verzeichnis vorliegt, vermeidet ein Directory Scan den zusätzlichen Container-Schritt.
+
+Die konkrete Aktivierung sollte deshalb aus dem gewünschten Trust-Modell abgeleitet werden und nicht allein aus technischer Verfügbarkeit.
+
+## Integration in eine DevSecOps-Pipeline
+
+In einer Pipeline sollte das Feature nicht isoliert betrachtet werden.
+
+Ein belastbares Muster ist:
+
+```text
+Source / Artifact
+      ↓
+Input-Validierung
+      ↓
+Deterministische Analyse
+      ↓
+optionale erweiterte Analyse
+      ↓
+normalisierte Findings
+      ↓
+Policy Gate
+      ↓
+Report / Audit Evidence
+```
+
+Dabei sollte jeder Report mindestens folgende Informationen transportieren:
+
+- Identität des analysierten Artefakts
+- aktive Analyseverfahren
+- übersprungene oder nicht verfügbare Prüfschritte
+- stabile Regel- oder Finding-IDs
+- Schweregrad und Evidenz
+- Scanner- und Regelversion
+- eindeutiger technischer Abschlussstatus
+
+Damit wird das Feature nicht nur ausführbar, sondern **auditierbar**.
+
+## Fazit
+
+Ein Archiv ist nicht nur Verpackung, sondern untrusted input. Sichere Pfadbehandlung und Ressourcenlimits gehören genauso zum Feature wie die eigentliche Inhaltsanalyse.
+
+Der eigentliche Wert entsteht dann, wenn das Feature mit klaren Grenzen, reproduzierbaren Eingaben und transparenten Ergebnissen in den Entwicklungsprozess eingebettet wird.

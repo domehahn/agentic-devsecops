@@ -1,0 +1,145 @@
+---
+title: "CLI-basierter Claude-Provider: lokale Toolchains als Analysebackend nutzen"
+description: "Ein CLI-Provider nutzt ein bereits installiertes Kommandozeilenwerkzeug als Brücke zur semantischen Analyse."
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Features
+  - Claude CLI
+  - Security Scanning
+featured: false
+draft: false
+series:
+  slug: scanner-features
+  title: "Scanner Features"
+  order: 13
+---
+
+Ein CLI-Provider nutzt ein bereits installiertes Kommandozeilenwerkzeug als Brücke zur semantischen Analyse. Dadurch kann eine bestehende lokale Authentisierung oder Entwicklerumgebung wiederverwendet werden.
+
+Das Feature ist damit nicht nur eine Komfortfunktion.
+
+Es verändert, **welcher Kontext geprüft wird, welche Vertrauensgrenzen gelten und wie belastbar das Ergebnis später in CI/CD oder Security-Governance verwendet werden kann**.
+
+## Was das Feature leistet
+
+Technisch startet der Scanner einen Subprozess, übergibt einen kontrollierten Prompt und liest die Ausgabe ein. Das klingt einfach, erweitert den Trust Boundary aber um PATH-Auflösung, Shell-Verhalten, lokale Konfiguration, Plugin-Mechanismen und die konkrete CLI-Version.
+
+Ein robuster Adapter sollte deshalb den Binary-Pfad eindeutig bestimmen, Argumente ohne Shell-Interpolation übergeben, Exit Codes prüfen und ein maschinenlesbares Ausgabeformat verwenden.
+
+## Typischer Ablauf
+
+Unabhängig von der konkreten Implementierung sollte der Ablauf klar getrennte Phasen besitzen:
+
+```text
+Input
+  ↓
+Validierung und Normalisierung
+  ↓
+Feature-spezifische Verarbeitung
+  ↓
+Security-Analyse
+  ↓
+Findings + Coverage + technischer Status
+  ↓
+Policy-Entscheidung
+```
+
+Diese Trennung ist wichtig, weil ein technischer Fehler bei Beschaffung, Parsing oder Providerzugriff nicht dieselbe Bedeutung hat wie ein tatsächlich unauffälliges Prüfergebnis.
+
+## Negatives Beispiel
+
+Der Scanner führt aus:
+
+```python
+os.system(f"claude {user_controlled_text}")
+```
+
+Ein Artefakt enthält Shell-Metazeichen und verändert dadurch das aufgerufene Kommando. Zusätzlich wird einfach das erste `claude` aus `PATH` verwendet; ein manipuliertes Repository legt ein gleichnamiges Binary vor den echten Pfad.
+
+Die semantische Analyse wird damit zur Command-Injection-Oberfläche.
+
+## Positives Beispiel
+
+Der Prozess wird ohne Shell gestartet:
+
+```text
+executable: /usr/local/bin/claude
+argv: ["--output-format", "json", "--prompt-file", "/tmp/input"]
+shell: false
+```
+
+Vor dem Einsatz werden Version und erwarteter Binary-Pfad geprüft. stdout wird als strukturierte Antwort gelesen, stderr separat protokolliert und sensible Inhalte werden redigiert.
+
+<KeyTakeaway>
+Ein CLI-Provider ist nicht nur ein Modelladapter, sondern Prozessausführung. Binary-Identität, Argumentübergabe und lokale Konfiguration müssen deshalb wie eine eigene Sicherheitsgrenze behandelt werden.
+</KeyTakeaway>
+
+## Security- und Betriebsaspekte
+
+CLI-Provider erben lokale Konfiguration und Anmeldestatus. Das kann praktisch sein, macht aber reproduzierbare CI schwieriger. Besonders kritisch sind Plugins, Hooks, Shell-Aliase und ungeprüfte PATH-Manipulationen.
+
+Für produktive Serverdienste ist eine API-Integration oft einfacher zu härten. Für lokale Entwicklerworkflows kann ein CLI-Adapter dennoch sinnvoll sein, wenn die Prozessgrenzen sauber umgesetzt sind.
+
+Ein professioneller Betrieb sollte außerdem drei Zustände konsequent auseinanderhalten:
+
+```text
+clean      = geprüft, kein relevanter Befund
+finding    = geprüft, mindestens ein relevanter Befund
+incomplete = Prüfung technisch oder fachlich nicht vollständig
+```
+
+Gerade der dritte Zustand ist für DevSecOps entscheidend.
+
+Ein Scanner darf fehlende Coverage nicht als positives Sicherheitsurteil darstellen.
+
+## Wo das Feature sinnvoll eingesetzt wird
+
+Geeignet für Workstations und Entwicklungsumgebungen, in denen die CLI bereits standardisiert und verwaltet ist. Auch für prototypische Integrationen kann das Feature nützlich sein.
+
+Für Multi-Tenant-Dienste oder stark isolierte CI ist ein direkter API-Adapter meist kontrollierbarer.
+
+Die konkrete Aktivierung sollte deshalb aus dem gewünschten Trust-Modell abgeleitet werden und nicht allein aus technischer Verfügbarkeit.
+
+## Integration in eine DevSecOps-Pipeline
+
+In einer Pipeline sollte das Feature nicht isoliert betrachtet werden.
+
+Ein belastbares Muster ist:
+
+```text
+Source / Artifact
+      ↓
+Input-Validierung
+      ↓
+Deterministische Analyse
+      ↓
+optionale erweiterte Analyse
+      ↓
+normalisierte Findings
+      ↓
+Policy Gate
+      ↓
+Report / Audit Evidence
+```
+
+Dabei sollte jeder Report mindestens folgende Informationen transportieren:
+
+- Identität des analysierten Artefakts
+- aktive Analyseverfahren
+- übersprungene oder nicht verfügbare Prüfschritte
+- stabile Regel- oder Finding-IDs
+- Schweregrad und Evidenz
+- Scanner- und Regelversion
+- eindeutiger technischer Abschlussstatus
+
+Damit wird das Feature nicht nur ausführbar, sondern **auditierbar**.
+
+## Fazit
+
+Ein CLI-Provider ist nicht nur ein Modelladapter, sondern Prozessausführung. Binary-Identität, Argumentübergabe und lokale Konfiguration müssen deshalb wie eine eigene Sicherheitsgrenze behandelt werden.
+
+Der eigentliche Wert entsteht dann, wenn das Feature mit klaren Grenzen, reproduzierbaren Eingaben und transparenten Ergebnissen in den Entwicklungsprozess eingebettet wird.

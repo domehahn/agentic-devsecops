@@ -1,0 +1,146 @@
+---
+title: "Codex-CLI als Analyseprovider: Subprozessintegration sicher gestalten"
+description: "Auch ein Codex-basierter CLI-Provider kann lokale Modellzugriffe in eine Scanpipeline integrieren."
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Features
+  - Codex CLI
+  - Security Scanning
+featured: false
+draft: false
+series:
+  slug: scanner-features
+  title: "Scanner Features"
+  order: 14
+---
+
+Auch ein Codex-basierter CLI-Provider kann lokale Modellzugriffe in eine Scanpipeline integrieren. Der technische Kern ist nicht die Modellmarke, sondern die sichere Kopplung zwischen Scanner und externem Kommandozeilenprozess.
+
+Das Feature ist damit nicht nur eine Komfortfunktion.
+
+Es verändert, **welcher Kontext geprüft wird, welche Vertrauensgrenzen gelten und wie belastbar das Ergebnis später in CI/CD oder Security-Governance verwendet werden kann**.
+
+## Was das Feature leistet
+
+Der Scanner bereitet Evidenz vor, ruft die CLI mit einem eng definierten Analyseauftrag auf und validiert die Antwort. Eine gute Integration behandelt die CLI als externes, versionsabhängiges Tool und macht deren Status sichtbar.
+
+Wichtig ist die Trennung zwischen zu analysierendem Inhalt und Kommandoargumenten. Artefakttext gehört in stdin oder eine temporäre Datei, nicht in eine zusammengesetzte Shell-Zeile.
+
+## Typischer Ablauf
+
+Unabhängig von der konkreten Implementierung sollte der Ablauf klar getrennte Phasen besitzen:
+
+```text
+Input
+  ↓
+Validierung und Normalisierung
+  ↓
+Feature-spezifische Verarbeitung
+  ↓
+Security-Analyse
+  ↓
+Findings + Coverage + technischer Status
+  ↓
+Policy-Entscheidung
+```
+
+Diese Trennung ist wichtig, weil ein technischer Fehler bei Beschaffung, Parsing oder Providerzugriff nicht dieselbe Bedeutung hat wie ein tatsächlich unauffälliges Prüfergebnis.
+
+## Negatives Beispiel
+
+Ein Wrapper konstruiert dynamisch:
+
+```bash
+codex analyze "$CONTENT"
+```
+
+und führt die Zeichenkette über eine Shell aus. Newlines, Quotes oder Substitutionen können die Semantik des Kommandos verändern. Zusätzlich ist unklar, welche CLI-Version auf verschiedenen Runnern installiert ist.
+
+Das Ergebnis ist weder sicher noch reproduzierbar.
+
+## Positives Beispiel
+
+Die Integration pinnt die Tool-Version im Runner-Image und nutzt einen direkten Prozessaufruf:
+
+```text
+binary: /opt/tools/codex
+stdin: <analysis payload>
+expected_output: JSON
+timeout: 60s
+```
+
+Exit Code, Schema und maximale Antwortgröße werden geprüft. Der Report nennt die verwendete Provider- und CLI-Version, ohne lokale Credentials offenzulegen.
+
+<KeyTakeaway>
+CLI-Integration muss wie sichere Prozessausführung entworfen werden. Ein korrektes Analyseprompt schützt nicht vor PATH-Hijacking, Shell-Injection oder unkontrollierter Environment-Vererbung.
+</KeyTakeaway>
+
+## Security- und Betriebsaspekte
+
+CLI-Subprozesse benötigen Timeouts, Speicher-/CPU-Grenzen und definierte Umgebungsvariablen. Der Scanner sollte nicht ungefiltert die komplette Parent-Environment weiterreichen, wenn darin Secrets liegen.
+
+Außerdem muss klar sein, ob die CLI selbst Netzwerkzugriff nutzt und welche Daten sie an externe Dienste überträgt.
+
+Ein professioneller Betrieb sollte außerdem drei Zustände konsequent auseinanderhalten:
+
+```text
+clean      = geprüft, kein relevanter Befund
+finding    = geprüft, mindestens ein relevanter Befund
+incomplete = Prüfung technisch oder fachlich nicht vollständig
+```
+
+Gerade der dritte Zustand ist für DevSecOps entscheidend.
+
+Ein Scanner darf fehlende Coverage nicht als positives Sicherheitsurteil darstellen.
+
+## Wo das Feature sinnvoll eingesetzt wird
+
+Sinnvoll für lokale Workflows und standardisierte Developer Images. Das Feature kann bestehende Authentisierung und Toolverteilung nutzen.
+
+Für zentrale Services mit vielen parallelen Mandanten ist eine API-basierte Providerarchitektur üblicherweise besser kontrollierbar.
+
+Die konkrete Aktivierung sollte deshalb aus dem gewünschten Trust-Modell abgeleitet werden und nicht allein aus technischer Verfügbarkeit.
+
+## Integration in eine DevSecOps-Pipeline
+
+In einer Pipeline sollte das Feature nicht isoliert betrachtet werden.
+
+Ein belastbares Muster ist:
+
+```text
+Source / Artifact
+      ↓
+Input-Validierung
+      ↓
+Deterministische Analyse
+      ↓
+optionale erweiterte Analyse
+      ↓
+normalisierte Findings
+      ↓
+Policy Gate
+      ↓
+Report / Audit Evidence
+```
+
+Dabei sollte jeder Report mindestens folgende Informationen transportieren:
+
+- Identität des analysierten Artefakts
+- aktive Analyseverfahren
+- übersprungene oder nicht verfügbare Prüfschritte
+- stabile Regel- oder Finding-IDs
+- Schweregrad und Evidenz
+- Scanner- und Regelversion
+- eindeutiger technischer Abschlussstatus
+
+Damit wird das Feature nicht nur ausführbar, sondern **auditierbar**.
+
+## Fazit
+
+CLI-Integration muss wie sichere Prozessausführung entworfen werden. Ein korrektes Analyseprompt schützt nicht vor PATH-Hijacking, Shell-Injection oder unkontrollierter Environment-Vererbung.
+
+Der eigentliche Wert entsteht dann, wenn das Feature mit klaren Grenzen, reproduzierbaren Eingaben und transparenten Ergebnissen in den Entwicklungsprozess eingebettet wird.

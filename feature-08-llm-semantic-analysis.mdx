@@ -1,0 +1,149 @@
+---
+title: "Semantische LLM-Analyse: Bedeutung prüfen, nicht nur Muster"
+description: "Statische Regeln erkennen bekannte Strukturen. Semantische Analyse zielt auf die Frage, was ein Artefakt inhaltlich beabsichtigt, wie Anweisungen zusammenwirken und ob deklarierte…"
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Features
+  - LLM Analysis
+  - Security Scanning
+featured: false
+draft: false
+series:
+  slug: scanner-features
+  title: "Scanner Features"
+  order: 8
+---
+
+Statische Regeln erkennen bekannte Strukturen. Semantische Analyse zielt auf die Frage, was ein Artefakt inhaltlich beabsichtigt, wie Anweisungen zusammenwirken und ob deklarierte Funktion und tatsächliches Verhalten plausibel zueinander passen.
+
+Das Feature ist damit nicht nur eine Komfortfunktion.
+
+Es verändert, **welcher Kontext geprüft wird, welche Vertrauensgrenzen gelten und wie belastbar das Ergebnis später in CI/CD oder Security-Governance verwendet werden kann**.
+
+## Was das Feature leistet
+
+Ein Sprachmodell erhält ausgewählte, begrenzte Evidenz aus dem Scan und bewertet semantische Risiken. Sinnvolle Aufgaben sind beispielsweise das Erkennen verschleierter Prompt-Injection, widersprüchlicher Berechtigungsbeschreibungen oder eines Beschreibung-Verhalten-Mismatches.
+
+Das Modell sollte nicht als alleiniger Wahrheitsgenerator behandelt werden. Besser ist eine evidenzgebundene Rolle: statische Voranalyse strukturiert den Kontext, das Modell bewertet konkrete Fragestellungen und Findings bleiben mit nachvollziehbaren Textstellen verknüpft.
+
+## Typischer Ablauf
+
+Unabhängig von der konkreten Implementierung sollte der Ablauf klar getrennte Phasen besitzen:
+
+```text
+Input
+  ↓
+Validierung und Normalisierung
+  ↓
+Feature-spezifische Verarbeitung
+  ↓
+Security-Analyse
+  ↓
+Findings + Coverage + technischer Status
+  ↓
+Policy-Entscheidung
+```
+
+Diese Trennung ist wichtig, weil ein technischer Fehler bei Beschaffung, Parsing oder Providerzugriff nicht dieselbe Bedeutung hat wie ein tatsächlich unauffälliges Prüfergebnis.
+
+## Negatives Beispiel
+
+Der gesamte Projektinhalt wird ungefiltert an ein Modell gesendet und die Antwort `"safe"` wird als Freigabe verwendet.
+
+```text
+artifact -> LLM -> "looks safe" -> PASS
+```
+
+Es gibt keine feste Prompt-Version, keine Belegstellen, keine Token-Grenze und keine Unterscheidung zwischen Modellfehler und technischer Analyse. Ein einzelnes probabilistisches Urteil wird damit zum Security Gate.
+
+## Positives Beispiel
+
+Statische Detektoren erzeugen zunächst Evidenz:
+
+```text
+F1: Netzwerkziel in config.yaml
+F2: Token-Zugriff in runner.py
+F3: Beschreibung behauptet "offline only"
+```
+
+Die semantische Stufe erhält genau diese Ausschnitte und beantwortet eine begrenzte Frage:
+
+```text
+Stehen deklarierte Offline-Eigenschaft und beobachtetes Verhalten im Widerspruch?
+```
+
+Der Report enthält Bewertung, Konfidenz und Referenzen auf F1-F3. Das Modell ergänzt Begründung, ersetzt aber nicht die zugrunde liegende Evidenz.
+
+<KeyTakeaway>
+Ein Sprachmodell ist am stärksten als evidenzgebundener Analyst. Semantik erweitert statische Coverage, sollte aber keine unbelegte Ja/Nein-Instanz für Sicherheit sein.
+</KeyTakeaway>
+
+## Security- und Betriebsaspekte
+
+Wesentlich sind Datenklassifizierung, Redaction, Provider-Policy, Timeout, Kostenlimits, Prompt-Versionierung und ein klarer Degraded Mode. Externe Modelle verändern die Datenflussarchitektur; lokale Modelle verändern dagegen vor allem Betriebs- und Ressourcenanforderungen.
+
+Prompt Injection innerhalb des Prüfobjekts ist besonders relevant. Artefakttext muss als untrusted data gerahmt werden und darf die Instruktionen der Analyse nicht überschreiben.
+
+Ein professioneller Betrieb sollte außerdem drei Zustände konsequent auseinanderhalten:
+
+```text
+clean      = geprüft, kein relevanter Befund
+finding    = geprüft, mindestens ein relevanter Befund
+incomplete = Prüfung technisch oder fachlich nicht vollständig
+```
+
+Gerade der dritte Zustand ist für DevSecOps entscheidend.
+
+Ein Scanner darf fehlende Coverage nicht als positives Sicherheitsurteil darstellen.
+
+## Wo das Feature sinnvoll eingesetzt wird
+
+Semantische Analyse eignet sich für kontextabhängige Findings, Triagierung, Beschreibung-Verhalten-Korrelation und schwer regelbasierbare Angriffsformen. Sie ist besonders wertvoll als zweite Ebene nach deterministischer Analyse.
+
+Für harte, exakt reproduzierbare Policies sollte das Modell nicht die einzige Entscheidungsinstanz sein.
+
+Die konkrete Aktivierung sollte deshalb aus dem gewünschten Trust-Modell abgeleitet werden und nicht allein aus technischer Verfügbarkeit.
+
+## Integration in eine DevSecOps-Pipeline
+
+In einer Pipeline sollte das Feature nicht isoliert betrachtet werden.
+
+Ein belastbares Muster ist:
+
+```text
+Source / Artifact
+      ↓
+Input-Validierung
+      ↓
+Deterministische Analyse
+      ↓
+optionale erweiterte Analyse
+      ↓
+normalisierte Findings
+      ↓
+Policy Gate
+      ↓
+Report / Audit Evidence
+```
+
+Dabei sollte jeder Report mindestens folgende Informationen transportieren:
+
+- Identität des analysierten Artefakts
+- aktive Analyseverfahren
+- übersprungene oder nicht verfügbare Prüfschritte
+- stabile Regel- oder Finding-IDs
+- Schweregrad und Evidenz
+- Scanner- und Regelversion
+- eindeutiger technischer Abschlussstatus
+
+Damit wird das Feature nicht nur ausführbar, sondern **auditierbar**.
+
+## Fazit
+
+Ein Sprachmodell ist am stärksten als evidenzgebundener Analyst. Semantik erweitert statische Coverage, sollte aber keine unbelegte Ja/Nein-Instanz für Sicherheit sein.
+
+Der eigentliche Wert entsteht dann, wenn das Feature mit klaren Grenzen, reproduzierbaren Eingaben und transparenten Ergebnissen in den Entwicklungsprozess eingebettet wird.

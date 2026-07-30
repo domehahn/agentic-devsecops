@@ -1,0 +1,150 @@
+---
+title: "Single-File-Scan: gezielte Analyse mit minimalem Prüfkontext"
+description: "Nicht jede Sicherheitsprüfung benötigt einen kompletten Projektbaum. Der Single-File-Scan ist die präzise Variante für einzelne Konfigurationsdateien, Skripte, Manifeste oder…"
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Features
+  - Single File
+  - Security Scanning
+featured: false
+draft: false
+series:
+  slug: scanner-features
+  title: "Scanner Features"
+  order: 2
+---
+
+Nicht jede Sicherheitsprüfung benötigt einen kompletten Projektbaum. Der Single-File-Scan ist die präzise Variante für einzelne Konfigurationsdateien, Skripte, Manifeste oder exportierte Metadaten.
+
+Das Feature ist damit nicht nur eine Komfortfunktion.
+
+Es verändert, **welcher Kontext geprüft wird, welche Vertrauensgrenzen gelten und wie belastbar das Ergebnis später in CI/CD oder Security-Governance verwendet werden kann**.
+
+## Was das Feature leistet
+
+Das Feature nimmt genau eine Datei als Prüfobjekt und vermeidet zusätzliche Kontextaufnahme aus benachbarten Verzeichnissen. Dadurch sinken Laufzeit, Datenmenge und das Risiko, unbeabsichtigt fremde Inhalte in die Analyse einzubeziehen.
+
+Der Modus ist besonders nützlich für Editor-Integrationen, Pre-Commit-Hooks, Upload-Prüfungen und reproduzierbare Tests. Gleichzeitig muss klar sein: Ein Einzeldatei-Scan kann nur Aussagen über den vorhandenen Inhalt treffen. Beziehungen zu externen Dateien sind außerhalb seiner Coverage.
+
+## Typischer Ablauf
+
+Unabhängig von der konkreten Implementierung sollte der Ablauf klar getrennte Phasen besitzen:
+
+```text
+Input
+  ↓
+Validierung und Normalisierung
+  ↓
+Feature-spezifische Verarbeitung
+  ↓
+Security-Analyse
+  ↓
+Findings + Coverage + technischer Status
+  ↓
+Policy-Entscheidung
+```
+
+Diese Trennung ist wichtig, weil ein technischer Fehler bei Beschaffung, Parsing oder Providerzugriff nicht dieselbe Bedeutung hat wie ein tatsächlich unauffälliges Prüfergebnis.
+
+## Negatives Beispiel
+
+Eine Pipeline nutzt für jedes Artefakt pauschal einen rekursiven Scan, obwohl nur eine neu erzeugte JSON-Konfiguration validiert werden soll. Dabei werden zusätzlich Build-Logs, lokale Caches und Testdaten verarbeitet.
+
+```bash
+scanner scan .
+```
+
+Das erhöht Laufzeit und Datenexposition, obwohl die eigentliche Frage nur lautet: „Ist `policy.json` sicher und regelkonform?“ Der größere Prüfbereich liefert hier nicht automatisch bessere Evidenz.
+
+## Positives Beispiel
+
+Die Pipeline übergibt ausschließlich die relevante Datei:
+
+```bash
+scanner scan ./dist/policy.json
+```
+
+Die Auswertung kann präzise auf Syntax, gefährliche Werte, unerlaubte Endpunkte, eingebettete Anweisungen und Policy-Verstöße eingehen. Ein Befund bleibt eindeutig an eine Datei und deren Hash gebunden.
+
+```text
+target: dist/policy.json
+sha256: <digest>
+findings: 2
+coverage: single-file
+```
+
+Das Ergebnis ist klein, nachvollziehbar und einfach in Tests zu verwenden.
+
+<KeyTakeaway>
+Ein kleiner Prüfbereich ist dann ein Vorteil, wenn er bewusst gewählt wird. Single-File-Scanning maximiert Präzision und Reproduzierbarkeit, nicht Vollständigkeit des Gesamtprojekts.
+</KeyTakeaway>
+
+## Security- und Betriebsaspekte
+
+Der Scanner sollte Dateitypen nicht ausschließlich anhand der Dateiendung bestimmen. Content Sniffing, robuste Parserauswahl und klare Fallbacks verhindern, dass manipulierte Dateien durch falsche Endungen an Regeln vorbeigeschleust werden.
+
+Bei sehr großen Dateien sind Limits wichtig. Außerdem sollte die Ausgabe deutlich kennzeichnen, dass keine benachbarten Dateien einbezogen wurden. Diese Coverage-Transparenz verhindert, dass ein lokaler Befund fälschlich als Aussage über ein komplettes Paket verstanden wird.
+
+Ein professioneller Betrieb sollte außerdem drei Zustände konsequent auseinanderhalten:
+
+```text
+clean      = geprüft, kein relevanter Befund
+finding    = geprüft, mindestens ein relevanter Befund
+incomplete = Prüfung technisch oder fachlich nicht vollständig
+```
+
+Gerade der dritte Zustand ist für DevSecOps entscheidend.
+
+Ein Scanner darf fehlende Coverage nicht als positives Sicherheitsurteil darstellen.
+
+## Wo das Feature sinnvoll eingesetzt wird
+
+Der Modus ist ideal für einzelne Policy-Dateien, YAML-/JSON-Konfigurationen, Shell-Skripte, lockfiles oder Dateien aus einem Upload-Workflow. Er passt auch gut zu Unit-Tests für konkrete Detektoren.
+
+Sobald die Bedeutung einer Datei von weiteren Projektdateien abhängt, sollte auf einen Verzeichnis- oder Archiv-Scan gewechselt werden.
+
+Die konkrete Aktivierung sollte deshalb aus dem gewünschten Trust-Modell abgeleitet werden und nicht allein aus technischer Verfügbarkeit.
+
+## Integration in eine DevSecOps-Pipeline
+
+In einer Pipeline sollte das Feature nicht isoliert betrachtet werden.
+
+Ein belastbares Muster ist:
+
+```text
+Source / Artifact
+      ↓
+Input-Validierung
+      ↓
+Deterministische Analyse
+      ↓
+optionale erweiterte Analyse
+      ↓
+normalisierte Findings
+      ↓
+Policy Gate
+      ↓
+Report / Audit Evidence
+```
+
+Dabei sollte jeder Report mindestens folgende Informationen transportieren:
+
+- Identität des analysierten Artefakts
+- aktive Analyseverfahren
+- übersprungene oder nicht verfügbare Prüfschritte
+- stabile Regel- oder Finding-IDs
+- Schweregrad und Evidenz
+- Scanner- und Regelversion
+- eindeutiger technischer Abschlussstatus
+
+Damit wird das Feature nicht nur ausführbar, sondern **auditierbar**.
+
+## Fazit
+
+Ein kleiner Prüfbereich ist dann ein Vorteil, wenn er bewusst gewählt wird. Single-File-Scanning maximiert Präzision und Reproduzierbarkeit, nicht Vollständigkeit des Gesamtprojekts.
+
+Der eigentliche Wert entsteht dann, wenn das Feature mit klaren Grenzen, reproduzierbaren Eingaben und transparenten Ergebnissen in den Entwicklungsprozess eingebettet wird.

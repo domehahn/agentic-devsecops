@@ -1,0 +1,147 @@
+---
+title: "OSV-Abfragen: bekannte Schwachstellen in Abhängigkeiten automatisiert erkennen"
+description: "OSV bietet ein maschinenlesbares Schwachstellenmodell für Open-Source-Pakete und Versionsbereiche."
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Features
+  - OSV
+  - Security Scanning
+featured: false
+draft: false
+series:
+  slug: scanner-features
+  title: "Scanner Features"
+  order: 16
+---
+
+OSV bietet ein maschinenlesbares Schwachstellenmodell für Open-Source-Pakete und Versionsbereiche. In einem Scanner kann es die lokale Dependency-Inventarisierung mit bekannten Advisories korrelieren.
+
+Das Feature ist damit nicht nur eine Komfortfunktion.
+
+Es verändert, **welcher Kontext geprüft wird, welche Vertrauensgrenzen gelten und wie belastbar das Ergebnis später in CI/CD oder Security-Governance verwendet werden kann**.
+
+## Was das Feature leistet
+
+Der Ablauf beginnt mit einer deterministischen Erfassung von Paketname, Ecosystem und Version. Erst danach wird abgefragt, ob für genau diese Identität bekannte Schwachstellen vorliegen.
+
+Das Feature sollte zwischen „keine Treffer“, „Version unbekannt“, „Abfrage nicht durchgeführt“ und „Dienst nicht erreichbar“ unterscheiden. Nur der erste Zustand bedeutet tatsächlich, dass aus der verwendeten Datenquelle kein Advisory gefunden wurde.
+
+## Typischer Ablauf
+
+Unabhängig von der konkreten Implementierung sollte der Ablauf klar getrennte Phasen besitzen:
+
+```text
+Input
+  ↓
+Validierung und Normalisierung
+  ↓
+Feature-spezifische Verarbeitung
+  ↓
+Security-Analyse
+  ↓
+Findings + Coverage + technischer Status
+  ↓
+Policy-Entscheidung
+```
+
+Diese Trennung ist wichtig, weil ein technischer Fehler bei Beschaffung, Parsing oder Providerzugriff nicht dieselbe Bedeutung hat wie ein tatsächlich unauffälliges Prüfergebnis.
+
+## Negatives Beispiel
+
+Ein Paket ist nicht gepinnt:
+
+```text
+example-lib>=1.0
+```
+
+Der Scanner fragt nur nach dem Paketnamen und meldet eine beliebige Schwachstelle. Ohne konkret aufgelöste Version ist unklar, ob das Artefakt betroffen ist.
+
+Noch problematischer: Bei Netzwerkfehlern gibt die Implementierung einfach null Findings zurück.
+
+## Positives Beispiel
+
+Die Inventarisierung liefert:
+
+```json
+{
+  "ecosystem": "PyPI",
+  "name": "example-lib",
+  "version": "1.4.2"
+}
+```
+
+Die OSV-Antwort wird auf diese Version ausgewertet und mit Advisory-ID, betroffenem Bereich und Fix-Version in den Befund aufgenommen. Ist die Abfrage nicht verfügbar, lautet der Status beispielsweise `coverage: degraded` statt `safe`.
+
+<KeyTakeaway>
+Vulnerability Lookup ist nur so präzise wie die Paketidentität. Name, Ecosystem und konkrete Version müssen feststehen, und Ausfälle dürfen niemals als „keine Schwachstelle“ interpretiert werden.
+</KeyTakeaway>
+
+## Security- und Betriebsaspekte
+
+Dependency-Namen können Informationen über interne Technologieauswahl offenlegen. In sensiblen Umgebungen können Cache, Proxy oder Offline-Datenbank sinnvoll sein.
+
+Außerdem ist OSV ein Signal für bekannte Schwachstellen, nicht für Malware, Typosquatting oder bösartige Logik. Diese Kategorien benötigen zusätzliche Detektoren.
+
+Ein professioneller Betrieb sollte außerdem drei Zustände konsequent auseinanderhalten:
+
+```text
+clean      = geprüft, kein relevanter Befund
+finding    = geprüft, mindestens ein relevanter Befund
+incomplete = Prüfung technisch oder fachlich nicht vollständig
+```
+
+Gerade der dritte Zustand ist für DevSecOps entscheidend.
+
+Ein Scanner darf fehlende Coverage nicht als positives Sicherheitsurteil darstellen.
+
+## Wo das Feature sinnvoll eingesetzt wird
+
+OSV passt in Pull-Request-Scans, Release-Gates und Software-Composition-Analysis. Besonders stark ist es, wenn Lockfiles präzise Versionen liefern.
+
+Für ungepinnte oder dynamisch installierte Dependencies sollte der Report die eingeschränkte Aussagekraft deutlich machen.
+
+Die konkrete Aktivierung sollte deshalb aus dem gewünschten Trust-Modell abgeleitet werden und nicht allein aus technischer Verfügbarkeit.
+
+## Integration in eine DevSecOps-Pipeline
+
+In einer Pipeline sollte das Feature nicht isoliert betrachtet werden.
+
+Ein belastbares Muster ist:
+
+```text
+Source / Artifact
+      ↓
+Input-Validierung
+      ↓
+Deterministische Analyse
+      ↓
+optionale erweiterte Analyse
+      ↓
+normalisierte Findings
+      ↓
+Policy Gate
+      ↓
+Report / Audit Evidence
+```
+
+Dabei sollte jeder Report mindestens folgende Informationen transportieren:
+
+- Identität des analysierten Artefakts
+- aktive Analyseverfahren
+- übersprungene oder nicht verfügbare Prüfschritte
+- stabile Regel- oder Finding-IDs
+- Schweregrad und Evidenz
+- Scanner- und Regelversion
+- eindeutiger technischer Abschlussstatus
+
+Damit wird das Feature nicht nur ausführbar, sondern **auditierbar**.
+
+## Fazit
+
+Vulnerability Lookup ist nur so präzise wie die Paketidentität. Name, Ecosystem und konkrete Version müssen feststehen, und Ausfälle dürfen niemals als „keine Schwachstelle“ interpretiert werden.
+
+Der eigentliche Wert entsteht dann, wenn das Feature mit klaren Grenzen, reproduzierbaren Eingaben und transparenten Ergebnissen in den Entwicklungsprozess eingebettet wird.

@@ -1,0 +1,145 @@
+---
+title: "Lokale Modelle mit Ollama und vLLM: private semantische Analyse betreiben"
+description: "Lokale Inferenz mit Ollama oder vLLM ermöglicht semantische Analyse, ohne Quelltext an einen externen Cloud-Dienst zu übertragen."
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Features
+  - Local LLM
+  - Security Scanning
+featured: false
+draft: false
+series:
+  slug: scanner-features
+  title: "Scanner Features"
+  order: 15
+---
+
+Lokale Inferenz mit Ollama oder vLLM ermöglicht semantische Analyse, ohne Quelltext an einen externen Cloud-Dienst zu übertragen. Das verbessert Datenkontrolle, verschiebt aber Verantwortung auf den eigenen Betrieb.
+
+Das Feature ist damit nicht nur eine Komfortfunktion.
+
+Es verändert, **welcher Kontext geprüft wird, welche Vertrauensgrenzen gelten und wie belastbar das Ergebnis später in CI/CD oder Security-Governance verwendet werden kann**.
+
+## Was das Feature leistet
+
+Der Scanner verbindet sich mit einem lokalen oder internen Inferenzendpoint. Die Analysepipeline bleibt grundsätzlich gleich: Evidenz auswählen, Prompt erzeugen, Antwort validieren und Findings mit Belegstellen verknüpfen.
+
+„Lokal“ sollte dabei eine explizite Vertrauenseigenschaft sein. Ein frei konfigurierbarer Endpoint kann sonst versehentlich auf einen entfernten Host zeigen und den angenommenen Privacy-Vorteil aufheben.
+
+## Typischer Ablauf
+
+Unabhängig von der konkreten Implementierung sollte der Ablauf klar getrennte Phasen besitzen:
+
+```text
+Input
+  ↓
+Validierung und Normalisierung
+  ↓
+Feature-spezifische Verarbeitung
+  ↓
+Security-Analyse
+  ↓
+Findings + Coverage + technischer Status
+  ↓
+Policy-Entscheidung
+```
+
+Diese Trennung ist wichtig, weil ein technischer Fehler bei Beschaffung, Parsing oder Providerzugriff nicht dieselbe Bedeutung hat wie ein tatsächlich unauffälliges Prüfergebnis.
+
+## Negatives Beispiel
+
+Eine Konfiguration akzeptiert jede Base URL und nennt den Modus trotzdem „local“:
+
+```yaml
+llm:
+  endpoint: http://203.0.113.42:11434
+```
+
+Die Benutzeroberfläche suggeriert lokale Verarbeitung, tatsächlich verlässt der Inhalt das Netzwerksegment. Zusätzlich läuft HTTP ohne TLS über eine geroutete Strecke.
+
+## Positives Beispiel
+
+Die Policy erlaubt im Private-Modus nur Loopback oder freigegebene interne Netze:
+
+```yaml
+llm:
+  mode: private
+  endpoint: http://127.0.0.1:11434
+  allow_remote: false
+```
+
+Für einen internen vLLM-Cluster kann eine separate Allowlist mit TLS und Service-Authentisierung gelten. Der Report dokumentiert, ob die Analyse lokal, intern oder extern stattfand.
+
+<KeyTakeaway>
+Private Inferenz ist eine Architekturentscheidung, kein Label. Endpoint-Policy, Modellprovenienz und Betriebsgrenzen bestimmen, ob Daten tatsächlich im vorgesehenen Vertrauensbereich bleiben.
+</KeyTakeaway>
+
+## Security- und Betriebsaspekte
+
+Modelldateien und Serving-Container sind Supply-Chain-Artefakte. Version, Herkunft und Hash sollten kontrolliert werden. Offene vLLM-/Ollama-Endpunkte dürfen nicht ungeschützt im Unternehmensnetz stehen, da sie Rechenressourcen und potenziell Promptdaten exponieren.
+
+Lokale Modelle benötigen außerdem Ressourcenlimits. Ein Scan sollte die Workstation oder den CI-Runner nicht durch unbeschränkte Kontexte blockieren.
+
+Ein professioneller Betrieb sollte außerdem drei Zustände konsequent auseinanderhalten:
+
+```text
+clean      = geprüft, kein relevanter Befund
+finding    = geprüft, mindestens ein relevanter Befund
+incomplete = Prüfung technisch oder fachlich nicht vollständig
+```
+
+Gerade der dritte Zustand ist für DevSecOps entscheidend.
+
+Ein Scanner darf fehlende Coverage nicht als positives Sicherheitsurteil darstellen.
+
+## Wo das Feature sinnvoll eingesetzt wird
+
+Geeignet für vertrauliche Repositories, Offline-Umgebungen, Forschung und Teams mit eigener Inferenzplattform. Der Modus ist auch wertvoll für reproduzierbare Tests mit fest gepinnten Modellen.
+
+Wenn Betriebsaufwand und Modellpflege nicht übernommen werden können, ist ein Managed Backend möglicherweise effizienter.
+
+Die konkrete Aktivierung sollte deshalb aus dem gewünschten Trust-Modell abgeleitet werden und nicht allein aus technischer Verfügbarkeit.
+
+## Integration in eine DevSecOps-Pipeline
+
+In einer Pipeline sollte das Feature nicht isoliert betrachtet werden.
+
+Ein belastbares Muster ist:
+
+```text
+Source / Artifact
+      ↓
+Input-Validierung
+      ↓
+Deterministische Analyse
+      ↓
+optionale erweiterte Analyse
+      ↓
+normalisierte Findings
+      ↓
+Policy Gate
+      ↓
+Report / Audit Evidence
+```
+
+Dabei sollte jeder Report mindestens folgende Informationen transportieren:
+
+- Identität des analysierten Artefakts
+- aktive Analyseverfahren
+- übersprungene oder nicht verfügbare Prüfschritte
+- stabile Regel- oder Finding-IDs
+- Schweregrad und Evidenz
+- Scanner- und Regelversion
+- eindeutiger technischer Abschlussstatus
+
+Damit wird das Feature nicht nur ausführbar, sondern **auditierbar**.
+
+## Fazit
+
+Private Inferenz ist eine Architekturentscheidung, kein Label. Endpoint-Policy, Modellprovenienz und Betriebsgrenzen bestimmen, ob Daten tatsächlich im vorgesehenen Vertrauensbereich bleiben.
+
+Der eigentliche Wert entsteht dann, wenn das Feature mit klaren Grenzen, reproduzierbaren Eingaben und transparenten Ergebnissen in den Entwicklungsprozess eingebettet wird.
