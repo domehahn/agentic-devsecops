@@ -155,7 +155,7 @@ sprachspezifischer Parser → AST → CFG/Call Graph → Argument-/Taintanalyse 
 
 Für **JS/TS Process Execution** bedeutet das konkret:
 
-JS/TS-Parser lösen Imports/Requires und Calls auf `child_process.exec/spawn/fork`, Bun/Deno APIs und Wrapper. Entscheidend sind `shell:true`, Command Strings, Template Literals und dynamische argv-Elemente. Taint wird durch Promises/Callbacks soweit möglich weitergegeben. `spawn("git", ["status"], {shell:false})` ist strukturell enger als `exec(`git ${input}`)`. Das Finding referenziert Call Site, Shellmodus und den konkreten tainted Argumentpfad.
+JS/TS-Parser lösen Imports/Requires und Calls auf `child_process.exec/spawn/fork`, Bun/Deno APIs und Wrapper. Entscheidend sind `shell:true`, Command Strings, Template Literals und dynamische argv-Elemente. Taint wird durch Promises/Callbacks soweit möglich weitergegeben. `spawn("git", ["status"], {shell:false})` ist strukturell enger als `` exec(`git ${input}`) ``. Das Finding referenziert Call Site, Shellmodus und den konkreten tainted Argumentpfad.
 
 ### 4. Welche Zwischenrepräsentation braucht die Engine?
 
