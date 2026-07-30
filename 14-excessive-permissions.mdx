@@ -124,142 +124,169 @@ So wird aus einem Alarm eine reproduzierbare Security-Evidenz.
 
 ## Wie funktioniert die Detection von Excessive Permissions?
 
-Eine belastbare Detection für **Excessive Permissions** sollte nicht auf einem einzelnen Schlüsselwort basieren. Für Agentic Skills muss der Scanner zunächst entscheiden, **welche Semantik oder welcher technische Datenfluss tatsächlich vorliegt** und ob daraus die Security Property verletzt wird.
+Die Security Property **Excessive Permissions** sollte nicht über eine austauschbare Keyword-Regel erkannt werden. Der Scanner muss aus dem Artefakt genau die Sicherheitsrelation rekonstruieren, die diese Property definiert.
 
-Für diese Property ist das primäre Analysemodell **Capability-Set-Analyse**. Extrahiert werden insbesondere **deklarierte Tools, Netzwerk-/Filesystem-/Secret-Rechte, Wildcards, Admin-Rechte und tatsächlich benötigte Operationen**.
+Das passende Analysemodell ist hier **Capability-Set-Analyse**.
 
-Die Detection lässt sich konzeptionell als Pipeline darstellen:
+### 1. Ausgangsmaterial: Was sieht der Scanner?
 
-```text
-Artefakt
-   │
-   ▼
-Normalisierung und strukturierte Parser
-   │
-   ▼
-property-spezifische Extraktion
-   │
-   ▼
-Zwischenrepräsentation / Datenfluss
-   │
-   ▼
-Kontext-, Trust- und Policy-Bewertung
-   │
-   ▼
-Finding + Evidence Chain
+Ein problematischer Fall kann beispielsweise so aussehen:
+
+```yaml
+permissions:
+  repository: write
+  issues: write
+  secrets: read
+  network: '*'
 ```
 
-### 1. Nicht nach Wörtern, sondern nach der relevanten Relation suchen
+Der Inhalt ist **untrusted data**. Er wird nicht ausgeführt und – bei Freitext – nicht als Instruktion befolgt. Gleichzeitig behält der Scanner Raw Content, Dateiname, Zeilen/Spalten und Strukturpfad, damit jede spätere Aussage auf Evidence zurückgeführt werden kann.
 
-Die bereits genannten statischen Indikatoren bleiben nützlich:
+### 2. Welche Information muss zuerst extrahiert werden?
+
+Für diese Property sind insbesondere folgende Beobachtungen relevant:
+
+```text
+deklarierte Tools, Netzwerk-/Filesystem-/Secret-Rechte, Wildcards, Admin-Rechte und tatsächlich benötigte Operationen
+```
+
+Die vorhandenen statischen Indikatoren helfen beim Finden möglicher Stellen:
 
 - Wildcard-Rechte
 - Write statt Read ohne Notwendigkeit
 - Secrets-/Admin-Zugriff bei fachlich lesender Aufgabe
 
-Sie sind aber nur **Features für die Analyse**. Ein Treffer auf ein Wort oder eine API ist noch kein hinreichender Beweis. Der Scanner muss daraus eine relationale Darstellung erzeugen. Für Excessive Permissions kann diese vereinfacht so aussehen:
+Diese Signale sind aber nur **Kandidaten**. Ein Treffer wird erst dann zur Security Property, wenn die Beziehung zwischen Quelle, Operation, Scope, Guard und Wirkung passt.
+
+### 3. Technische Detection-Pipeline
+
+```text
+Contract/Config → Capability-Normalisierung → Required/Declared/Granted/Observed → Lattice/Subsumption → Differenz
+```
+
+Für **Excessive Permissions** bedeutet das konkret:
+
+Alle Rechte werden in kanonische Capabilities übersetzt, z. B. `filesystem.read:/workspace/**`, `network.post:api.example`, `secret.read:foo`, `tool.invoke:repo.write`. Eine Capability-Lattice kennt Subsumption und Wildcards. Aus beobachteten Codepfaden wird ein Required-Set gebildet, aus Config/Runtime ein Granted-Set. Die Detection ist die Mengendifferenz `Granted - Required`, gewichtet nach Authority. `network:*` bei ausschließlich lokalem Parsing ist klarer Excess; ein optionaler, dokumentierter Publish-Pfad muss Reachability und Scope belegen.
+
+### 4. Welche Zwischenrepräsentation braucht die Engine?
+
+Nach Parsing und Normalisierung sollte die Engine nicht mehr auf dem ursprünglichen String entscheiden, sondern auf einer strukturierten Security-IR.
+
+Beispiel:
 
 ```text
 granted_capabilities - required_capabilities = EXCESS
 ```
 
-Die eigentliche Security-Entscheidung lautet dann sinngemäß:
+Damit kann die Detection zwischen sprachlich ähnlichen, sicherheitstechnisch aber gegensätzlichen Fällen unterscheiden. Die IR ist außerdem die Verbindung zu AST-, CFG-, Taint-, Capability-, Identity- oder Semantic-Findings anderer Analyzer.
+
+### 5. Wann entsteht tatsächlich ein Finding?
+
+Die eigentliche Entscheidungsregel lässt sich so ausdrücken:
 
 ```text
 IF
     die gewährte Authority ist breiter als der nachvollziehbare Zweck oder die beobachtete Nutzung
 THEN
     report Excessive Permissions
+ELSE
+    keep as signal / no finding
 ```
 
-Damit wird zwischen syntaktischem Auftreten und sicherheitsrelevanter Bedeutung unterschieden.
+Wichtig ist, dass **alle Teile der Relation** belegt werden. Fehlt beispielsweise ein erreichbarer Sink, eine Privilegänderung, ein externer Zielbereich oder der Bezug zu einer Schutzregel, darf ein einzelnes verdächtiges Token nicht dieselbe Aussagekraft bekommen.
 
-### 2. Positive und negative Kontexte auseinanderhalten
+### 6. Warum das positive Beispiel nicht anschlagen darf
 
-Besonders bei Agentic Skills enthalten Dokumentation, Tests und Security-Guidance häufig genau die gefährlichen Strings oder APIs, die ein Scanner finden soll. Deshalb sollte die Detection immer einen **Ausschluss- beziehungsweise Kontextschritt** besitzen.
-
-Ein Finding sollte beispielsweise unterdrückt oder in der Confidence reduziert werden, wenn folgender defensive Kontext vorliegt: **jede gewährte Capability ist einer konkreten Operation zuordenbar und auf Resource/Verb/Scope begrenzt**.
-
-Das Prinzip ist:
-
-```text
-risk signal present?
-        │
-        ├── no  → no finding
-        │
-        ▼ yes
-security relation established?
-        │
-        ├── no  → informational / no finding
-        │
-        ▼ yes
-benign defensive context proven?
-        │
-        ├── yes → suppress or downgrade
-        │
-        ▼ no
-      FINDING
-```
-
-Bei Text-Properties bedeutet „Kontext“ typischerweise Heading, vorherige und folgende Sätze, Negation, Modalität, Zitate und Rollenbezug. Bei Code- und Datenfluss-Properties sind dagegen AST-Struktur, Kontrollfluss, Sanitizer, Argumentherkunft, Reachability und Capability-Grenzen wichtiger als sprachlicher Kontext.
-
-### 3. Deterministische und semantische Analyse kombinieren
-
-Eine robuste Engine sollte mehrere Ebenen kombinieren:
-
-```text
-Deterministische Evidenz
-Pattern / Parser / AST / Schema / Data Flow
-                    │
-                    ├──────────────┐
-                    ▼              ▼
-            Property-Logik   semantische Analyse
-                    │              │
-                    └──────┬───────┘
-                           ▼
-                    Security Finding
-```
-
-Deterministische Analyse liefert reproduzierbare Belege. Semantische Analyse ist besonders dort hilfreich, wo die gleiche Absicht durch Paraphrasen, andere Sprachen oder mehrere Sätze ausgedrückt werden kann. Sie sollte jedoch nicht unkritisch einen strukturell widerlegten Datenfluss „erfinden“. Wo AST, Schema oder Taint Tracking einen konkreten technischen Pfad zeigen können, sollte diese Evidenz höher gewichtet werden.
-
-### 4. Die Detection muss eine Evidence Chain ausgeben
-
-Für **Excessive Permissions** sollte ein Finding mindestens **gewährte Capability, beobachteter Bedarf, ungenutzter Überschuss und mögliche Wirkung** enthalten.
-
-Beispielhaft:
+Ein sicherer Gegenfall ist:
 
 ```yaml
-property: 'Excessive Permissions'
-location: "path/to/artifact:line"
-evidence:
-  detector: "Capability-Set-Analyse"
-  relation: "granted_capabilities - required_capabilities = EXCESS"
-  context_checked: true
+permissions:
+  repository: read
+  pull_requests: comment
+  network:
+    - api.internal.example
+```
+
+Für die False-Positive-Unterdrückung gilt zusätzlich:
+
+```text
+jede gewährte Capability ist einer konkreten Operation zuordenbar und auf Resource/Verb/Scope begrenzt
+```
+
+Der Scanner sollte positive und negative Kontexte nicht über eine globale Wortliste behandeln. Er muss denselben technischen Daten-/Kontroll-/Intentpfad prüfen und feststellen, ob ein Guard, Scope, Typconstraint, Declassifier oder sichere Gegenmodalität die riskante Relation verhindert.
+
+### 7. Wie entsteht eine belastbare Evidence Chain?
+
+Ein gutes Finding enthält mindestens:
+
+```text
+gewährte Capability, beobachteter Bedarf, ungenutzter Überschuss und mögliche Wirkung
+```
+
+Eine typische interne Evidence Chain sieht so aus:
+
+```text
+Raw Evidence
+    ↓
+parser-/analyzer-spezifische Beobachtung
+    ↓
+Security-IR
+    ↓
+Policy-/Scope-/Guard-Prüfung
+    ↓
+entscheidender Daten-, Kontroll- oder Intentpfad
+    ↓
+Finding + Confidence
+```
+
+Beispielhafte strukturierte Ausgabe:
+
+```yaml
+property: "excessive-permissions"
+detector: "Capability-Set-Analyse"
+location:
+  file: "path/to/artifact"
+  line: 42
+security_relation: "granted_capabilities - required_capabilities = EXCESS"
+context_checked: true
+evidence_complete: true
 confidence: high
 ```
 
-Entscheidend ist, dass ein Reviewer nicht nur sieht, **dass** etwas gefunden wurde, sondern **warum die konkrete Fundstelle die Property verletzt**.
+### 8. Wann wird aus einem Einzelfinding ein höheres Risiko?
 
-### 5. Cross-Signal Composition erhöht die Qualität
-
-Viele Angriffe auf Agentic Skills bestehen nicht aus einem einzelnen Signal. Die Detection wird deutlich stärker, wenn mehrere unabhängige Evidenzen zusammenspielen.
+Diese Property sollte mit anderen Signalen komponiert werden, insbesondere **mit Tool Wildcards, Container Privilege oder Underdeclared Capability**.
 
 ```text
-schwaches Einzelsignal
-        +
-zweites unabhängiges Signal
-        +
-passender Daten-/Kontrollfluss
-        +
-fehlender Guardrail
-        ↓
-hoch belastbares Finding
+Property Evidence
+      +
+unabhängige zweite Evidence
+      +
+erreichbarer Daten-/Kontrollpfad
+      +
+fehlender oder umgangener Schutz
+      ↓
+Composite Finding mit höherer Confidence/Severity
 ```
 
-Bei einem einzelnen unsicheren Hinweis kann die Engine beispielsweise `medium` melden. Wenn derselbe Pfad zusätzlich eine sensitive Capability erreicht, ein Guard fehlt und die semantische Intention zur Property passt, kann daraus ein `high` oder `critical` Finding werden. So entsteht **semantic composition**, ohne die deterministischen Belege zu verlieren.
+Dabei ist Composition kein Ersatz für die Einzelregel. Erst wird jede Property sauber belegt, danach werden Beziehungen zwischen Findings aufgebaut.
+
+### 9. Grenzen der Detection
+
+Nicht jede Ebene ist gleich zuverlässig. Parser-, AST-, CFG-, Taint-, Schema-, Pfad-, URL-, Lockfile- oder Capability-Evidence ist weitgehend deterministisch, solange das relevante Verhalten statisch sichtbar ist. Freie Sprache, Zweckbehauptungen und offene Paraphrasen benötigen dagegen semantische Interpretation und sollten mit eigener Confidence ausgewiesen werden.
+
+Unaufgelöste Reflection, dynamische Downloads, Runtime-DNS, entfernte Policies oder unbekannte Wrapper dürfen nicht als „sicher“ interpretiert werden. Besser ist ein expliziter Coverage-Zustand wie:
+
+```text
+verified
+partially_resolved
+runtime_dependent
+semantic_only
+not_observable
+```
 
 <KeyTakeaway>
-Eine gute Detection für Excessive Permissions erkennt nicht lediglich ein verdächtiges Token. Sie rekonstruiert die sicherheitsrelevante Relation, prüft defensiven Kontext, korreliert strukturelle Evidenz und liefert einen nachvollziehbaren Beweis dafür, warum das Verhalten eines Agentic Skills die Security Property verletzt.
+Bei **Excessive Permissions** entsteht das Finding nicht durch ein gefährlich klingendes Wort, sondern durch die technisch belegte Relation **granted_capabilities - required_capabilities = EXCESS**. Genau diese Relation muss die Detection rekonstruieren, gegen sichere Gegenkontexte prüfen und mit nachvollziehbarer Evidence ausgeben.
 </KeyTakeaway>
 
 ## Technische Controls

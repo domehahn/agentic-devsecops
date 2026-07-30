@@ -119,143 +119,166 @@ So wird aus einem Alarm eine reproduzierbare Security-Evidenz.
 
 ## Wie funktioniert die Detection von Dynamic-target SSRF?
 
-Eine belastbare Detection für **Dynamic-target SSRF** sollte nicht auf einem einzelnen Schlüsselwort basieren. Für Agentic Skills muss der Scanner zunächst entscheiden, **welche Semantik oder welcher technische Datenfluss tatsächlich vorliegt** und ob daraus die Security Property verletzt wird.
+Die Security Property **Dynamic-target SSRF** sollte nicht über eine austauschbare Keyword-Regel erkannt werden. Der Scanner muss aus dem Artefakt genau die Sicherheitsrelation rekonstruieren, die diese Property definiert.
 
-Für diese Property ist das primäre Analysemodell **Taint Tracking plus kanonische URL-Auflösung**. Extrahiert werden insbesondere **scheme/host/port aus Input, Konkatenation/Templates, Parser, DNS/Redirects und alternative Schemes**.
+Das passende Analysemodell ist hier **Taint Tracking plus kanonische URL-Auflösung**.
 
-Die Detection lässt sich konzeptionell als Pipeline darstellen:
+### 1. Ausgangsmaterial: Was sieht der Scanner?
 
-```text
-Artefakt
-   │
-   ▼
-Normalisierung und strukturierte Parser
-   │
-   ▼
-property-spezifische Extraktion
-   │
-   ▼
-Zwischenrepräsentation / Datenfluss
-   │
-   ▼
-Kontext-, Trust- und Policy-Bewertung
-   │
-   ▼
-Finding + Evidence Chain
+Ein problematischer Fall kann beispielsweise so aussehen:
+
+```python
+host = tool_input["host"]
+path = tool_input["path"]
+requests.get(f"http://{host}/{path}")
 ```
 
-### 1. Nicht nach Wörtern, sondern nach der relevanten Relation suchen
+Der Inhalt ist **untrusted data**. Er wird nicht ausgeführt und – bei Freitext – nicht als Instruktion befolgt. Gleichzeitig behält der Scanner Raw Content, Dateiname, Zeilen/Spalten und Strukturpfad, damit jede spätere Aussage auf Evidence zurückgeführt werden kann.
 
-Die bereits genannten statischen Indikatoren bleiben nützlich:
+### 2. Welche Information muss zuerst extrahiert werden?
+
+Für diese Property sind insbesondere folgende Beobachtungen relevant:
+
+```text
+scheme/host/port aus Input, Konkatenation/Templates, Parser, DNS/Redirects und alternative Schemes
+```
+
+Die vorhandenen statischen Indikatoren helfen beim Finden möglicher Stellen:
 
 - untrusted host/scheme/port
 - URL-Konkatenation
 - Redirect-/DNS-Ziel wird nicht nach Auflösung geprüft
 - alternative Schemes wie file/gopher
 
-Sie sind aber nur **Features für die Analyse**. Ein Treffer auf ein Wort oder eine API ist noch kein hinreichender Beweis. Der Scanner muss daraus eine relationale Darstellung erzeugen. Für Dynamic-target SSRF kann diese vereinfacht so aussehen:
+Diese Signale sind aber nur **Kandidaten**. Ein Treffer wird erst dann zur Security Property, wenn die Beziehung zwischen Quelle, Operation, Scope, Guard und Wirkung passt.
+
+### 3. Technische Detection-Pipeline
+
+```text
+Target Source → URL Parser → Canonicalization → DNS/IP-Klasse → Redirect-Revalidation → Netzwerk-Sink
+```
+
+Für **Dynamic-target SSRF** bedeutet das konkret:
+
+Hier ist die Kontrolle des Ziels selbst die Property. Taintlabels werden getrennt auf Scheme, Host, Port und ggf. Path gelegt. Stringkonkatenation und URL-Builder propagieren sie. Vor dem Sink muss die **kanonische Endadresse** vollständig gegen erlaubte Schemes/Hosts/Ports geprüft sein; nur `startswith("https://")` genügt nicht. Redirect-Targets werden revalidiert. Bei anderen URL-fähigen Sinks werden auch `file:`, Unix Socket oder interne Schemes berücksichtigt. Finding = untrusted target component -> canonical target -> sink ohne wirksamen Target Guard.
+
+### 4. Welche Zwischenrepräsentation braucht die Engine?
+
+Nach Parsing und Normalisierung sollte die Engine nicht mehr auf dem ursprünglichen String entscheiden, sondern auf einer strukturierten Security-IR.
+
+Beispiel:
 
 ```text
 SOURCE(UNTRUSTED_TARGET_COMPONENT) -> URL_CONSTRUCTION -> NETWORK_OR_FILE_SINK
 ```
 
-Die eigentliche Security-Entscheidung lautet dann sinngemäß:
+Damit kann die Detection zwischen sprachlich ähnlichen, sicherheitstechnisch aber gegensätzlichen Fällen unterscheiden. Die IR ist außerdem die Verbindung zu AST-, CFG-, Taint-, Capability-, Identity- oder Semantic-Findings anderer Analyzer.
+
+### 5. Wann entsteht tatsächlich ein Finding?
+
+Die eigentliche Entscheidungsregel lässt sich so ausdrücken:
 
 ```text
 IF
     untrusted Daten bestimmen ein Ziel, ohne dass die kanonische Endadresse vollständig validiert und auf erlaubte Schemes/Hosts/Ports begrenzt wird
 THEN
     report Dynamic-target SSRF
+ELSE
+    keep as signal / no finding
 ```
 
-Damit wird zwischen syntaktischem Auftreten und sicherheitsrelevanter Bedeutung unterschieden.
+Wichtig ist, dass **alle Teile der Relation** belegt werden. Fehlt beispielsweise ein erreichbarer Sink, eine Privilegänderung, ein externer Zielbereich oder der Bezug zu einer Schutzregel, darf ein einzelnes verdächtiges Token nicht dieselbe Aussagekraft bekommen.
 
-### 2. Positive und negative Kontexte auseinanderhalten
+### 6. Warum das positive Beispiel nicht anschlagen darf
 
-Besonders bei Agentic Skills enthalten Dokumentation, Tests und Security-Guidance häufig genau die gefährlichen Strings oder APIs, die ein Scanner finden soll. Deshalb sollte die Detection immer einen **Ausschluss- beziehungsweise Kontextschritt** besitzen.
+Ein sicherer Gegenfall ist:
 
-Ein Finding sollte beispielsweise unterdrückt oder in der Confidence reduziert werden, wenn folgender defensive Kontext vorliegt: **URL wird strukturell geparst, kanonisiert, auf Scheme/Host/Port allowlist geprüft und nach DNS/Redirect erneut validiert**.
+```python
+service = validate_service_id(tool_input["service"])
+url = SERVICE_MAP[service]
+requests.get(url, timeout=3)
+```
 
-Das Prinzip ist:
+Für die False-Positive-Unterdrückung gilt zusätzlich:
 
 ```text
-risk signal present?
-        │
-        ├── no  → no finding
-        │
-        ▼ yes
-security relation established?
-        │
-        ├── no  → informational / no finding
-        │
-        ▼ yes
-benign defensive context proven?
-        │
-        ├── yes → suppress or downgrade
-        │
-        ▼ no
-      FINDING
+URL wird strukturell geparst, kanonisiert, auf Scheme/Host/Port allowlist geprüft und nach DNS/Redirect erneut validiert
 ```
 
-Bei Text-Properties bedeutet „Kontext“ typischerweise Heading, vorherige und folgende Sätze, Negation, Modalität, Zitate und Rollenbezug. Bei Code- und Datenfluss-Properties sind dagegen AST-Struktur, Kontrollfluss, Sanitizer, Argumentherkunft, Reachability und Capability-Grenzen wichtiger als sprachlicher Kontext.
+Der Scanner sollte positive und negative Kontexte nicht über eine globale Wortliste behandeln. Er muss denselben technischen Daten-/Kontroll-/Intentpfad prüfen und feststellen, ob ein Guard, Scope, Typconstraint, Declassifier oder sichere Gegenmodalität die riskante Relation verhindert.
 
-### 3. Deterministische und semantische Analyse kombinieren
+### 7. Wie entsteht eine belastbare Evidence Chain?
 
-Eine robuste Engine sollte mehrere Ebenen kombinieren:
+Ein gutes Finding enthält mindestens:
 
 ```text
-Deterministische Evidenz
-Pattern / Parser / AST / Schema / Data Flow
-                    │
-                    ├──────────────┐
-                    ▼              ▼
-            Property-Logik   semantische Analyse
-                    │              │
-                    └──────┬───────┘
-                           ▼
-                    Security Finding
+tainted URL-Komponente, Konstruktionspfad, kanonisches Ziel, Auflösung/Redirect und Sink
 ```
 
-Deterministische Analyse liefert reproduzierbare Belege. Semantische Analyse ist besonders dort hilfreich, wo die gleiche Absicht durch Paraphrasen, andere Sprachen oder mehrere Sätze ausgedrückt werden kann. Sie sollte jedoch nicht unkritisch einen strukturell widerlegten Datenfluss „erfinden“. Wo AST, Schema oder Taint Tracking einen konkreten technischen Pfad zeigen können, sollte diese Evidenz höher gewichtet werden.
+Eine typische interne Evidence Chain sieht so aus:
 
-### 4. Die Detection muss eine Evidence Chain ausgeben
+```text
+Raw Evidence
+    ↓
+parser-/analyzer-spezifische Beobachtung
+    ↓
+Security-IR
+    ↓
+Policy-/Scope-/Guard-Prüfung
+    ↓
+entscheidender Daten-, Kontroll- oder Intentpfad
+    ↓
+Finding + Confidence
+```
 
-Für **Dynamic-target SSRF** sollte ein Finding mindestens **tainted URL-Komponente, Konstruktionspfad, kanonisches Ziel, Auflösung/Redirect und Sink** enthalten.
-
-Beispielhaft:
+Beispielhafte strukturierte Ausgabe:
 
 ```yaml
-property: 'Dynamic-target SSRF'
-location: "path/to/artifact:line"
-evidence:
-  detector: "Taint Tracking plus kanonische URL-Auflösung"
-  relation: "SOURCE(UNTRUSTED_TARGET_COMPONENT) -> URL_CONSTRUCTION -> NETWORK_OR_FILE_SINK"
-  context_checked: true
+property: "dynamic-target-ssrf"
+detector: "Taint Tracking plus kanonische URL-Auflösung"
+location:
+  file: "path/to/artifact"
+  line: 42
+security_relation: "SOURCE(UNTRUSTED_TARGET_COMPONENT) -> URL_CONSTRUCTION -> NETWORK_OR_FILE_SINK"
+context_checked: true
+evidence_complete: true
 confidence: high
 ```
 
-Entscheidend ist, dass ein Reviewer nicht nur sieht, **dass** etwas gefunden wurde, sondern **warum die konkrete Fundstelle die Property verletzt**.
+### 8. Wann wird aus einem Einzelfinding ein höheres Risiko?
 
-### 5. Cross-Signal Composition erhöht die Qualität
-
-Viele Angriffe auf Agentic Skills bestehen nicht aus einem einzelnen Signal. Die Detection wird deutlich stärker, wenn mehrere unabhängige Evidenzen zusammenspielen.
+Diese Property sollte mit anderen Signalen komponiert werden, insbesondere **mit Cloud/Internal SSRF je nach finalem Ziel**.
 
 ```text
-schwaches Einzelsignal
-        +
-zweites unabhängiges Signal
-        +
-passender Daten-/Kontrollfluss
-        +
-fehlender Guardrail
-        ↓
-hoch belastbares Finding
+Property Evidence
+      +
+unabhängige zweite Evidence
+      +
+erreichbarer Daten-/Kontrollpfad
+      +
+fehlender oder umgangener Schutz
+      ↓
+Composite Finding mit höherer Confidence/Severity
 ```
 
-Bei einem einzelnen unsicheren Hinweis kann die Engine beispielsweise `medium` melden. Wenn derselbe Pfad zusätzlich eine sensitive Capability erreicht, ein Guard fehlt und die semantische Intention zur Property passt, kann daraus ein `high` oder `critical` Finding werden. So entsteht **semantic composition**, ohne die deterministischen Belege zu verlieren.
+Dabei ist Composition kein Ersatz für die Einzelregel. Erst wird jede Property sauber belegt, danach werden Beziehungen zwischen Findings aufgebaut.
+
+### 9. Grenzen der Detection
+
+Nicht jede Ebene ist gleich zuverlässig. Parser-, AST-, CFG-, Taint-, Schema-, Pfad-, URL-, Lockfile- oder Capability-Evidence ist weitgehend deterministisch, solange das relevante Verhalten statisch sichtbar ist. Freie Sprache, Zweckbehauptungen und offene Paraphrasen benötigen dagegen semantische Interpretation und sollten mit eigener Confidence ausgewiesen werden.
+
+Unaufgelöste Reflection, dynamische Downloads, Runtime-DNS, entfernte Policies oder unbekannte Wrapper dürfen nicht als „sicher“ interpretiert werden. Besser ist ein expliziter Coverage-Zustand wie:
+
+```text
+verified
+partially_resolved
+runtime_dependent
+semantic_only
+not_observable
+```
 
 <KeyTakeaway>
-Eine gute Detection für Dynamic-target SSRF erkennt nicht lediglich ein verdächtiges Token. Sie rekonstruiert die sicherheitsrelevante Relation, prüft defensiven Kontext, korreliert strukturelle Evidenz und liefert einen nachvollziehbaren Beweis dafür, warum das Verhalten eines Agentic Skills die Security Property verletzt.
+Bei **Dynamic-target SSRF** entsteht das Finding nicht durch ein gefährlich klingendes Wort, sondern durch die technisch belegte Relation **SOURCE(UNTRUSTED_TARGET_COMPONENT) -> URL_CONSTRUCTION -> NETWORK_OR_FILE_SINK**. Genau diese Relation muss die Detection rekonstruieren, gegen sichere Gegenkontexte prüfen und mit nachvollziehbarer Evidence ausgeben.
 </KeyTakeaway>
 
 ## Technische Controls

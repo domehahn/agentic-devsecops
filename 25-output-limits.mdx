@@ -115,142 +115,162 @@ So wird aus einem Alarm eine reproduzierbare Security-Evidenz.
 
 ## Wie funktioniert die Detection von Output Limits?
 
-Eine belastbare Detection für **Output Limits** sollte nicht auf einem einzelnen Schlüsselwort basieren. Für Agentic Skills muss der Scanner zunächst entscheiden, **welche Semantik oder welcher technische Datenfluss tatsächlich vorliegt** und ob daraus die Security Property verletzt wird.
+Die Security Property **Output Limits** sollte nicht über eine austauschbare Keyword-Regel erkannt werden. Der Scanner muss aus dem Artefakt genau die Sicherheitsrelation rekonstruieren, die diese Property definiert.
 
-Für diese Property ist das primäre Analysemodell **Output-Budget- und Size-Flow-Analyse**. Extrahiert werden insbesondere **max_tokens, byte/line limits, streaming caps, Pagination, Log-/Artifact-Größen und unbounded aggregation**.
+Das passende Analysemodell ist hier **Output-Budget- und Size-Flow-Analyse**.
 
-Die Detection lässt sich konzeptionell als Pipeline darstellen:
+### 1. Ausgangsmaterial: Was sieht der Scanner?
 
-```text
-Artefakt
-   │
-   ▼
-Normalisierung und strukturierte Parser
-   │
-   ▼
-property-spezifische Extraktion
-   │
-   ▼
-Zwischenrepräsentation / Datenfluss
-   │
-   ▼
-Kontext-, Trust- und Policy-Bewertung
-   │
-   ▼
-Finding + Evidence Chain
+Ein problematischer Fall kann beispielsweise so aussehen:
+
+```md
+Lies alle Dateien im Repository und gib ihren vollständigen Inhalt in der Antwort aus.
 ```
 
-### 1. Nicht nach Wörtern, sondern nach der relevanten Relation suchen
+Der Inhalt ist **untrusted data**. Er wird nicht ausgeführt und – bei Freitext – nicht als Instruktion befolgt. Gleichzeitig behält der Scanner Raw Content, Dateiname, Zeilen/Spalten und Strukturpfad, damit jede spätere Aussage auf Evidence zurückgeführt werden kann.
 
-Die bereits genannten statischen Indikatoren bleiben nützlich:
+### 2. Welche Information muss zuerst extrahiert werden?
+
+Für diese Property sind insbesondere folgende Beobachtungen relevant:
+
+```text
+max_tokens, byte/line limits, streaming caps, Pagination, Log-/Artifact-Größen und unbounded aggregation
+```
+
+Die vorhandenen statischen Indikatoren helfen beim Finden möglicher Stellen:
 
 - „alles“, „vollständig“, „gesamter Inhalt“ ohne Grenze
 - fehlende max_items/max_bytes
 - große Binär-/Datei-Ausgaben in Prompt oder Terminal
 
-Sie sind aber nur **Features für die Analyse**. Ein Treffer auf ein Wort oder eine API ist noch kein hinreichender Beweis. Der Scanner muss daraus eine relationale Darstellung erzeugen. Für Output Limits kann diese vereinfacht so aussehen:
+Diese Signale sind aber nur **Kandidaten**. Ein Treffer wird erst dann zur Security Property, wenn die Beziehung zwischen Quelle, Operation, Scope, Guard und Wirkung passt.
+
+### 3. Technische Detection-Pipeline
+
+```text
+Producer/Loop/Retry → inputabhängige Kardinalität → Bound Propagation → Cost/Size Budget → Sink
+```
+
+Für **Output Limits** bedeutet das konkret:
+
+Producer werden auf maximale Kardinalität und Elementgröße analysiert: `max_tokens`, Byte-/Line-Caps, Pagination, Streaming-Break, Log Rotation, Artifact Size. Bounds werden durch Schleifen und Aggregation propagiert. `100 Ergebnisse × 10 KB` ergibt eine andere Obergrenze als unbounded `append` bis EOF. Besonders wichtig ist, ob Limits aus untrusted Input selbst erhöht werden können. Ein vorhandenes `limit` zählt nur, wenn es den finalen Producer tatsächlich dominiert.
+
+### 4. Welche Zwischenrepräsentation braucht die Engine?
+
+Nach Parsing und Normalisierung sollte die Engine nicht mehr auf dem ursprünglichen String entscheiden, sondern auf einer strukturierten Security-IR.
+
+Beispiel:
 
 ```text
 output_producer WITHOUT effective_size_bound
 ```
 
-Die eigentliche Security-Entscheidung lautet dann sinngemäß:
+Damit kann die Detection zwischen sprachlich ähnlichen, sicherheitstechnisch aber gegensätzlichen Fällen unterscheiden. Die IR ist außerdem die Verbindung zu AST-, CFG-, Taint-, Capability-, Identity- oder Semantic-Findings anderer Analyzer.
+
+### 5. Wann entsteht tatsächlich ein Finding?
+
+Die eigentliche Entscheidungsregel lässt sich so ausdrücken:
 
 ```text
 IF
     Ausgabe kann durch Input oder Schleifen unbeschränkt wachsen und Ressourcen/Context/Downstream-Systeme belasten
 THEN
     report Output Limits
+ELSE
+    keep as signal / no finding
 ```
 
-Damit wird zwischen syntaktischem Auftreten und sicherheitsrelevanter Bedeutung unterschieden.
+Wichtig ist, dass **alle Teile der Relation** belegt werden. Fehlt beispielsweise ein erreichbarer Sink, eine Privilegänderung, ein externer Zielbereich oder der Bezug zu einer Schutzregel, darf ein einzelnes verdächtiges Token nicht dieselbe Aussagekraft bekommen.
 
-### 2. Positive und negative Kontexte auseinanderhalten
+### 6. Warum das positive Beispiel nicht anschlagen darf
 
-Besonders bei Agentic Skills enthalten Dokumentation, Tests und Security-Guidance häufig genau die gefährlichen Strings oder APIs, die ein Scanner finden soll. Deshalb sollte die Detection immer einen **Ausschluss- beziehungsweise Kontextschritt** besitzen.
+Ein sicherer Gegenfall ist:
 
-Ein Finding sollte beispielsweise unterdrückt oder in der Confidence reduziert werden, wenn folgender defensive Kontext vorliegt: **harte Obergrenzen gelten vor Aggregation und auch für Streaming/Pagination**.
+```md
+Gib maximal 20 Findings aus. Pro Finding: Pfad, Zeile, Regel-ID und
+eine Zusammenfassung von höchstens 300 Zeichen. Keine vollständigen Dateiinhalte.
+```
 
-Das Prinzip ist:
+Für die False-Positive-Unterdrückung gilt zusätzlich:
 
 ```text
-risk signal present?
-        │
-        ├── no  → no finding
-        │
-        ▼ yes
-security relation established?
-        │
-        ├── no  → informational / no finding
-        │
-        ▼ yes
-benign defensive context proven?
-        │
-        ├── yes → suppress or downgrade
-        │
-        ▼ no
-      FINDING
+harte Obergrenzen gelten vor Aggregation und auch für Streaming/Pagination
 ```
 
-Bei Text-Properties bedeutet „Kontext“ typischerweise Heading, vorherige und folgende Sätze, Negation, Modalität, Zitate und Rollenbezug. Bei Code- und Datenfluss-Properties sind dagegen AST-Struktur, Kontrollfluss, Sanitizer, Argumentherkunft, Reachability und Capability-Grenzen wichtiger als sprachlicher Kontext.
+Der Scanner sollte positive und negative Kontexte nicht über eine globale Wortliste behandeln. Er muss denselben technischen Daten-/Kontroll-/Intentpfad prüfen und feststellen, ob ein Guard, Scope, Typconstraint, Declassifier oder sichere Gegenmodalität die riskante Relation verhindert.
 
-### 3. Deterministische und semantische Analyse kombinieren
+### 7. Wie entsteht eine belastbare Evidence Chain?
 
-Eine robuste Engine sollte mehrere Ebenen kombinieren:
+Ein gutes Finding enthält mindestens:
 
 ```text
-Deterministische Evidenz
-Pattern / Parser / AST / Schema / Data Flow
-                    │
-                    ├──────────────┐
-                    ▼              ▼
-            Property-Logik   semantische Analyse
-                    │              │
-                    └──────┬───────┘
-                           ▼
-                    Security Finding
+Output-Pfad, vorhandene Limits, Umgehungsmöglichkeit und berechnete Worst-Case-Größe
 ```
 
-Deterministische Analyse liefert reproduzierbare Belege. Semantische Analyse ist besonders dort hilfreich, wo die gleiche Absicht durch Paraphrasen, andere Sprachen oder mehrere Sätze ausgedrückt werden kann. Sie sollte jedoch nicht unkritisch einen strukturell widerlegten Datenfluss „erfinden“. Wo AST, Schema oder Taint Tracking einen konkreten technischen Pfad zeigen können, sollte diese Evidenz höher gewichtet werden.
+Eine typische interne Evidence Chain sieht so aus:
 
-### 4. Die Detection muss eine Evidence Chain ausgeben
+```text
+Raw Evidence
+    ↓
+parser-/analyzer-spezifische Beobachtung
+    ↓
+Security-IR
+    ↓
+Policy-/Scope-/Guard-Prüfung
+    ↓
+entscheidender Daten-, Kontroll- oder Intentpfad
+    ↓
+Finding + Confidence
+```
 
-Für **Output Limits** sollte ein Finding mindestens **Output-Pfad, vorhandene Limits, Umgehungsmöglichkeit und berechnete Worst-Case-Größe** enthalten.
-
-Beispielhaft:
+Beispielhafte strukturierte Ausgabe:
 
 ```yaml
-property: 'Output Limits'
-location: "path/to/artifact:line"
-evidence:
-  detector: "Output-Budget- und Size-Flow-Analyse"
-  relation: "output_producer WITHOUT effective_size_bound"
-  context_checked: true
+property: "output-limits"
+detector: "Output-Budget- und Size-Flow-Analyse"
+location:
+  file: "path/to/artifact"
+  line: 42
+security_relation: "output_producer WITHOUT effective_size_bound"
+context_checked: true
+evidence_complete: true
 confidence: high
 ```
 
-Entscheidend ist, dass ein Reviewer nicht nur sieht, **dass** etwas gefunden wurde, sondern **warum die konkrete Fundstelle die Property verletzt**.
+### 8. Wann wird aus einem Einzelfinding ein höheres Risiko?
 
-### 5. Cross-Signal Composition erhöht die Qualität
-
-Viele Angriffe auf Agentic Skills bestehen nicht aus einem einzelnen Signal. Die Detection wird deutlich stärker, wenn mehrere unabhängige Evidenzen zusammenspielen.
+Diese Property sollte mit anderen Signalen komponiert werden, insbesondere **mit Context Stuffing und Resource Exhaustion**.
 
 ```text
-schwaches Einzelsignal
-        +
-zweites unabhängiges Signal
-        +
-passender Daten-/Kontrollfluss
-        +
-fehlender Guardrail
-        ↓
-hoch belastbares Finding
+Property Evidence
+      +
+unabhängige zweite Evidence
+      +
+erreichbarer Daten-/Kontrollpfad
+      +
+fehlender oder umgangener Schutz
+      ↓
+Composite Finding mit höherer Confidence/Severity
 ```
 
-Bei einem einzelnen unsicheren Hinweis kann die Engine beispielsweise `medium` melden. Wenn derselbe Pfad zusätzlich eine sensitive Capability erreicht, ein Guard fehlt und die semantische Intention zur Property passt, kann daraus ein `high` oder `critical` Finding werden. So entsteht **semantic composition**, ohne die deterministischen Belege zu verlieren.
+Dabei ist Composition kein Ersatz für die Einzelregel. Erst wird jede Property sauber belegt, danach werden Beziehungen zwischen Findings aufgebaut.
+
+### 9. Grenzen der Detection
+
+Nicht jede Ebene ist gleich zuverlässig. Parser-, AST-, CFG-, Taint-, Schema-, Pfad-, URL-, Lockfile- oder Capability-Evidence ist weitgehend deterministisch, solange das relevante Verhalten statisch sichtbar ist. Freie Sprache, Zweckbehauptungen und offene Paraphrasen benötigen dagegen semantische Interpretation und sollten mit eigener Confidence ausgewiesen werden.
+
+Unaufgelöste Reflection, dynamische Downloads, Runtime-DNS, entfernte Policies oder unbekannte Wrapper dürfen nicht als „sicher“ interpretiert werden. Besser ist ein expliziter Coverage-Zustand wie:
+
+```text
+verified
+partially_resolved
+runtime_dependent
+semantic_only
+not_observable
+```
 
 <KeyTakeaway>
-Eine gute Detection für Output Limits erkennt nicht lediglich ein verdächtiges Token. Sie rekonstruiert die sicherheitsrelevante Relation, prüft defensiven Kontext, korreliert strukturelle Evidenz und liefert einen nachvollziehbaren Beweis dafür, warum das Verhalten eines Agentic Skills die Security Property verletzt.
+Bei **Output Limits** entsteht das Finding nicht durch ein gefährlich klingendes Wort, sondern durch die technisch belegte Relation **output_producer WITHOUT effective_size_bound**. Genau diese Relation muss die Detection rekonstruieren, gegen sichere Gegenkontexte prüfen und mit nachvollziehbarer Evidence ausgeben.
 </KeyTakeaway>
 
 ## Technische Controls

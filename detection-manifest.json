@@ -2,379 +2,442 @@
   {
     "order": 1,
     "file": "01-instruction-override.mdx",
-    "title": "Instruction Override bei Agentic Skills",
-    "detection_model": "semantische Instruktionsanalyse"
+    "property": "Instruction Override",
+    "detector": "semantische Instruktionsanalyse",
+    "family": "semantic"
   },
   {
     "order": 2,
     "file": "02-role-context-manipulation.mdx",
-    "title": "Role/Context Manipulation bei Agentic Skills",
-    "detection_model": "semantische Rollen- und Kontextanalyse"
+    "property": "Role/Context Manipulation",
+    "detector": "semantische Rollen- und Kontextanalyse",
+    "family": "semantic"
   },
   {
     "order": 3,
     "file": "03-anti-refusal.mdx",
-    "title": "Anti-Refusal bei Agentic Skills",
-    "detection_model": "Intent- und Modalitätsanalyse"
+    "property": "Anti-Refusal",
+    "detector": "Intent- und Modalitätsanalyse",
+    "family": "semantic"
   },
   {
     "order": 4,
     "file": "04-warning-suppression.mdx",
-    "title": "Warning Suppression bei Agentic Skills",
-    "detection_model": "semantische Risiko-Kommunikationsanalyse"
+    "property": "Warning Suppression",
+    "detector": "semantische Risiko-Kommunikationsanalyse",
+    "family": "semantic"
   },
   {
     "order": 5,
     "file": "05-guardrail-nullification.mdx",
-    "title": "Guardrail Nullification bei Agentic Skills",
-    "detection_model": "Guardrail- und Policy-State-Analyse"
+    "property": "Guardrail Nullification",
+    "detector": "Guardrail- und Policy-State-Analyse",
+    "family": "cfg"
   },
   {
     "order": 6,
     "file": "06-hidden-invisible-instructions.mdx",
-    "title": "Hidden/Invisible Instructions bei Agentic Skills",
-    "detection_model": "Unicode-, Struktur- und Sichtbarkeitsanalyse"
+    "property": "Hidden/Invisible Instructions",
+    "detector": "Unicode-, Struktur- und Sichtbarkeitsanalyse",
+    "family": "unicode"
   },
   {
     "order": 7,
     "file": "07-behavioral-steering-manipulation.mdx",
-    "title": "Behavioral Steering / Manipulation bei Agentic Skills",
-    "detection_model": "Intent-IR und Entscheidungsziel-Analyse"
+    "property": "Behavioral Steering / Manipulation",
+    "detector": "Intent-IR und Entscheidungsziel-Analyse",
+    "family": "semantic"
   },
   {
     "order": 8,
     "file": "08-generic-physical-harm.mdx",
-    "title": "Generic Physical Harm bei Agentic Skills",
-    "detection_model": "semantische Safety- und Aktuatoranalyse"
+    "property": "Generic Physical Harm",
+    "detector": "semantische Safety- und Aktuatoranalyse",
+    "family": "cfg"
   },
   {
     "order": 9,
     "file": "09-http-data-exfiltration.mdx",
-    "title": "HTTP/Data Exfiltration bei Agentic Skills",
-    "detection_model": "Taint Tracking mit Netzwerk-Sink-Klassifikation"
+    "property": "HTTP/Data Exfiltration",
+    "detector": "Taint Tracking mit Netzwerk-Sink-Klassifikation",
+    "family": "taint"
   },
   {
     "order": 10,
     "file": "10-env-secret-harvesting.mdx",
-    "title": "Env/Secret Harvesting bei Agentic Skills",
-    "detection_model": "Source-Katalog und Secret-Access-Analyse"
+    "property": "Env/Secret Harvesting",
+    "detector": "Source-Katalog und Secret-Access-Analyse",
+    "family": "path"
   },
   {
     "order": 11,
     "file": "11-filesystem-reconnaissance.mdx",
-    "title": "Filesystem Reconnaissance bei Agentic Skills",
-    "detection_model": "Filesystem-AST und Pfadbereichsanalyse"
+    "property": "Filesystem Reconnaissance",
+    "detector": "Filesystem-AST und Pfadbereichsanalyse",
+    "family": "path"
   },
   {
     "order": 12,
     "file": "12-conversation-context-exfiltration.mdx",
-    "title": "Conversation/Context Exfiltration bei Agentic Skills",
-    "detection_model": "Kontext-Taint-Tracking"
+    "property": "Conversation/Context Exfiltration",
+    "detector": "Kontext-Taint-Tracking",
+    "family": "taint"
   },
   {
     "order": 13,
     "file": "13-cloud-storage-exfiltration.mdx",
-    "title": "Cloud Storage Exfiltration bei Agentic Skills",
-    "detection_model": "Cloud-SDK-/CLI-Analyse plus Taint Tracking"
+    "property": "Cloud Storage Exfiltration",
+    "detector": "Cloud-SDK-/CLI-Analyse plus Taint Tracking",
+    "family": "taint"
   },
   {
     "order": 14,
     "file": "14-excessive-permissions.mdx",
-    "title": "Excessive Permissions bei Agentic Skills",
-    "detection_model": "Capability-Set-Analyse"
+    "property": "Excessive Permissions",
+    "detector": "Capability-Set-Analyse",
+    "family": "cap"
   },
   {
     "order": 15,
     "file": "15-sudo-root-escalation.mdx",
-    "title": "sudo/root escalation bei Agentic Skills",
-    "detection_model": "Shell-/Process-AST und Privilege-Escalation-Erkennung"
+    "property": "sudo/root escalation",
+    "detector": "Shell-/Process-AST und Privilege-Escalation-Erkennung",
+    "family": "priv"
   },
   {
     "order": 16,
     "file": "16-credential-file-access.mdx",
-    "title": "Credential-file access bei Agentic Skills",
-    "detection_model": "Pfadklassifikation plus Datenfluss"
+    "property": "Credential-file access",
+    "detector": "Pfadklassifikation plus Datenfluss",
+    "family": "path"
   },
   {
     "order": 17,
     "file": "17-docker-socket.mdx",
-    "title": "Docker Socket bei Agentic Skills",
-    "detection_model": "Unix-Socket-/Mount- und API-Analyse"
+    "property": "Docker Socket",
+    "detector": "Unix-Socket-/Mount- und API-Analyse",
+    "family": "priv"
   },
   {
     "order": 18,
     "file": "18-container-escape-privileged-workload.mdx",
-    "title": "Container Escape / privileged workload bei Agentic Skills",
-    "detection_model": "Container-Security-Konfigurationsanalyse"
+    "property": "Container Escape / privileged workload",
+    "detector": "Container-Security-Konfigurationsanalyse",
+    "family": "priv"
   },
   {
     "order": 19,
     "file": "19-unrestricted-tool-access.mdx",
-    "title": "Unrestricted Tool Access bei Agentic Skills",
-    "detection_model": "Tool-Authority-Analyse"
+    "property": "Unrestricted Tool Access",
+    "detector": "Tool-Authority-Analyse",
+    "family": "cap"
   },
   {
     "order": 20,
     "file": "20-approval-bypass.mdx",
-    "title": "Approval Bypass bei Agentic Skills",
-    "detection_model": "Approval-Flow- und Kontrollflussanalyse"
+    "property": "Approval Bypass",
+    "detector": "Approval-Flow- und Kontrollflussanalyse",
+    "family": "cfg"
   },
   {
     "order": 21,
     "file": "21-scope-creep.mdx",
-    "title": "Scope Creep bei Agentic Skills",
-    "detection_model": "Purpose-/Contract-gegen-Verhaltensvergleich"
+    "property": "Scope Creep",
+    "detector": "Purpose-/Contract-gegen-Verhaltensvergleich",
+    "family": "cap"
   },
   {
     "order": 22,
     "file": "22-missing-resource-bounds.mdx",
-    "title": "Missing Resource Bounds bei Agentic Skills",
-    "detection_model": "Resource-Bound-Analyse"
+    "property": "Missing Resource Bounds",
+    "detector": "Resource-Bound-Analyse",
+    "family": "resource"
   },
   {
     "order": 23,
     "file": "23-output-execution.mdx",
-    "title": "Output → Execution bei Agentic Skills",
-    "detection_model": "Output-Taint-Tracking zu Execution-Sinks"
+    "property": "Output → Execution",
+    "detector": "Output-Taint-Tracking zu Execution-Sinks",
+    "family": "taint"
   },
   {
     "order": 24,
     "file": "24-cross-context-output.mdx",
-    "title": "Cross-context Output bei Agentic Skills",
-    "detection_model": "Trust-Boundary-Taint-Analyse"
+    "property": "Cross-context Output",
+    "detector": "Trust-Boundary-Taint-Analyse",
+    "family": "taint"
   },
   {
     "order": 25,
     "file": "25-output-limits.mdx",
-    "title": "Output Limits bei Agentic Skills",
-    "detection_model": "Output-Budget- und Size-Flow-Analyse"
+    "property": "Output Limits",
+    "detector": "Output-Budget- und Size-Flow-Analyse",
+    "family": "resource"
   },
   {
     "order": 26,
     "file": "26-direct-prompt-leakage.mdx",
-    "title": "Direct Prompt Leakage bei Agentic Skills",
-    "detection_model": "Prompt-Source/Sink- und Intent-Analyse"
+    "property": "Direct Prompt Leakage",
+    "detector": "Prompt-Source/Sink- und Intent-Analyse",
+    "family": "taint"
   },
   {
     "order": 27,
     "file": "27-indirect-prompt-leakage.mdx",
-    "title": "Indirect Prompt Leakage bei Agentic Skills",
-    "detection_model": "abgeleitete Prompt-Leakage-Analyse"
+    "property": "Indirect Prompt Leakage",
+    "detector": "abgeleitete Prompt-Leakage-Analyse",
+    "family": "taint"
   },
   {
     "order": 28,
     "file": "28-prompt-external-tool-exfil.mdx",
-    "title": "Prompt → external/tool exfil bei Agentic Skills",
-    "detection_model": "Prompt-Taint-Tracking zu externen Sinks"
+    "property": "Prompt → external/tool exfil",
+    "detector": "Prompt-Taint-Tracking zu externen Sinks",
+    "family": "taint"
   },
   {
     "order": 29,
     "file": "29-memory-poisoning.mdx",
-    "title": "Memory Poisoning bei Agentic Skills",
-    "detection_model": "Memory-Write- und Provenance-Analyse"
+    "property": "Memory Poisoning",
+    "detector": "Memory-Write- und Provenance-Analyse",
+    "family": "lifecycle"
   },
   {
     "order": 30,
     "file": "30-context-stuffing.mdx",
-    "title": "Context Stuffing bei Agentic Skills",
-    "detection_model": "Kontextbudget- und Relevanzanalyse"
+    "property": "Context Stuffing",
+    "detector": "Kontextbudget- und Relevanzanalyse",
+    "family": "resource"
   },
   {
     "order": 31,
     "file": "31-memory-state-manipulation.mdx",
-    "title": "Memory/State Manipulation bei Agentic Skills",
-    "detection_model": "State-Mutation- und Ownership-Analyse"
+    "property": "Memory/State Manipulation",
+    "detector": "State-Mutation- und Ownership-Analyse",
+    "family": "cfg"
   },
   {
     "order": 32,
     "file": "32-self-modification.mdx",
-    "title": "Self Modification bei Agentic Skills",
-    "detection_model": "Self-Reference- und Write-Path-Analyse"
+    "property": "Self Modification",
+    "detector": "Self-Reference- und Write-Path-Analyse",
+    "family": "lifecycle"
   },
   {
     "order": 33,
     "file": "33-persistence.mdx",
-    "title": "Persistence bei Agentic Skills",
-    "detection_model": "Persistenzmechanismus-Erkennung"
+    "property": "Persistence",
+    "detector": "Persistenzmechanismus-Erkennung",
+    "family": "lifecycle"
   },
   {
     "order": 34,
     "file": "34-trigger-abuse.mdx",
-    "title": "Trigger Abuse bei Agentic Skills",
-    "detection_model": "Trigger-Definition- und Event-Analyse"
+    "property": "Trigger Abuse",
+    "detector": "Trigger-Definition- und Event-Analyse",
+    "family": "lifecycle"
   },
   {
     "order": 35,
     "file": "35-trigger-shadowing.mdx",
-    "title": "Trigger Shadowing bei Agentic Skills",
-    "detection_model": "Trigger-Namensraum- und Prioritätsanalyse"
+    "property": "Trigger Shadowing",
+    "detector": "Trigger-Namensraum- und Prioritätsanalyse",
+    "family": "lifecycle"
   },
   {
     "order": 36,
     "file": "36-tool-parameter-abuse.mdx",
-    "title": "Tool Parameter Abuse bei Agentic Skills",
-    "detection_model": "Tool-Schema plus Taint Tracking"
+    "property": "Tool Parameter Abuse",
+    "detector": "Tool-Schema plus Taint Tracking",
+    "family": "taint"
   },
   {
     "order": 37,
     "file": "37-tool-chaining.mdx",
-    "title": "Tool Chaining bei Agentic Skills",
-    "detection_model": "Shell-/Tool-Call-Graph-Analyse"
+    "property": "Tool Chaining",
+    "detector": "Shell-/Tool-Call-Graph-Analyse",
+    "family": "taint"
   },
   {
     "order": 38,
     "file": "38-unsafe-defaults.mdx",
-    "title": "Unsafe Defaults bei Agentic Skills",
-    "detection_model": "Default-Value- und Fail-Mode-Analyse"
+    "property": "Unsafe Defaults",
+    "detector": "Default-Value- und Fail-Mode-Analyse",
+    "family": "cfg"
   },
   {
     "order": 39,
     "file": "39-python-ast-ast1-ast9.mdx",
-    "title": "Python AST AST1–AST9 bei Agentic Skills",
-    "detection_model": "Python-AST mit gefährlichen Primitive-Klassen"
+    "property": "Python AST AST1–AST9",
+    "detector": "Python-AST mit gefährlichen Primitive-Klassen",
+    "family": "ast"
   },
   {
     "order": 40,
     "file": "40-js-ts-process-execution.mdx",
-    "title": "JS/TS Process Execution bei Agentic Skills",
-    "detection_model": "JS/TS-AST und Process-API-Erkennung"
+    "property": "JS/TS Process Execution",
+    "detector": "JS/TS-AST und Process-API-Erkennung",
+    "family": "ast"
   },
   {
     "order": 41,
     "file": "41-bash-shell-analysis.mdx",
-    "title": "Bash/Shell Analysis bei Agentic Skills",
-    "detection_model": "Shell-Parser und Command-AST"
+    "property": "Bash/Shell Analysis",
+    "detector": "Shell-Parser und Command-AST",
+    "family": "ast"
   },
   {
     "order": 42,
     "file": "42-taint-tracking.mdx",
-    "title": "Taint Tracking bei Agentic Skills",
-    "detection_model": "interprozedurales Taint Tracking"
+    "property": "Taint Tracking",
+    "detector": "interprozedurales Taint Tracking",
+    "family": "taint"
   },
   {
     "order": 43,
     "file": "43-unicode-bidi-confusables.mdx",
-    "title": "Unicode/Bidi/Confusables bei Agentic Skills",
-    "detection_model": "Unicode-Normalisierung und Confusable-Analyse"
+    "property": "Unicode/Bidi/Confusables",
+    "detector": "Unicode-Normalisierung und Confusable-Analyse",
+    "family": "unicode"
   },
   {
     "order": 44,
     "file": "44-obfuscation.mdx",
-    "title": "Obfuscation bei Agentic Skills",
-    "detection_model": "Deobfuskations- und Entropieanalyse"
+    "property": "Obfuscation",
+    "detector": "Deobfuskations- und Entropieanalyse",
+    "family": "unicode"
   },
   {
     "order": 45,
     "file": "45-yara-malware.mdx",
-    "title": "YARA/Malware bei Agentic Skills",
-    "detection_model": "Signatur- plus Verhaltensanalyse"
+    "property": "YARA/Malware",
+    "detector": "Signatur- plus Verhaltensanalyse",
+    "family": "supply"
   },
   {
     "order": 46,
     "file": "46-dependency-pinning.mdx",
-    "title": "Dependency Pinning bei Agentic Skills",
-    "detection_model": "Manifest-/Lockfile- und Versionsanalyse"
+    "property": "Dependency Pinning",
+    "detector": "Manifest-/Lockfile- und Versionsanalyse",
+    "family": "supply"
   },
   {
     "order": 47,
     "file": "47-osv-cve.mdx",
-    "title": "OSV/CVE bei Agentic Skills",
-    "detection_model": "Dependency-Inventar plus Advisory-Abgleich"
+    "property": "OSV/CVE",
+    "detector": "Dependency-Inventar plus Advisory-Abgleich",
+    "family": "supply"
   },
   {
     "order": 48,
     "file": "48-typosquatting.mdx",
-    "title": "Typosquatting bei Agentic Skills",
-    "detection_model": "Paketidentitäts- und Ähnlichkeitsanalyse"
+    "property": "Typosquatting",
+    "detector": "Paketidentitäts- und Ähnlichkeitsanalyse",
+    "family": "supply"
   },
   {
     "order": 49,
     "file": "49-abandoned-packages.mdx",
-    "title": "Abandoned Packages bei Agentic Skills",
-    "detection_model": "Reputation- und Maintenance-Evidenz"
+    "property": "Abandoned Packages",
+    "detector": "Reputation- und Maintenance-Evidenz",
+    "family": "supply"
   },
   {
     "order": 50,
     "file": "50-container-trust.mdx",
-    "title": "Container Trust bei Agentic Skills",
-    "detection_model": "Container-Identity- und Provenance-Analyse"
+    "property": "Container Trust",
+    "detector": "Container-Identity- und Provenance-Analyse",
+    "family": "supply"
   },
   {
     "order": 51,
     "file": "51-mcp-wildcards.mdx",
-    "title": "MCP Wildcards bei Agentic Skills",
-    "detection_model": "MCP-Schema- und Capability-Set-Analyse"
+    "property": "MCP Wildcards",
+    "detector": "MCP-Schema- und Capability-Set-Analyse",
+    "family": "mcp"
   },
   {
     "order": 52,
     "file": "52-mcp-metadata-poisoning.mdx",
-    "title": "MCP Metadata Poisoning bei Agentic Skills",
-    "detection_model": "rekursive MCP-Metadaten- und Intent-Analyse"
+    "property": "MCP Metadata Poisoning",
+    "detector": "rekursive MCP-Metadaten- und Intent-Analyse",
+    "family": "mcp"
   },
   {
     "order": 53,
     "file": "53-mcp-parameter-injection.mdx",
-    "title": "MCP Parameter Injection bei Agentic Skills",
-    "detection_model": "MCP-Schema-Constraints plus Datenfluss"
+    "property": "MCP Parameter Injection",
+    "detector": "MCP-Schema-Constraints plus Datenfluss",
+    "family": "mcp"
   },
   {
     "order": 54,
     "file": "54-description-behavior-mismatch.mdx",
-    "title": "Description/Behavior mismatch bei Agentic Skills",
-    "detection_model": "Claim-Extraction plus Implementation-Inventar"
+    "property": "Description/Behavior mismatch",
+    "detector": "Claim-Extraction plus Implementation-Inventar",
+    "family": "cap"
   },
   {
     "order": 55,
     "file": "55-mcp-rug-pull-mutable-identity.mdx",
-    "title": "MCP Rug Pull / mutable identity bei Agentic Skills",
-    "detection_model": "Identitäts-Pinning und Drift-Analyse"
+    "property": "MCP Rug Pull / mutable identity",
+    "detector": "Identitäts-Pinning und Drift-Analyse",
+    "family": "mcp"
   },
   {
     "order": 56,
     "file": "56-underdeclared-capability.mdx",
-    "title": "Underdeclared Capability bei Agentic Skills",
-    "detection_model": "Capability-Contract-Verifikation"
+    "property": "Underdeclared Capability",
+    "detector": "Capability-Contract-Verifikation",
+    "family": "cap"
   },
   {
     "order": 57,
     "file": "57-overdeclared-capability.mdx",
-    "title": "Overdeclared Capability bei Agentic Skills",
-    "detection_model": "Capability-Contract-Verifikation"
+    "property": "Overdeclared Capability",
+    "detector": "Capability-Contract-Verifikation",
+    "family": "cap"
   },
   {
     "order": 58,
     "file": "58-agent-config-snooping.mdx",
-    "title": "Agent Config Snooping bei Agentic Skills",
-    "detection_model": "Sensitive-Path- und Taint-Analyse"
+    "property": "Agent Config Snooping",
+    "detector": "Sensitive-Path- und Taint-Analyse",
+    "family": "path"
   },
   {
     "order": 59,
     "file": "59-mcp-config-snooping.mdx",
-    "title": "MCP Config Snooping bei Agentic Skills",
-    "detection_model": "MCP-Config-Path- und Credential-Analyse"
+    "property": "MCP Config Snooping",
+    "detector": "MCP-Config-Path- und Credential-Analyse",
+    "family": "path"
   },
   {
     "order": 60,
     "file": "60-peer-skill-enumeration.mdx",
-    "title": "Peer Skill Enumeration bei Agentic Skills",
-    "detection_model": "Peer-Artefakt-Discovery-Analyse"
+    "property": "Peer Skill Enumeration",
+    "detector": "Peer-Artefakt-Discovery-Analyse",
+    "family": "path"
   },
   {
     "order": 61,
     "file": "61-cloud-metadata-ssrf.mdx",
-    "title": "Cloud Metadata SSRF bei Agentic Skills",
-    "detection_model": "URL-Taint plus IP-/Metadata-Klassifikation"
+    "property": "Cloud Metadata SSRF",
+    "detector": "URL-Taint plus IP-/Metadata-Klassifikation",
+    "family": "ssrf"
   },
   {
     "order": 62,
     "file": "62-internal-loopback-ssrf.mdx",
-    "title": "Internal/Loopback SSRF bei Agentic Skills",
-    "detection_model": "URL-/Netzwerkziel-Klassifikation"
+    "property": "Internal/Loopback SSRF",
+    "detector": "URL-/Netzwerkziel-Klassifikation",
+    "family": "ssrf"
   },
   {
     "order": 63,
     "file": "63-dynamic-target-ssrf.mdx",
-    "title": "Dynamic-target SSRF bei Agentic Skills",
-    "detection_model": "Taint Tracking plus kanonische URL-Auflösung"
+    "property": "Dynamic-target SSRF",
+    "detector": "Taint Tracking plus kanonische URL-Auflösung",
+    "family": "ssrf"
   }
 ]

@@ -1,4 +1,8 @@
-# Security Properties für Agentic Skills
+# Security Properties für Agentic Skills – Technical Detection Edition
+
+Alle 63 Beiträge enthalten einen ausführlichen, property-spezifischen Detection-Walkthrough: Ausgangsmaterial, relevante Extraktion, konkrete Analysepipeline, Security-IR, Entscheidungsregel, False-Positive-Behandlung, Evidence Chain, Composition und Detection-Grenzen.
+
+Gemeinsame Parser- und Datenflussbausteine werden dort wiederverwendet, wo die Properties technisch dieselbe Infrastruktur benötigen. Die **Entscheidungsrelation und der technische Walkthrough sind jedoch pro Security Property separat beschrieben**.
 
 63 deutschsprachige MDX-Beiträge im Stil der bestehenden Agentic-DevSecOps-Serie.
 
