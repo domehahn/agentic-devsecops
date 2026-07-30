@@ -1,0 +1,111 @@
+---
+title: "Single File Scan: wann eine einzelne Skill-Datei genügt – und wann nicht"
+description: "Einzelne SKILL.md- oder Quelldateien schnell prüfen, ohne den Sicherheitskontext eines vollständigen Skill-Artefakts aus den Augen zu verlieren."
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Single File
+  - SKILL.md
+  - Security Scanning
+  - SkillSpector
+  - skil
+featured: false
+draft: false
+series:
+  slug: skillspector-vs-skil
+  title: "SkillSpector vs. skil"
+  order: 2
+---
+
+Der Single File Scan ist die schnellste Form der Skill-Prüfung. Er eignet sich für Editor-Workflows, Pre-Commit-Hooks, einzelne `SKILL.md`-Dateien oder isolierte verdächtige Skripte. Gerade bei kleinen Änderungen ist es attraktiv, nicht jedes Mal ein komplettes Repository zu analysieren.
+
+Die Gefahr liegt im falschen Sicherheitsversprechen: Eine einzelne Datei kann sauber aussehen, obwohl das Gesamtsystem riskant ist.
+
+<Warning>
+Ein sauberer Single File Scan beweist nur etwas über die analysierte Datei. Fehlender Kontext darf nicht stillschweigend als fehlendes Risiko interpretiert werden.
+</Warning>
+
+## Was das Feature wirklich bedeutet
+
+Ein Single File Scan ist deshalb ein **lokaler Befund**, kein vollständiger Vertrauensnachweis. Er kann Prompt-Injection-Muster, verdächtige Shell-Kommandos oder andere statisch sichtbare Eigenschaften erkennen. Was er nicht zuverlässig beantworten kann, sind Beziehungen zu nicht mitgelieferten Dateien, Abhängigkeiten oder Deklarationen.
+
+Für Security Engineering ist die Unterscheidung wichtig: *Diese Datei enthält keinen Befund* ist nicht dasselbe wie *dieser Skill ist sicher*.
+
+## SkillSpector
+
+SkillSpector unterstützt einzelne Dateien explizit. In der Eingabeauflösung werden lokale Dateien in ein temporäres Verzeichnis eingebettet, sodass dieselbe Analysepipeline wie bei Verzeichnissen verwendet werden kann. Dokumentiert ist insbesondere der direkte Scan einer `SKILL.md`.
+
+Das macht den Workflow angenehm für schnelle Checks: keine Verpackung, kein temporäres Projekt durch den Benutzer, kein spezieller Modus.
+
+## `skil`
+
+Auch `skil` kann einzelne Dateien laden und durch die statischen Analyzer schicken. Der Vorteil eines einheitlichen Artefaktmodells besteht darin, dass Dateidigest, Findings und Coverage weiterhin strukturiert ausgegeben werden.
+
+Die Einschränkung bleibt dieselbe: Analyzer, die Kontext aus weiteren Dateien benötigen, können nur mit dem Material arbeiten, das tatsächlich im Artefakt vorhanden ist.
+
+## Praxisbeispiel
+
+```bash
+# Schneller Review einer einzelnen Skill-Datei
+skillspector scan ./SKILL.md --no-llm
+skil scan ./SKILL.md --static-only
+```
+
+Beispiel: In `SKILL.md` steht, dass ein Hilfsskript `scripts/export.py` ausgeführt werden soll. Der Single File Scan kann die Anweisung bewerten, aber den Inhalt von `export.py` nicht untersuchen. Vor Installation oder Release sollte deshalb zusätzlich der komplette Skill gescannt werden.
+
+## Security- und DevSecOps-Einordnung
+
+- Single File Scans als schnelle Feedback-Schleife nutzen, nicht als alleinige Release-Freigabe.
+- Im Report deutlich machen, dass nur ein Teil des Artefakts vorlag.
+- Vor Installation, Packaging oder Attestation auf einen vollständigen Directory- oder Archive-Scan wechseln.
+- Editor-Integration ist besonders sinnvoll für neu hinzugefügte oder geänderte Dateien.
+
+In einer professionellen Pipeline sollte dieses Feature nicht isoliert bewertet werden. Entscheidend ist, ob Eingabe, Analyse, Report und nachgelagerte Policy dieselbe Vertrauenskette bilden. Ein positives Ergebnis ist nur so belastbar wie der dokumentierte Analyseumfang und die Identität des tatsächlich gescannten Artefakts.
+
+## Direkter Vergleich
+
+| Aspekt | SkillSpector | `skil` |
+| --- | --- | --- |
+| Feature vorhanden | ja | ja |
+| Schwerpunkt | Integration und Scanner-Ergonomie | explizite Trust Boundaries und Evidence |
+| Bewertung | gleich | gleich |
+
+**Bewertung aus der Vergleichsmatrix:** gleich.
+
+## Typische Fehlinterpretation
+
+„Single File ist dasselbe wie Directory Scan, nur schneller.“ Nein: Der schnellere Lauf besitzt weniger Kontext. Das ist für Feedback ideal, für eine Release-Freigabe aber eine andere Aussagequalität.
+
+## Einordnung in die Pipeline
+
+Dieses Feature gehört in die **Ingestion-Stufe** der Pipeline. Bevor Analyzer oder Policies überhaupt laufen, muss klar sein, welches Artefakt gelesen wird, wie es kanonisiert wird und welche zusätzlichen Fähigkeiten – insbesondere Netzwerk – dafür notwendig sind.
+
+Ein belastbares Muster ist: Input auflösen → Digest/Manifest erzeugen → statisch analysieren → Report/Evidence speichern. Bei Remote-Eingaben sollte der Netzwerkzugriff in einem eigenen Job oder Runner-Profil aktiviert werden.
+
+## Review-Fragen
+
+Vor einer produktiven Nutzung dieses Features würde ich mindestens folgende Fragen beantworten:
+
+- **Welche neue Capability wird aktiviert?** Ist es nur Dateilesen oder kommen Netzwerk, Provider, externe Engine oder Agent-Tooling hinzu?
+- **Wer kontrolliert die Konfiguration?** Sie sollte aus vertrauenswürdiger CI-/Security-Konfiguration stammen und nicht aus dem zu prüfenden Skill.
+- **Wie wird fehlende Coverage sichtbar?** Ein nicht ausgeführter Analyzer oder ein Providerfehler darf nicht wie „kein Risiko gefunden“ aussehen.
+- **Woran ist der Report gebunden?** Idealerweise an Artefakt-Digest, Scanner-Version und die verwendeten Analyseoptionen.
+- **Welche Entscheidung folgt aus dem Ergebnis?** Review, Block, Baseline oder reine Information sollten explizit und nachvollziehbar sein.
+
+## Fazit
+
+Beide Werkzeuge bieten die Funktion. Der relevante Unterschied ist nicht die Eingabeform, sondern die Prozessdisziplin: Single File für frühes Feedback, vollständiges Artefakt für belastbare Freigabeentscheidungen.
+
+<KeyTakeaway>
+Die relevante Frage lautet nicht nur, ob ein Scanner das Feature besitzt, sondern **welche zusätzliche Capability und welche neue Trust Boundary dadurch entsteht**.
+</KeyTakeaway>
+
+## Quellenstand
+
+Dieser Beitrag beschreibt den öffentlich sichtbaren Stand von SkillSpector `34f6030` und `skil` `672d41f` am 2026-07-30. Implementierungen können sich nach diesem Snapshot verändern. [^1] [^2]
+
+[^1]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/README.md
+[^2]: https://github.com/domehahn/skil/blob/672d41f7133a5e13a795c23db3d6d85d6e1195ef/README.md

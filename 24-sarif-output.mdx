@@ -1,0 +1,111 @@
+---
+title: "SARIF: Skill-Scanner in bestehende DevSecOps- und Code-Scanning-Pipelines integrieren"
+description: "SARIF 2.1.0 als gemeinsame Findings-Sprache für CI/CD, Security Dashboards und IDE-nahe Workflows."
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - SARIF
+  - CI/CD
+  - Code Scanning
+  - SkillSpector
+  - skil
+featured: false
+draft: false
+series:
+  slug: skillspector-vs-skil
+  title: "SkillSpector vs. skil"
+  order: 24
+---
+
+SARIF ist für Security Tools besonders wertvoll, weil Findings in ein standardisiertes Schema überführt werden. Plattformen können dadurch unterschiedliche Scanner konsistent darstellen, annotieren und historisieren.
+
+Für Skill Security bedeutet das: Agentic-spezifische Findings müssen nicht in einem separaten Silo leben, sondern können in vorhandene DevSecOps-Prozesse einfließen.
+
+<Architecture>
+SARIF ist die Brücke zur bestehenden AppSec-Welt. Agentic Security bleibt dadurch kein Sonderprozess neben SAST, sondern kann dieselben Review- und Triage-Flächen nutzen.
+</Architecture>
+
+## Was das Feature wirklich bedeutet
+
+Gute SARIF-Ausgabe braucht stabile Rule IDs, Locations, Severity-Mapping und hilfreiche Messages. Ein Scanner sollte außerdem vermeiden, Informationen zu verlieren, die im nativen JSON vorhanden sind. Coverage oder Artifact-Digests passen nicht immer direkt in klassische Code-Scanning-Ansichten.
+
+SARIF ist daher eine Integrationssicht, nicht zwingend die vollständige Evidence-Repräsentation.
+
+## SkillSpector
+
+SkillSpector unterstützt SARIF direkt als Scanformat. Die README nennt SARIF explizit für CI/CD-Integration und IDE-Tooling.
+
+Damit können Skill-Findings beispielsweise in denselben Security-Flows wie SAST-Ergebnisse landen.
+
+## `skil`
+
+`skil` unterstützt SARIF 2.1.0 für Einzel-Scans und Linting. Die native JSON-/Evidence-Struktur bleibt daneben erhalten. `scan-all` ist aktuell auf Terminal, JSON und Markdown beschränkt, sodass für Collection-SARIF gegebenenfalls pro Skill gearbeitet werden muss.
+
+Diese Nuance ist wichtig, wenn eine Registry-Pipeline ein einzelnes zusammengeführtes SARIF-Artefakt erwartet.
+
+## Praxisbeispiel
+
+```bash
+skillspector scan ./skill --no-llm   --format sarif --output skillspector.sarif
+
+skil scan ./skill --static-only   --format sarif --output skil.sarif
+```
+
+Der CI-Runner kann anschließend SARIF an die vorhandene Code-Scanning-Plattform übergeben, während JSON als vollständiges Audit-Artefakt gespeichert wird.
+
+## Security- und DevSecOps-Einordnung
+
+- Rule IDs stabil halten, damit Baselines und Trends funktionieren.
+- SARIF nicht als vollständigen Ersatz für Coverage-/Digest-Evidence betrachten.
+- Pfadangaben normalisieren, damit Findings im Repository korrekt zugeordnet werden.
+- Bei Collection Scans prüfen, ob Aggregation nativ unterstützt wird.
+
+In einer professionellen Pipeline sollte dieses Feature nicht isoliert bewertet werden. Entscheidend ist, ob Eingabe, Analyse, Report und nachgelagerte Policy dieselbe Vertrauenskette bilden. Ein positives Ergebnis ist nur so belastbar wie der dokumentierte Analyseumfang und die Identität des tatsächlich gescannten Artefakts.
+
+## Direkter Vergleich
+
+| Aspekt | SkillSpector | `skil` |
+| --- | --- | --- |
+| Feature vorhanden | ja | ja |
+| Schwerpunkt | Integration und Scanner-Ergonomie | explizite Trust Boundaries und Evidence |
+| Bewertung | gleich | gleich |
+
+**Bewertung aus der Vergleichsmatrix:** gleich.
+
+## Typische Fehlinterpretation
+
+„SARIF enthält automatisch alle Scannerinformationen.“ SARIF ist findings-zentriert. Scanner-spezifische Coverage-, Digest- oder Completeness-Daten müssen gegebenenfalls separat aufbewahrt werden.
+
+## Einordnung in die Pipeline
+
+Dieses Feature gehört in die **Reporting- und Integrationsstufe**. Ein guter Pipeline-Lauf erzeugt mindestens eine menschenlesbare Sicht und eine maschinenlesbare Evidence. So können Entwickler Findings verstehen, während Policy Engines und Dashboards stabile Strukturen konsumieren.
+
+Das Ausgabeformat darf nicht bestimmen, ob ein Gate greift: Exit Code, strukturierter Status und Policy-Ergebnis sollten die technische Entscheidung tragen.
+
+## Review-Fragen
+
+Vor einer produktiven Nutzung dieses Features würde ich mindestens folgende Fragen beantworten:
+
+- **Welche neue Capability wird aktiviert?** Ist es nur Dateilesen oder kommen Netzwerk, Provider, externe Engine oder Agent-Tooling hinzu?
+- **Wer kontrolliert die Konfiguration?** Sie sollte aus vertrauenswürdiger CI-/Security-Konfiguration stammen und nicht aus dem zu prüfenden Skill.
+- **Wie wird fehlende Coverage sichtbar?** Ein nicht ausgeführter Analyzer oder ein Providerfehler darf nicht wie „kein Risiko gefunden“ aussehen.
+- **Woran ist der Report gebunden?** Idealerweise an Artefakt-Digest, Scanner-Version und die verwendeten Analyseoptionen.
+- **Welche Entscheidung folgt aus dem Ergebnis?** Review, Block, Baseline oder reine Information sollten explizit und nachvollziehbar sein.
+
+## Fazit
+
+Beide besitzen SARIF für Einzel-Scans. Damit sind sie gut in bestehende DevSecOps-Toolchains integrierbar. Bei großen Sammlungen sollte man die jeweilige Batch-Ausgabe separat betrachten.
+
+<KeyTakeaway>
+Die relevante Frage lautet nicht nur, ob ein Scanner das Feature besitzt, sondern **welche zusätzliche Capability und welche neue Trust Boundary dadurch entsteht**.
+</KeyTakeaway>
+
+## Quellenstand
+
+Dieser Beitrag beschreibt den öffentlich sichtbaren Stand von SkillSpector `34f6030` und `skil` `672d41f` am 2026-07-30. Implementierungen können sich nach diesem Snapshot verändern. [^1] [^2]
+
+[^1]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/README.md
+[^2]: https://github.com/domehahn/skil/blob/672d41f7133a5e13a795c23db3d6d85d6e1195ef/README.md

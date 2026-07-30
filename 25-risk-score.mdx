@@ -1,0 +1,118 @@
+---
+title: "Risk Score: nützliche Verdichtung – aber keine automatische Autorisierung"
+description: "Wie Risk Scores Findings zusammenfassen und warum ein numerischer Wert niemals die eigentliche Sicherheits-Policy ersetzen sollte."
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Risk Score
+  - Risk Management
+  - Policy
+  - SkillSpector
+  - skil
+featured: false
+draft: false
+series:
+  slug: skillspector-vs-skil
+  title: "SkillSpector vs. skil"
+  order: 25
+---
+
+Ein Scan kann zehn, hundert oder tausend Findings erzeugen. Ein Risk Score verdichtet diese Menge zu einem schnell erfassbaren Signal. Das hilft bei Triage, Dashboards und Vergleichen.
+
+Problematisch wird es, wenn aus einer Zahl eine universelle Wahrheit wird. Risiko hängt von Umgebung, Capabilities und Datenwert ab – nicht nur von der Summe statischer Findings.
+
+<Warning>
+Ein Risk Score ist ein Summary-Feature. Wird er zur alleinigen Autorisierungsentscheidung, verschwindet der Kontext, den Security eigentlich benötigt.
+</Warning>
+
+## Was das Feature wirklich bedeutet
+
+Scores sollten transparent aus Severity, Confidence und weiteren Faktoren abgeleitet werden. Unterdrückte Findings dürfen nicht unbemerkt die gleiche Wirkung haben wie aktive. Außerdem kann ein einzelner kritischer Trust-Boundary-Verstoß wichtiger sein als viele niedrige Befunde.
+
+Policy sollte deshalb konkrete Bedingungen formulieren: maximale Severity, notwendige Coverage, erlaubte Capabilities und gegebenenfalls Score-Schwellen.
+
+## SkillSpector
+
+SkillSpector dokumentiert einen Risk Score von 0 bis 100 mit Severity-Labels und Empfehlungen. Das macht den Report für schnelle Bewertung sehr zugänglich.
+
+Baselines beeinflussen, welche Findings als aktiv gelten, sodass der Score auf nicht akzeptierte Risiken fokussiert werden kann.
+
+## `skil`
+
+`skil` enthält `risk_score`, `maximum_severity`, `status` und ein separates `verdict` im öffentlichen Scanmodell. Die README beschreibt transparentes Scoring und verbindet es mit Coverage und Policy.
+
+Wichtig ist die Trennung: Der Scanner erzeugt Evidenz und einen Score; die environment-spezifische Policy entscheidet, ob das Artefakt akzeptabel ist.
+
+## Praxisbeispiel
+
+```text
+Skill A:
+  risk_score: 42
+  maximum_severity: HIGH
+  coverage: complete
+
+Skill B:
+  risk_score: 25
+  maximum_severity: CRITICAL
+  coverage: degraded
+```
+
+Eine Policy könnte Skill B trotz niedrigerem Score blockieren, weil ein kritischer Befund und unvollständige Analyse schwerer wiegen.
+
+## Security- und DevSecOps-Einordnung
+
+- Scoreformel und Schwellen versionieren.
+- Maximum Severity und Coverage zusätzlich zum Score auswerten.
+- Environment-spezifische Policies verwenden.
+- Trendanalysen nur zwischen kompatiblen Scanner-/Regelversionen durchführen.
+- Score niemals als mathematischen Beweis von Sicherheit kommunizieren.
+
+In einer professionellen Pipeline sollte dieses Feature nicht isoliert bewertet werden. Entscheidend ist, ob Eingabe, Analyse, Report und nachgelagerte Policy dieselbe Vertrauenskette bilden. Ein positives Ergebnis ist nur so belastbar wie der dokumentierte Analyseumfang und die Identität des tatsächlich gescannten Artefakts.
+
+## Direkter Vergleich
+
+| Aspekt | SkillSpector | `skil` |
+| --- | --- | --- |
+| Feature vorhanden | ja | ja |
+| Schwerpunkt | Integration und Scanner-Ergonomie | explizite Trust Boundaries und Evidence |
+| Bewertung | gleiches Konzept | gleiches Konzept |
+
+**Bewertung aus der Vergleichsmatrix:** gleiches Konzept.
+
+## Typische Fehlinterpretation
+
+„Ein niedriger Score bedeutet geringes Risiko.“ Ein einzelner kritischer Trust-Boundary-Verstoß kann wichtiger sein als der aggregierte Wert. Score und Policy erfüllen unterschiedliche Aufgaben.
+
+## Einordnung in die Pipeline
+
+Dieses Feature gehört in die **Triage- und Policy-Stufe**. Scannerergebnisse werden hier bewertet, akzeptiert oder blockiert. Änderungen an Score-Schwellen und Baselines sind deshalb Security-Konfiguration und sollten über Pull Requests, Reviewer und Audit Trail verwaltet werden.
+
+Wichtig ist die Trennung zwischen Detection und Entscheidung: Der Scanner liefert Evidenz; die Policy beschreibt, was in der konkreten Umgebung zulässig ist.
+
+## Review-Fragen
+
+Vor einer produktiven Nutzung dieses Features würde ich mindestens folgende Fragen beantworten:
+
+- **Welche neue Capability wird aktiviert?** Ist es nur Dateilesen oder kommen Netzwerk, Provider, externe Engine oder Agent-Tooling hinzu?
+- **Wer kontrolliert die Konfiguration?** Sie sollte aus vertrauenswürdiger CI-/Security-Konfiguration stammen und nicht aus dem zu prüfenden Skill.
+- **Wie wird fehlende Coverage sichtbar?** Ein nicht ausgeführter Analyzer oder ein Providerfehler darf nicht wie „kein Risiko gefunden“ aussehen.
+- **Woran ist der Report gebunden?** Idealerweise an Artefakt-Digest, Scanner-Version und die verwendeten Analyseoptionen.
+- **Welche Entscheidung folgt aus dem Ergebnis?** Review, Block, Baseline oder reine Information sollten explizit und nachvollziehbar sein.
+
+## Fazit
+
+Beide verwenden Risk Scoring als Verdichtung. Der professionelle Einsatz besteht darin, den Score als Triage-Signal zu behandeln und die eigentliche Freigabe über erklärbare Policy-Regeln zu steuern.
+
+<KeyTakeaway>
+Die relevante Frage lautet nicht nur, ob ein Scanner das Feature besitzt, sondern **welche zusätzliche Capability und welche neue Trust Boundary dadurch entsteht**.
+</KeyTakeaway>
+
+## Quellenstand
+
+Dieser Beitrag beschreibt den öffentlich sichtbaren Stand von SkillSpector `34f6030` und `skil` `672d41f` am 2026-07-30. Implementierungen können sich nach diesem Snapshot verändern. [^1] [^2]
+
+[^1]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/README.md
+[^2]: https://github.com/domehahn/skil/blob/672d41f7133a5e13a795c23db3d6d85d6e1195ef/pkg/skil/models.go
