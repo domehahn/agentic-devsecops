@@ -1,0 +1,198 @@
+---
+title: "Filesystem Reconnaissance bei Agentic Skills"
+description: "Die Security Property Filesystem Reconnaissance erklärt: Risiko, Erkennung, negative und positive Beispiele sowie technische Controls für Agentic Skills."
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Security Property
+  - Filesystem
+  - Reconnaissance
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: "Security Properties für Agentic Skills"
+  order: 11
+---
+
+Agentic Skills sind keine gewöhnlichen Textdateien.
+
+Sie können Instruktionen, Code, Tool-Metadaten, Abhängigkeiten und operative Capabilities zu einem Artefakt verbinden, das das Verhalten eines Agenten unmittelbar beeinflusst.
+
+Die Security Property **Filesystem Reconnaissance** begrenzt systematische Dateisystem-Erkundung nach sensitiven Dateien, Repositories, Konfigurationen oder Identitätsdaten außerhalb des fachlich notwendigen Scopes.
+
+Diese Eigenschaft begrenzt, welche Daten ein Agentic Skill entdecken, sammeln und nach außen übertragen darf. Entscheidend ist nicht nur ein einzelner Netzwerkaufruf, sondern der gesamte Datenfluss von einer sensitiven Quelle bis zu einem externen Sink.
+
+## Was schützt diese Security Property?
+
+Die zentrale Frage lautet nicht nur, ob ein verdächtiges Schlüsselwort vorkommt.
+
+Entscheidend ist, ob der Agentic Skill eine Sicherheitsgrenze verändert, umgeht oder einen Daten- beziehungsweise Kontrollfluss erzeugt, der außerhalb seines legitimen Zwecks liegt.
+
+Für **Filesystem Reconnaissance** sollte ein Review deshalb drei Ebenen unterscheiden:
+
+```text
+Deklaration
+    ↓
+beabsichtigtes Verhalten
+    ↓
+effektive Runtime-Wirkung
+```
+
+Eine saubere Deklaration ist hilfreich, aber nicht ausreichend. Ebenso reicht ein einzelner statischer Treffer nicht automatisch als Beweis für bösartiges Verhalten. Gute Security-Evidenz verbindet Fundstelle, Kontext und mögliche Wirkung.
+
+## Warum ist das bei Agentic Skills relevant?
+
+Ein Agentic Skill kann vom Agenten als vertrauenswürdige Arbeitsanweisung interpretiert werden. Gleichzeitig kann er Zugriff auf Tools, Dateien, Netzwerkziele oder Persistenzmechanismen erhalten.
+
+Dadurch kann eine kleine semantische Änderung reale Seiteneffekte haben.
+
+Das typische Risikomodell sieht so aus:
+
+```text
+untrusted oder überbreite Anweisung
+              ↓
+      agentische Entscheidung
+              ↓
+      Tool / Code / Runtime
+              ↓
+         reale Wirkung
+```
+
+Security Properties sind deshalb am nützlichsten, wenn sie nicht nur Text klassifizieren, sondern eine konkrete Sicherheitsannahme formulieren, die überprüfbar ist.
+
+## Negatives Beispiel
+
+```bash
+find / -type f \( -name '*.pem' -o -name '.env' -o -name 'config.json' \) 2>/dev/null
+```
+
+Das Problem liegt nicht allein in der Syntax. Der entscheidende Punkt ist, dass die Konstruktion eine Schutzannahme verletzt oder eine unnötige Autorität erzeugt.
+
+Ein belastbarer Scanner sollte den Befund deshalb nicht bloß als „verdächtigen Text“ melden, sondern die verletzte Property benennen und die relevante Evidenz zeigen.
+
+## Positives Beispiel
+
+```bash
+find ./workspace -maxdepth 2 -type f -name '*.yaml'
+```
+
+Die Suche bleibt auf den deklarierten Workspace und einen klaren Dateityp begrenzt.
+
+Das positive Muster reduziert die Angriffsfläche, macht den beabsichtigten Scope nachvollziehbar und verschiebt kritische Entscheidungen möglichst in deterministische oder policy-kontrollierte Komponenten.
+
+<KeyTakeaway>
+Die Security Property Filesystem Reconnaissance ist dann wertvoll, wenn sie eine überprüfbare Grenze beschreibt: Was darf der Agentic Skill tun, welche Daten oder Autorität darf er verwenden und welche Wirkung muss verhindert werden?
+</KeyTakeaway>
+
+## Worauf sollte eine statische Analyse achten?
+
+Typische Indikatoren sind:
+
+- rekursive Suche ab Root/Home
+- Suche nach Secret-, SSH-, Cloud- oder Agent-Konfigurationsdateien
+- breite glob-/find-Muster ohne fachlichen Scope
+
+Diese Signale sollten möglichst strukturell ausgewertet werden.
+
+Je nach Property bedeutet das beispielsweise AST-Analyse, Datenfluss, Schema-Traversierung, URL-Klassifikation, Capability-Verifikation oder semantische Bewertung deklarierter Instruktionen.
+
+Eine robuste Implementierung speichert dabei mindestens:
+
+```text
+rule/property id
+severity
+file + location
+evidence
+source/sink oder capability context
+confidence
+recommended remediation
+```
+
+So wird aus einem Alarm eine reproduzierbare Security-Evidenz.
+
+## Technische Controls
+
+Geeignete Gegenmaßnahmen sind unter anderem:
+
+- Filesystem-Sandbox
+- allowlist-basierte Pfade
+- max_depth und Dateityp begrenzen
+- Read Capabilities explizit deklarieren
+
+Wichtig ist Defense in Depth.
+
+Ein Agentic Skill sollte niemals allein deshalb als sicher gelten, weil ein Scanner keinen Treffer gefunden hat. Statische Analyse reduziert Unsicherheit vor der Ausführung; Runtime-Enforcement begrenzt die Folgen, falls die Analyse etwas übersieht.
+
+## Grenzen der Erkennung
+
+Breite Suche kann für Inventarisierung legitim sein. Der Scanner sollte Zielpfad, Pattern, Tiefe und nachgelagerte Nutzung gemeinsam bewerten.
+
+Gerade bei agentischen Systemen muss die Analyse zwischen **möglicher** und **effektiver** Authority unterscheiden.
+
+Eine Instruktion kann gefährlich aussehen, aber durch die Runtime technisch unmöglich sein. Umgekehrt kann eine harmlos formulierte Beschreibung sehr weitreichende Tools erhalten.
+
+Deshalb sollte der ideale Prüfpfad mehrere Evidenztypen kombinieren:
+
+```text
+Text / Instruktion
+       +
+Code / AST / Datenfluss
+       +
+Tool- und MCP-Metadaten
+       +
+Capability Contract
+       +
+Runtime Policy
+       =
+begründete Sicherheitsentscheidung
+```
+
+## Einordnung in DevSecOps
+
+Ein belastbares Gate kombiniert Quellenerkennung, Taint Tracking, Zielklassifikation und Policy. Findings sollten Quelle, Transformationsschritte und Sink nachvollziehbar ausweisen, damit Reviewer zwischen legitimer Telemetrie und echter Exfiltration unterscheiden können.
+
+Praktisch eignet sich die Property für mehrere Gates:
+
+1. **Authoring:** lokale Prüfung während der Erstellung.
+2. **Merge Request / Pull Request:** reproduzierbarer Scan mit diff-basierter Evidenz.
+3. **Registry oder Katalog:** erneute Prüfung des veröffentlichten Artefakts.
+4. **Installation:** Policy-Entscheidung gegen exakt den Digest, der installiert wird.
+5. **Runtime:** technische Durchsetzung von Netzwerk-, Datei-, Tool-, Secret- und Ressourcenlimits.
+
+Das verhindert eine häufige Schwäche klassischer Security-Reviews: Die Analyse bewertet ein Artefakt, während später eine andere Version oder eine breitere Runtime-Konfiguration ausgeführt wird.
+
+## Was ein Finding aussagekräftig macht
+
+Ein gutes Finding zu **Filesystem Reconnaissance** sollte eine konkrete Frage beantworten:
+
+> Welche Sicherheitsannahme wird verletzt, wodurch ist das belegt und welche reale Wirkung wäre dadurch möglich?
+
+Weniger hilfreich ist ein generischer Alarm ohne Kontext.
+
+Besser ist eine Evidence Chain:
+
+```text
+Fundstelle
+   ↓
+semantische oder strukturelle Interpretation
+   ↓
+betroffene Capability / Datenklasse
+   ↓
+mögliche Wirkung
+   ↓
+konkrete Remediation
+```
+
+Damit wird die Security Property auch für Entwickler verständlich, die nicht täglich mit Agentic Security arbeiten.
+
+## Fazit
+
+**Filesystem Reconnaissance** ist keine isolierte Checklistenregel, sondern eine konkrete Sicherheitsgrenze für Agentic Skills.
+
+Die stärkste Umsetzung kombiniert präzise statische Evidenz mit Capability-Verifikation und technischen Runtime-Grenzen.
+
+So beantwortet die Analyse nicht nur die Frage, ob ein Artefakt verdächtig aussieht, sondern ob sein tatsächliches Verhalten innerhalb des vorgesehenen Trust-Modells bleibt.
