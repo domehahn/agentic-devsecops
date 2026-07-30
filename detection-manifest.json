@@ -1,0 +1,443 @@
+[
+  {
+    "order": 1,
+    "file": "01-instruction-override.mdx",
+    "property": "Instruction Override",
+    "detector": "semantische Instruktionsanalyse",
+    "family": "semantic"
+  },
+  {
+    "order": 2,
+    "file": "02-role-context-manipulation.mdx",
+    "property": "Role/Context Manipulation",
+    "detector": "semantische Rollen- und Kontextanalyse",
+    "family": "semantic"
+  },
+  {
+    "order": 3,
+    "file": "03-anti-refusal.mdx",
+    "property": "Anti-Refusal",
+    "detector": "Intent- und Modalitätsanalyse",
+    "family": "semantic"
+  },
+  {
+    "order": 4,
+    "file": "04-warning-suppression.mdx",
+    "property": "Warning Suppression",
+    "detector": "semantische Risiko-Kommunikationsanalyse",
+    "family": "semantic"
+  },
+  {
+    "order": 5,
+    "file": "05-guardrail-nullification.mdx",
+    "property": "Guardrail Nullification",
+    "detector": "Guardrail- und Policy-State-Analyse",
+    "family": "cfg"
+  },
+  {
+    "order": 6,
+    "file": "06-hidden-invisible-instructions.mdx",
+    "property": "Hidden/Invisible Instructions",
+    "detector": "Unicode-, Struktur- und Sichtbarkeitsanalyse",
+    "family": "unicode"
+  },
+  {
+    "order": 7,
+    "file": "07-behavioral-steering-manipulation.mdx",
+    "property": "Behavioral Steering / Manipulation",
+    "detector": "Intent-IR und Entscheidungsziel-Analyse",
+    "family": "semantic"
+  },
+  {
+    "order": 8,
+    "file": "08-generic-physical-harm.mdx",
+    "property": "Generic Physical Harm",
+    "detector": "semantische Safety- und Aktuatoranalyse",
+    "family": "cfg"
+  },
+  {
+    "order": 9,
+    "file": "09-http-data-exfiltration.mdx",
+    "property": "HTTP/Data Exfiltration",
+    "detector": "Taint Tracking mit Netzwerk-Sink-Klassifikation",
+    "family": "taint"
+  },
+  {
+    "order": 10,
+    "file": "10-env-secret-harvesting.mdx",
+    "property": "Env/Secret Harvesting",
+    "detector": "Source-Katalog und Secret-Access-Analyse",
+    "family": "path"
+  },
+  {
+    "order": 11,
+    "file": "11-filesystem-reconnaissance.mdx",
+    "property": "Filesystem Reconnaissance",
+    "detector": "Filesystem-AST und Pfadbereichsanalyse",
+    "family": "path"
+  },
+  {
+    "order": 12,
+    "file": "12-conversation-context-exfiltration.mdx",
+    "property": "Conversation/Context Exfiltration",
+    "detector": "Kontext-Taint-Tracking",
+    "family": "taint"
+  },
+  {
+    "order": 13,
+    "file": "13-cloud-storage-exfiltration.mdx",
+    "property": "Cloud Storage Exfiltration",
+    "detector": "Cloud-SDK-/CLI-Analyse plus Taint Tracking",
+    "family": "taint"
+  },
+  {
+    "order": 14,
+    "file": "14-excessive-permissions.mdx",
+    "property": "Excessive Permissions",
+    "detector": "Capability-Set-Analyse",
+    "family": "cap"
+  },
+  {
+    "order": 15,
+    "file": "15-sudo-root-escalation.mdx",
+    "property": "sudo/root escalation",
+    "detector": "Shell-/Process-AST und Privilege-Escalation-Erkennung",
+    "family": "priv"
+  },
+  {
+    "order": 16,
+    "file": "16-credential-file-access.mdx",
+    "property": "Credential-file access",
+    "detector": "Pfadklassifikation plus Datenfluss",
+    "family": "path"
+  },
+  {
+    "order": 17,
+    "file": "17-docker-socket.mdx",
+    "property": "Docker Socket",
+    "detector": "Unix-Socket-/Mount- und API-Analyse",
+    "family": "priv"
+  },
+  {
+    "order": 18,
+    "file": "18-container-escape-privileged-workload.mdx",
+    "property": "Container Escape / privileged workload",
+    "detector": "Container-Security-Konfigurationsanalyse",
+    "family": "priv"
+  },
+  {
+    "order": 19,
+    "file": "19-unrestricted-tool-access.mdx",
+    "property": "Unrestricted Tool Access",
+    "detector": "Tool-Authority-Analyse",
+    "family": "cap"
+  },
+  {
+    "order": 20,
+    "file": "20-approval-bypass.mdx",
+    "property": "Approval Bypass",
+    "detector": "Approval-Flow- und Kontrollflussanalyse",
+    "family": "cfg"
+  },
+  {
+    "order": 21,
+    "file": "21-scope-creep.mdx",
+    "property": "Scope Creep",
+    "detector": "Purpose-/Contract-gegen-Verhaltensvergleich",
+    "family": "cap"
+  },
+  {
+    "order": 22,
+    "file": "22-missing-resource-bounds.mdx",
+    "property": "Missing Resource Bounds",
+    "detector": "Resource-Bound-Analyse",
+    "family": "resource"
+  },
+  {
+    "order": 23,
+    "file": "23-output-execution.mdx",
+    "property": "Output → Execution",
+    "detector": "Output-Taint-Tracking zu Execution-Sinks",
+    "family": "taint"
+  },
+  {
+    "order": 24,
+    "file": "24-cross-context-output.mdx",
+    "property": "Cross-context Output",
+    "detector": "Trust-Boundary-Taint-Analyse",
+    "family": "taint"
+  },
+  {
+    "order": 25,
+    "file": "25-output-limits.mdx",
+    "property": "Output Limits",
+    "detector": "Output-Budget- und Size-Flow-Analyse",
+    "family": "resource"
+  },
+  {
+    "order": 26,
+    "file": "26-direct-prompt-leakage.mdx",
+    "property": "Direct Prompt Leakage",
+    "detector": "Prompt-Source/Sink- und Intent-Analyse",
+    "family": "taint"
+  },
+  {
+    "order": 27,
+    "file": "27-indirect-prompt-leakage.mdx",
+    "property": "Indirect Prompt Leakage",
+    "detector": "abgeleitete Prompt-Leakage-Analyse",
+    "family": "taint"
+  },
+  {
+    "order": 28,
+    "file": "28-prompt-external-tool-exfil.mdx",
+    "property": "Prompt → external/tool exfil",
+    "detector": "Prompt-Taint-Tracking zu externen Sinks",
+    "family": "taint"
+  },
+  {
+    "order": 29,
+    "file": "29-memory-poisoning.mdx",
+    "property": "Memory Poisoning",
+    "detector": "Memory-Write- und Provenance-Analyse",
+    "family": "lifecycle"
+  },
+  {
+    "order": 30,
+    "file": "30-context-stuffing.mdx",
+    "property": "Context Stuffing",
+    "detector": "Kontextbudget- und Relevanzanalyse",
+    "family": "resource"
+  },
+  {
+    "order": 31,
+    "file": "31-memory-state-manipulation.mdx",
+    "property": "Memory/State Manipulation",
+    "detector": "State-Mutation- und Ownership-Analyse",
+    "family": "cfg"
+  },
+  {
+    "order": 32,
+    "file": "32-self-modification.mdx",
+    "property": "Self Modification",
+    "detector": "Self-Reference- und Write-Path-Analyse",
+    "family": "lifecycle"
+  },
+  {
+    "order": 33,
+    "file": "33-persistence.mdx",
+    "property": "Persistence",
+    "detector": "Persistenzmechanismus-Erkennung",
+    "family": "lifecycle"
+  },
+  {
+    "order": 34,
+    "file": "34-trigger-abuse.mdx",
+    "property": "Trigger Abuse",
+    "detector": "Trigger-Definition- und Event-Analyse",
+    "family": "lifecycle"
+  },
+  {
+    "order": 35,
+    "file": "35-trigger-shadowing.mdx",
+    "property": "Trigger Shadowing",
+    "detector": "Trigger-Namensraum- und Prioritätsanalyse",
+    "family": "lifecycle"
+  },
+  {
+    "order": 36,
+    "file": "36-tool-parameter-abuse.mdx",
+    "property": "Tool Parameter Abuse",
+    "detector": "Tool-Schema plus Taint Tracking",
+    "family": "taint"
+  },
+  {
+    "order": 37,
+    "file": "37-tool-chaining.mdx",
+    "property": "Tool Chaining",
+    "detector": "Shell-/Tool-Call-Graph-Analyse",
+    "family": "taint"
+  },
+  {
+    "order": 38,
+    "file": "38-unsafe-defaults.mdx",
+    "property": "Unsafe Defaults",
+    "detector": "Default-Value- und Fail-Mode-Analyse",
+    "family": "cfg"
+  },
+  {
+    "order": 39,
+    "file": "39-python-ast-ast1-ast9.mdx",
+    "property": "Python AST AST1–AST9",
+    "detector": "Python-AST mit gefährlichen Primitive-Klassen",
+    "family": "ast"
+  },
+  {
+    "order": 40,
+    "file": "40-js-ts-process-execution.mdx",
+    "property": "JS/TS Process Execution",
+    "detector": "JS/TS-AST und Process-API-Erkennung",
+    "family": "ast"
+  },
+  {
+    "order": 41,
+    "file": "41-bash-shell-analysis.mdx",
+    "property": "Bash/Shell Analysis",
+    "detector": "Shell-Parser und Command-AST",
+    "family": "ast"
+  },
+  {
+    "order": 42,
+    "file": "42-taint-tracking.mdx",
+    "property": "Taint Tracking",
+    "detector": "interprozedurales Taint Tracking",
+    "family": "taint"
+  },
+  {
+    "order": 43,
+    "file": "43-unicode-bidi-confusables.mdx",
+    "property": "Unicode/Bidi/Confusables",
+    "detector": "Unicode-Normalisierung und Confusable-Analyse",
+    "family": "unicode"
+  },
+  {
+    "order": 44,
+    "file": "44-obfuscation.mdx",
+    "property": "Obfuscation",
+    "detector": "Deobfuskations- und Entropieanalyse",
+    "family": "unicode"
+  },
+  {
+    "order": 45,
+    "file": "45-yara-malware.mdx",
+    "property": "YARA/Malware",
+    "detector": "Signatur- plus Verhaltensanalyse",
+    "family": "supply"
+  },
+  {
+    "order": 46,
+    "file": "46-dependency-pinning.mdx",
+    "property": "Dependency Pinning",
+    "detector": "Manifest-/Lockfile- und Versionsanalyse",
+    "family": "supply"
+  },
+  {
+    "order": 47,
+    "file": "47-osv-cve.mdx",
+    "property": "OSV/CVE",
+    "detector": "Dependency-Inventar plus Advisory-Abgleich",
+    "family": "supply"
+  },
+  {
+    "order": 48,
+    "file": "48-typosquatting.mdx",
+    "property": "Typosquatting",
+    "detector": "Paketidentitäts- und Ähnlichkeitsanalyse",
+    "family": "supply"
+  },
+  {
+    "order": 49,
+    "file": "49-abandoned-packages.mdx",
+    "property": "Abandoned Packages",
+    "detector": "Reputation- und Maintenance-Evidenz",
+    "family": "supply"
+  },
+  {
+    "order": 50,
+    "file": "50-container-trust.mdx",
+    "property": "Container Trust",
+    "detector": "Container-Identity- und Provenance-Analyse",
+    "family": "supply"
+  },
+  {
+    "order": 51,
+    "file": "51-mcp-wildcards.mdx",
+    "property": "MCP Wildcards",
+    "detector": "MCP-Schema- und Capability-Set-Analyse",
+    "family": "mcp"
+  },
+  {
+    "order": 52,
+    "file": "52-mcp-metadata-poisoning.mdx",
+    "property": "MCP Metadata Poisoning",
+    "detector": "rekursive MCP-Metadaten- und Intent-Analyse",
+    "family": "mcp"
+  },
+  {
+    "order": 53,
+    "file": "53-mcp-parameter-injection.mdx",
+    "property": "MCP Parameter Injection",
+    "detector": "MCP-Schema-Constraints plus Datenfluss",
+    "family": "mcp"
+  },
+  {
+    "order": 54,
+    "file": "54-description-behavior-mismatch.mdx",
+    "property": "Description/Behavior mismatch",
+    "detector": "Claim-Extraction plus Implementation-Inventar",
+    "family": "cap"
+  },
+  {
+    "order": 55,
+    "file": "55-mcp-rug-pull-mutable-identity.mdx",
+    "property": "MCP Rug Pull / mutable identity",
+    "detector": "Identitäts-Pinning und Drift-Analyse",
+    "family": "mcp"
+  },
+  {
+    "order": 56,
+    "file": "56-underdeclared-capability.mdx",
+    "property": "Underdeclared Capability",
+    "detector": "Capability-Contract-Verifikation",
+    "family": "cap"
+  },
+  {
+    "order": 57,
+    "file": "57-overdeclared-capability.mdx",
+    "property": "Overdeclared Capability",
+    "detector": "Capability-Contract-Verifikation",
+    "family": "cap"
+  },
+  {
+    "order": 58,
+    "file": "58-agent-config-snooping.mdx",
+    "property": "Agent Config Snooping",
+    "detector": "Sensitive-Path- und Taint-Analyse",
+    "family": "path"
+  },
+  {
+    "order": 59,
+    "file": "59-mcp-config-snooping.mdx",
+    "property": "MCP Config Snooping",
+    "detector": "MCP-Config-Path- und Credential-Analyse",
+    "family": "path"
+  },
+  {
+    "order": 60,
+    "file": "60-peer-skill-enumeration.mdx",
+    "property": "Peer Skill Enumeration",
+    "detector": "Peer-Artefakt-Discovery-Analyse",
+    "family": "path"
+  },
+  {
+    "order": 61,
+    "file": "61-cloud-metadata-ssrf.mdx",
+    "property": "Cloud Metadata SSRF",
+    "detector": "URL-Taint plus IP-/Metadata-Klassifikation",
+    "family": "ssrf"
+  },
+  {
+    "order": 62,
+    "file": "62-internal-loopback-ssrf.mdx",
+    "property": "Internal/Loopback SSRF",
+    "detector": "URL-/Netzwerkziel-Klassifikation",
+    "family": "ssrf"
+  },
+  {
+    "order": 63,
+    "file": "63-dynamic-target-ssrf.mdx",
+    "property": "Dynamic-target SSRF",
+    "detector": "Taint Tracking plus kanonische URL-Auflösung",
+    "family": "ssrf"
+  }
+]
