@@ -1,0 +1,362 @@
+---
+title: "Container Trust bei Agentic Skills: Security Property, Detection und Nachweis"
+description: "Container Trust wissenschaftlich erklärt: Bedrohungsmodell, scanner-positive und scanner-negative Beispiele, Detection-Mechanismus in skil, Evidence Chain, Grenzen und Referenzen."
+date: "2026-07-30"
+author: "dome"
+topics:
+  - agentic-engineering
+  - devsecops
+tags:
+  - Security Property
+  - Container Trust
+  - Agentic Security
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: "Security Properties für Agentic Skills"
+  order: 50
+---
+
+Agentic Skills sind gleichzeitig **Instruktion, Code, Konfiguration, Tool-Vertrag und Supply-Chain-Artefakt**. Deshalb genügt es nicht, eine Datei als „Text“ zu behandeln. Eine belastbare Security-Analyse muss rekonstruieren, welche **Trust Boundary**, welche Datenklasse oder welche ausführbare Capability ein Artefakt tatsächlich berührt.
+
+Die Security Property **Container Trust** gehört zur Kategorie **Supply Chain / Runtime**. Diese Property bindet Container-Identität und Trust Controls an unveränderliche, überprüfbare Artefakte.
+
+<Note>
+**Terminologie:** In dieser Serie bedeutet **scanner-positiv**: Der Scanner erkennt einen Security Concern und erzeugt ein Finding. **Scanner-negativ** bedeutet: Der legitime Gegenfall darf für genau diese Property nicht anschlagen. Diese Definition entspricht der `skil` Security Control Matrix.
+</Note>
+
+## Kurzfassung
+
+| Dimension | Einordnung |
+| --- | --- |
+| Security Property | **Container Trust** |
+| `skil` Controls | `SKIL-CONTAINER-TRUST`, `SKIL-BOUNDARY-MUTABLE-IMAGE` |
+| Primärer Mechanismus | **trust-disable flags + mutable image identity detection** |
+| Aktueller Coverage-Charakter | **FULL** |
+| Security-Relation | `CONTAINER_IMAGE_IDENTITY is mutable_or_unverified OR content_trust_disabled` |
+| Hauptziel | False Positives durch Kontextprüfung reduzieren und den eigentlichen Sicherheitszusammenhang als Evidence Chain nachweisen |
+
+<KeyTakeaway>
+Ein **positiver Treffer** für Container Trust ist nur dann belastbar, wenn die Property-spezifische Relation `CONTAINER_IMAGE_IDENTITY is mutable_or_unverified OR content_trust_disabled` aus konkreter Evidence rekonstruiert werden kann. Ein Schlüsselwort allein ist keine wissenschaftlich ausreichende Begründung.
+</KeyTakeaway>
+
+## 1. Welche Sicherheitsannahme schützt die Property?
+
+Die Property lässt sich als Invariante formulieren:
+
+```text
+CONTAINER_IMAGE_IDENTITY is mutable_or_unverified OR content_trust_disabled
+```
+
+Ein Scanner versucht damit nicht, „bösartige Wörter“ zu finden. Er prüft eine Hypothese über ein Systemartefakt:
+
+```text
+H0: Die Sicherheitsgrenze bleibt eingehalten.
+H1: Die Sicherheitsgrenze wird durch beobachtbare Evidence verletzt.
+```
+
+Das Finding ist die Entscheidung zugunsten von `H1` innerhalb der **sichtbaren statischen Coverage**. Daraus folgt eine wichtige epistemische Grenze: Ein scanner-negatives Ergebnis ist kein mathematischer Beweis für Gesamtsicherheit, sondern die Aussage, dass **unter dem verwendeten Analysemodell kein hinreichender Nachweis für diese Property gefunden wurde**.
+
+## 2. Bedrohungsmodell
+
+Für Container Trust sollte das Threat Model mindestens vier Elemente trennen:
+
+1. **Quelle der Kontrolle oder Daten:** Nutzerinput, eingebettete Instruktion, Tool-Metadaten, Code, Dependency, Runtime-Konfiguration oder persistenter Zustand.
+2. **Trust Boundary:** Welche Information oder Authority wird höhergestuft, überschritten oder erweitert?
+3. **Operation/Sink:** Welche Aktion erzeugt die relevante Wirkung?
+4. **Guard:** Welche Allowlist, Validierung, Policy, Approval, Signatur oder Capability-Grenze müsste die Relation verhindern?
+
+<Architecture>
+Docker/K8s config → image reference → tag/digest parse → trust/insecure flags → registry/provenance policy → Finding
+</Architecture>
+
+Die Architektur ist bewusst mehrstufig. Candidate Generation und Finding Decision sind getrennt: Ein lexikalischer, syntaktischer oder struktureller Kandidat wird erst nach Kontext-, Scope- und Guard-Prüfung zu einem Security Finding.
+
+## 3. Scanner-positives Beispiel: Das Finding muss entstehen
+
+```yaml
+image: registry.example/agent:latest
+# or DOCKER_CONTENT_TRUST=0
+```
+
+### Warum ist das ein positiver Treffer?
+
+Positiv ist die fehlende Bindung an unveränderliche Identität oder die explizite Abschaltung von Trust-Checks. Das ermöglicht Artefaktwechsel ohne Manifeständerung.
+
+Die Evidence sollte deshalb nicht nur `matched=true` enthalten. Mindestens folgende Felder sind für reproduzierbare Findings sinnvoll:
+
+```yaml
+property: "container-trust"
+rules: ["SKIL-CONTAINER-TRUST", "SKIL-BOUNDARY-MUTABLE-IMAGE"]
+analysis: "trust-disable flags + mutable image identity detection"
+coverage: "FULL"
+security_relation: "CONTAINER_IMAGE_IDENTITY is mutable_or_unverified OR content_trust_disabled"
+location:
+  file: "path/to/artifact"
+  line: 42
+context_checked: true
+evidence_complete: true
+confidence: high
+```
+
+`confidence: high` ist hier nur beispielhaft. In einer realen Engine muss Confidence aus Evidenzqualität, Kontextauflösung und Coverage resultieren; sie darf nicht allein aus der Severity abgeleitet werden.
+
+## 4. Scanner-negatives Beispiel: Der Gegenfall darf nicht anschlagen
+
+```yaml
+image: registry.example/agent@sha256:<reviewed-digest>
+```
+
+### Warum muss dieser Fall scanner-negativ bleiben?
+
+Ein Digest bindet die referenzierte Byte-Identität; mit Signatur/Provenance entsteht stärkerer Trust.
+
+Das ist für die Qualität des Detektors genauso wichtig wie das Positivbeispiel. Eine Security Rule ohne systematische Negativ-Fixtures optimiert leicht auf Recall, produziert aber im Engineering-Alltag so viele False Positives, dass Findings ignoriert oder Controls deaktiviert werden.
+
+## 5. Wie `skil` die Property technisch ermittelt
+
+Aktuell relevante Controls: `SKIL-CONTAINER-TRUST`, `SKIL-BOUNDARY-MUTABLE-IMAGE`.
+
+Der Boundary-Analyzer klassifiziert sicherheitsrelevante Zielräume wie Container-Control-Planes, Agent State, MCP-Konfiguration, Cloud Metadata, private Netzbereiche und Cloud-Uploads. Er erzeugt Findings erst, wenn Operation und Boundary-Klasse zusammenpassen.
+
+Die Dependency-Schicht normalisiert Paketidentität, Ecosystem und Versionsinformation aus Manifesten/Lockfiles. Darauf werden Pinning-, Name-, Reputation- und Advisory-Prüfungen als getrennte Properties ausgeführt.
+
+Der Mechanismus lässt sich als Evidence Pipeline darstellen:
+
+```text
+Raw artifact
+    ↓
+parser-/analyzer-spezifische Beobachtung
+    ↓
+Property-spezifische Zwischenrepräsentation
+    ↓
+Context / Negation / Scope / Guard
+    ↓
+entscheidende Security-Relation
+    ↓
+Finding + Confidence + Coverage
+```
+
+### 5.1 Candidate Generation
+
+Candidate Generation soll **breit genug für Recall**, aber noch nicht entscheidend sein. Abhängig von der Property entstehen Kandidaten aus AST-Knoten, Unicode-Codepoints, Manifestfeldern, Versionsconstraints, Netzwerkzielen, Taint Sources/Sinks oder semantischen Clauses.
+
+### 5.2 Property-spezifische Zwischenrepräsentation
+
+Die entscheidende IR für diesen Beitrag ist:
+
+```text
+CONTAINER_IMAGE_IDENTITY is mutable_or_unverified OR content_trust_disabled
+```
+
+Diese IR ist absichtlich kleiner als der Originaltext. Sie enthält nur die für die Sicherheitsentscheidung relevanten Entitäten und Relationen. Dadurch kann derselbe Mechanismus unterschiedliche Oberflächenformen auf dieselbe Property abbilden.
+
+### 5.3 Finding Decision
+
+```text
+IF
+    property relation is evidenced
+AND relevant context/scope is resolved
+AND no valid guard/declassifier negates the relation
+THEN
+    emit finding
+ELSE
+    keep candidate as signal or scanner-negative
+```
+
+Der positive Treffer ist damit eine **Relation über Evidence**, nicht ein Worttreffer.
+
+## 6. False-Positive-Unterdrückung
+
+Digest-Pinning beweist nicht, dass das Image gutartig ist. Private dev registries können bewusst insecure sein, benötigen aber Scope/Policy.
+
+Ein wissenschaftlich belastbarer Scanner sollte False-Positive-Unterdrückung nicht durch globale „ignore this file“-Ausnahmen lösen, sondern durch **lokale Gegenhypothesen**:
+
+```text
+Candidate
+  ├─ defensive/negated context? ──> suppress or downgrade
+  ├─ validated/allowlisted?      ──> suppress relation
+  ├─ outside relevant field?     ──> not this property
+  └─ relation complete?          ──> finding
+```
+
+Das verbessert Erklärbarkeit: Der Scanner kann nicht nur sagen, warum er anschlägt, sondern auch, **welche Bedingung einen ähnlichen sicheren Fall unterscheidet**.
+
+## 7. Evidence Chain: Warum der Treffer nachvollziehbar sein muss
+
+Für Container Trust sollte ein Finding mindestens diese Nachweise verbinden:
+
+```text
+Fundstelle
+  ↓
+parser-/analyzer-spezifische Beobachtung
+  ↓
+Security-Relation: CONTAINER_IMAGE_IDENTITY is mutable_or_unverified OR content_trust_disabled
+  ↓
+Scope-/Guard-Entscheidung
+  ↓
+potenzielle Wirkung
+```
+
+Eine geeignete interne Repräsentation könnte so aussehen:
+
+```yaml
+finding:
+  property: container-trust
+  rule_ids: ["SKIL-CONTAINER-TRUST", "SKIL-BOUNDARY-MUTABLE-IMAGE"]
+  evidence:
+    raw_location: true
+    structured_relation: true
+    context_resolution: true
+  coverage:
+    status: "verified-or-bounded"
+    runtime_dependencies_documented: true
+  decision:
+    scanner_positive: true
+```
+
+<Warning>
+Ein Finding darf keine Sicherheit vortäuschen, die der Analyzer nicht besitzt. Wenn ein Ziel, ein Call, ein Contract oder eine semantische Relation zur Laufzeit unaufgelöst bleibt, ist `runtime_dependent`, `provider_backed`, `partially_resolved` oder `not_observable` die korrektere Aussage als ein künstliches „safe“.
+</Warning>
+
+## 8. Mechanismus im Hintergrund: Aufbau und Designprinzipien
+
+Die Detektion folgt fünf allgemeinen Prinzipien:
+
+### 8.1 Deterministische Evidenz vor semantischer Vermutung
+
+AST, strukturierte Manifestfelder, Codepoints, Versionen, Pfade und Source→Sink-Flows sind reproduzierbare Evidenz. Freie Sprache ist dagegen probabilistischer. Semantische Provider sollten deterministische Evidence **ergänzen**, nicht verdecken.
+
+### 8.2 Parser vor Regex, wenn Syntax existiert
+
+Wenn ein Artefakt eine formale Grammatik besitzt, ist ein Parser strukturell stärker: `exec(` in einem Kommentar ist nicht dasselbe wie ein `Call`-Knoten; `"*"` in einem Regex ist nicht dasselbe wie ein Wildcard-Permission-Feld.
+
+### 8.3 Context Guards sind Teil der Rule
+
+Eine Security Rule besteht konzeptionell aus:
+
+```text
+positive evidence
++ scope constraints
++ negative evidence / safe context
++ decision rule
+```
+
+Ohne den dritten Teil werden Security-Dokumentation, Tests und sichere Gegenregeln regelmäßig zu False Positives.
+
+### 8.4 Composition erst nach Einzelbefund
+
+Die Property sollte mit benachbarten Findings nur dann zu einer höheren Severity komponiert werden, wenn ein gemeinsamer Daten-, Kontroll- oder Trust-Pfad nachweisbar ist.
+
+### 8.5 Coverage ist ein First-Class-Result
+
+Das System sollte mindestens zwischen folgenden Zuständen unterscheiden:
+
+```text
+verified
+partially_resolved
+provider_backed
+runtime_dependent
+semantic_only
+not_observable
+```
+
+Damit bleibt sichtbar, **was** der Scanner tatsächlich gemessen hat.
+
+## 9. Wissenschaftliche Validierung des Detektors
+
+Für eine belastbare Evaluation reichen einzelne Demo-Files nicht. Pro Property sollte die Testsuite mindestens enthalten:
+
+| Testklasse | Zweck |
+| --- | --- |
+| True Positive Fixtures | kanonische Verletzungen der Property |
+| True Negative Fixtures | legitime Gegenfälle mit ähnlichen Tokens/Syntaxen |
+| Adversarial Paraphrases | Recall gegen Oberflächenvariation |
+| Boundary Cases | minimale Änderung zwischen positiv und negativ |
+| Differential Tests | Vergleich mit unabhängigen Referenzimplementierungen |
+| Holdout Fixtures | Schutz gegen Überanpassung an bekannte Tests |
+| Mutation Tests | systematische Änderung von Negation, Scope, Pfad, Sink oder Version |
+
+Für sprachliche Properties sind Precision/Recall und Error Taxonomy sinnvoll. Für AST-/Taint-/Schema-Properties kann zusätzlich die **strukturelle Coverage** gemessen werden: Welche Source-, Sink-, Call-, Manifest- oder Codepoint-Klassen unterstützt der Analyzer tatsächlich?
+
+## 10. Grenzen der Erkennung
+
+Registry auth, signature verification und SLSA provenance sind zusätzliche Ebenen. Static config sieht nicht immer Admission Policies.
+
+Generell gelten drei Grenzen:
+
+1. **Static visibility:** Laufzeitwerte, DNS, Reflection, dynamische Downloads oder externe Policies können fehlen.
+2. **Semantic ambiguity:** Zweck, Legitimität und manche Trust-Entscheidungen sind nicht vollständig aus Syntax ableitbar.
+3. **Authority mismatch:** Ein gefährlicher Text kann technisch machtlos sein; ein harmlos formulierter Skill kann durch Runtime-Konfiguration enorme Authority erhalten.
+
+Deshalb ist die Zielgröße nicht „malicious / benign“, sondern eine nachvollziehbare Aussage über **Property, Evidence, Coverage und mögliche Wirkung**.
+
+## 11. Technische Controls und Remediation
+
+- digest pinning
+- Sigstore/signatures
+- SLSA provenance
+- admission verification
+- no insecure registry in production
+
+Defense in Depth bleibt zentral:
+
+```text
+Authoring lint
+    +
+static scan
+    +
+contract verification
+    +
+supply-chain verification
+    +
+runtime policy
+    +
+audit / telemetry
+```
+
+Kein einzelner Layer ersetzt die anderen.
+
+## 12. Einordnung in DevSecOps
+
+Die Property sollte an mehreren Punkten des Lifecycles geprüft werden:
+
+1. **Authoring:** schneller lokaler Scan und IDE-/pre-commit Feedback.
+2. **Pull/Merge Request:** reproduzierbarer Scan mit diff-basierter Evidence.
+3. **Registry/Katalog:** Scan des veröffentlichten, digest-adressierten Artefakts.
+4. **Installation:** Verification gegen Capability Contract, Lockfiles und Provenance.
+5. **Runtime:** technische Enforcement-Schicht für Netzwerk, Filesystem, Tools, Secrets, Approval und Ressourcen.
+6. **Change Detection:** erneute Bewertung, wenn Tool-Metadaten, Dependencies, Runtime Policy oder Identitäten wechseln.
+
+Damit wird verhindert, dass eine saubere statische Analyse auf Artefakt A durchgeführt wird, während später Artefakt B oder eine breitere Runtime-Konfiguration tatsächlich ausgeführt wird.
+
+## 13. Implementierungsnachweise in `skil`
+
+- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – definiert scanner-positive/scanner-negative Control Coverage und die nativen `SKIL-*` Controls.
+- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – dokumentiert property-level Äquivalenz, Analyzer und Coverage-State.
+- [`docs/external-scanner-feature-parity.md`](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – beschreibt Detektionslogik, Lücken und Unterschiede der Mechanismen.
+- [`internal/analyzer/boundary.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/boundary.go) – Implementierungsquelle für `boundary`.
+- [`internal/analyzer/dependency.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/dependency.go) – Implementierungsquelle für `dependency`.
+
+## 14. Standards, Forschung und Referenzen
+
+1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
+4. [SLSA – Specification v1.2](https://slsa.dev/spec/v1.2/)
+5. [SLSA – Provenance v1.2](https://slsa.dev/spec/v1.2/provenance)
+6. [OWASP GenAI – LLM03:2025 Supply Chain](https://genai.owasp.org/llmrisk/llm032025-supply-chain/)
+7. [OpenSSF Scorecard – Machine-checkable software supply-chain security checks](https://www.scorecard.dev/)
+
+## Fazit
+
+**Container Trust** ist als Security Property dann nützlich, wenn sie nicht als Checklistenwort, sondern als **überprüfbare Relation** implementiert wird. Für `skil` bedeutet das: trust-disable flags + mutable image identity detection, klar ausgewiesene Coverage, reproduzierbare Evidence und scanner-negative Gegenfälle mit ähnlicher Oberfläche.
+
+Die entscheidende Review-Frage lautet deshalb nicht:
+
+> „Kommt ein verdächtiges Wort vor?“
+
+sondern:
+
+> **Welche Sicherheitsannahme wird verletzt, welche Evidence belegt genau diese Relation, welcher sichere Gegenfall wurde ausgeschlossen und welche Teile der Aussage sind statisch tatsächlich beobachtbar?**
