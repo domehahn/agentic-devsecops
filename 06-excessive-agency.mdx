@@ -1,0 +1,183 @@
+---
+title: "Excessive Agency: wenn ein Agent mehr darf, entscheidet oder verbraucht als vorgesehen"
+description: "EA1 bis EA4: uneingeschränkter Toolzugriff, autonome High-Impact-Entscheidungen, Scope Creep und unbeschränkter Ressourcenverbrauch."
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Excessive Agency
+  - Human in the Loop
+  - Agent Permissions
+  - SkillSpector
+  - AI Agents
+featured: false
+draft: false
+series:
+  slug: skillspector-vulnerability-patterns
+  title: "SkillSpector Vulnerability Patterns"
+  order: 6
+---
+
+Agentic Security dreht sich nicht nur um bösartigen Code. Ein Skill kann vollkommen „gut gemeint“ sein und trotzdem gefährlich werden, wenn er zu viel Autonomie erhält.
+
+Excessive Agency beschreibt genau dieses Problem: Ein Agent darf mehr Tools aufrufen, mehr Entscheidungen selbst treffen oder mehr Ressourcen verbrauchen, als für die Aufgabe erforderlich ist. Das erhöht den Blast Radius jedes Fehlers, jeder Prompt Injection und jedes kompromittierten Tools.
+
+<KeyTakeaway>
+Vulnerability Patterns sind keine bloße Liste verdächtiger Strings. Sie beschreiben **Sicherheitsproperties und Trust-Boundary-Verletzungen**, die bei agentischen Artefakten aus natürlicher Sprache, Code, Metadaten, Tools und Runtime-Capabilities entstehen.
+</KeyTakeaway>
+
+## Die Pattern-Familie
+
+Dieser Beitrag betrachtet `EA1`, `EA2`, `EA3`, `EA4` im SkillSpector-Snapshot `2.5.0` beziehungsweise Commit `34f6030`.
+
+| Rule | Pattern | Bedeutung |
+| --- | --- | --- |
+| `EA1` | Unrestricted Tool Access | Gewährt `*`, alle Tools oder beliebige Command-/API-Nutzung ohne enge Grenzen. |
+| `EA2` | Autonomous Decision Making | Führt relevante Aktionen ohne Bestätigung, Approval oder menschliche Kontrolle aus. |
+| `EA3` | Scope Creep | Erweitert den Aufgabenbereich über den dokumentierten Zweck des Skills hinaus. |
+| `EA4` | Unbounded Resource Access | Fehlende Limits für Requests, Retries, Timeouts, Storage oder Compute. |
+
+Die Rule IDs sind vor allem als stabile Triage-Signale nützlich. Für eine Freigabeentscheidung sollten zusätzlich Finding-Text, Datei, Zeile, Confidence, Analyzer-Coverage und das konkrete Artefakt berücksichtigt werden.
+
+## Das Sicherheitsmodell dahinter
+
+EA1 ist eine Capability-Frage, EA2 eine Governance-Frage, EA3 eine Scope-Frage und EA4 eine Ressourcenfrage. Diese Dimensionen ergänzen sich: Ein Agent mit breiten Tools, autonomem Approval, unklarer Aufgabe und unbegrenzten Retries ist schwer kontrollierbar, selbst wenn jede einzelne Funktion legitim aussieht.
+
+Sicherheit entsteht durch **bounded autonomy**.
+
+<Architecture>
+Ein Scan kann gefährliche Eigenschaften sichtbar machen. Die eigentliche Sicherheitsgrenze sollte trotzdem außerhalb des unvertrauenswürdigen Skills liegen: in Tool-Gateways, Filesystem-Isolation, Network Policy, Identity, Approval und Runtime Enforcement.
+</Architecture>
+
+## Verständliches Beispiel
+
+```yaml title="agent-policy.yaml"
+tools:
+  allow:
+    - repo.read
+    - ci.status
+confirmations:
+  required:
+    - deployment.execute
+budgets:
+  tool_calls: 20
+  deadline_seconds: 120
+```
+
+Die Policy zeigt vier Grenzen: Toolumfang, High-Impact-Confirmation, Budget und Deadline. Der Skill kann innerhalb dieser Grenzen autonom planen, aber nicht die Grenzen selbst verändern.
+
+Das Beispiel zeigt das zentrale Prinzip: Nicht jede verwendete API oder Formulierung ist automatisch bösartig. Relevant ist, **welche Autorität ein Skill erhält, welche Daten er verarbeiten kann und welche Boundary er überschreiten soll**.
+
+## Wie SkillSpector das erkennt
+
+SkillSpector sucht bei EA1 nach Wildcards und Formulierungen für unrestricted tool access. EA2 erfasst Anweisungen, Bestätigung zu überspringen oder automatisch auszuführen. EA3 erkennt sprachlichen Scope Creep. EA4 findet explizit unlimitierte Calls, Retries, Timeouts oder Ressourcen.
+
+Die Regeln sind bewusst auch auf natürliche Sprache ausgelegt, weil Agency häufig in Markdown und nicht in Code definiert wird.[^module]
+
+SkillSpector arbeitet dabei nicht mit einer einzigen monolithischen „AI Security“-Regel. Die Analyzer sind getrennte Nodes, die Findings erzeugen und im aktuellen Workflow über ein Inspection Ledger beziehungsweise Analyzer-Status sichtbar machen, welche Analyse tatsächlich ausgeführt wurde.[^registry]
+
+## False Positives, False Negatives und Kontext
+
+Ob eine Aktion „high impact“ ist, hängt von der Umgebung ab. Automatisches Deployment in eine Disposable Preview Environment kann akzeptabel sein; dieselbe Entscheidung in Produktion nicht.
+
+Die statische Detection sollte daher Policy-Kontext ergänzen, nicht ersetzen.
+
+Das ist besonders wichtig bei Agent Skills. Dieselbe Zeichenfolge kann in drei Rollen vorkommen:
+
+```text
+Dokumentation:     beschreibt ein gefährliches Muster
+Test/Eval:         enthält absichtlich eine Angriffsprobe
+Produktivskill:    weist den Agenten tatsächlich zu diesem Verhalten an
+```
+
+Ein professionelles Review bewertet deshalb nicht nur den Match, sondern **Dateirole, Ausführbarkeit, deklarierte Capability, Datenfluss und Kontext**.
+
+<Warning>
+„Pattern gefunden“ bedeutet nicht automatisch „Skill ist bösartig“. Umgekehrt bedeutet „kein Pattern gefunden“ nicht, dass ein Skill sicher ist. Pattern Detection ist eine Evidence-Schicht innerhalb eines mehrstufigen Assurance-Prozesses.
+</Warning>
+
+## Sichere Gegenmaßnahmen
+
+- Toolzugriffe allowlisten statt Wildcards vergeben.
+- Destruktive oder externe Aktionen mit Human Confirmation versehen.
+- Den Skillzweck eng und überprüfbar beschreiben.
+- Tool-Call-, Netzwerk-, Token-, Zeit- und Kostenbudgets erzwingen.
+- Agenten dürfen ihre eigenen Budgets und Approvals nicht verändern.
+
+Eine gute Remediation entfernt nicht nur den konkreten String, der einen Scanner auslöst. Sie reduziert die zugrunde liegende Fähigkeit. Sonst kann dieselbe Sicherheitsverletzung mit anderer Syntax wieder erscheinen.
+
+## Einordnung in DevSecOps und CI/CD
+
+EA-Findings eignen sich hervorragend für environment-spezifische Policies. Derselbe Skill kann in einer Sandbox erlaubt und in Produktion blockiert sein. Die Policy sollte diese Differenz explizit ausdrücken.
+
+Ein belastbarer Workflow kann so aussehen:
+
+```text
+untrusted skill
+      │
+      ▼
+bounded loader
+      │
+      ▼
+static patterns + AST + taint + dependency/MCP analysis
+      │
+      ▼
+coverage + findings + artifact identity
+      │
+      ▼
+environment-specific policy
+      │
+      ├── allow
+      ├── require review
+      └── block
+```
+
+Der zentrale Punkt ist die Trennung zwischen **Detection** und **Decision**. Ein Scanner liefert Evidenz. Eine Policy entscheidet, welche Evidenz in Development, Sandbox, CI oder Produktion akzeptabel ist.
+
+## Review-Fragen
+
+Bei einem Finding aus dieser Pattern-Familie sollte ein Reviewer mindestens prüfen:
+
+- Entspricht das beobachtete Verhalten dem dokumentierten Zweck des Skills?
+- Ist die betroffene Capability überhaupt erforderlich?
+- Kann dieselbe Funktion mit engeren Pfaden, Tools, Domains, Commands oder Rechten umgesetzt werden?
+- Ist der Treffer tatsächlicher ausführbarer beziehungsweise handlungsleitender Inhalt oder nur Dokumentation/Testmaterial?
+- Welche Daten können die betroffene Boundary passieren?
+- Wird die Sicherheitsgrenze technisch durch den Host erzwungen oder nur textuell im Prompt beschrieben?
+- Ist das analysierte Artefakt eindeutig per Version beziehungsweise Digest identifizierbar?
+- Muss das Finding blockieren, einen Human Review auslösen oder als dokumentierte Ausnahme behandelt werden?
+
+## Warum das für Agentic DevSecOps relevant ist
+
+Klassisches DevSecOps betrachtet Source Code, Dependencies, Images, IaC und Runtime-Konfiguration. Agentic DevSecOps erweitert diese Oberfläche um **Instruktionslogik und delegierte Autorität**.
+
+Ein Skill kann formal nur Markdown sein und trotzdem operative Wirkung besitzen. Er beeinflusst, welche Tools ein Agent wählt, welche Informationen er als relevant betrachtet, welche Side Effects er auslöst und welche Grenzen er respektiert. Deshalb müssen natürliche Sprache und Toolmetadaten mit denselben Prinzipien behandelt werden, die wir bei Code bereits kennen:
+
+- Least Privilege
+- Untrusted Input
+- Explicit Trust Boundaries
+- Reproducible Artifacts
+- Policy as Code
+- Auditability
+- Defense in Depth
+
+## Fazit
+
+EA-Findings eignen sich hervorragend für environment-spezifische Policies. Derselbe Skill kann in einer Sandbox erlaubt und in Produktion blockiert sein. Die Policy sollte diese Differenz explizit ausdrücken.
+
+Die Pattern-Familie `EA1`, `EA2`, `EA3`, `EA4` ist vor allem dann wertvoll, wenn sie nicht isoliert betrachtet wird. Ihr Nutzen entsteht durch die Kombination aus präzisem Finding, nachvollziehbarer Coverage, Kontextreview und einer Runtime, die unerlaubte Aktionen auch dann verhindert, wenn die statische Analyse etwas übersieht.
+
+<KeyTakeaway>
+Die entscheidende Frage ist nicht „Hat der Skill einen Treffer?“, sondern: **Welche Trust Boundary würde dieses Verhalten überschreiten, und welche unabhängige Kontrolle verhindert den unerlaubten Effekt?**
+</KeyTakeaway>
+
+## Quellenstand
+
+Dieser Beitrag basiert auf dem öffentlich sichtbaren SkillSpector-Release-Snapshot `2.5.0`, Commit `34f60308522f45447cd343da0aad77bcea308ad4`, Stand 2026-07-30. Die README nennt 68 Vulnerability Patterns in 17 Kategorien; der aktuelle Analyzer-Registry und Pattern-Katalog enthalten inzwischen zusätzliche Analyzer beziehungsweise Pattern-Familien. Diese Serie orientiert sich deshalb am Code-Snapshot und kennzeichnet solche Unterschiede transparent.[^readme][^defaults]
+
+[^module]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/src/skillspector/nodes/analyzers/static_patterns_excessive_agency.py
+[^defaults]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/src/skillspector/nodes/analyzers/pattern_defaults.py
+[^registry]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/src/skillspector/nodes/analyzers/__init__.py
+[^readme]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/README.md

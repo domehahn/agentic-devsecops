@@ -1,0 +1,178 @@
+---
+title: "Rogue Agent Patterns: Self-Modification und unerlaubte Persistenz verhindern"
+description: "RA1 und RA2: warum Skills ihre eigene Implementierung nicht verändern und keine versteckte Persistenz über Sessions etablieren sollten."
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Rogue Agent
+  - Persistence
+  - Self Modification
+  - SkillSpector
+  - Agent Security
+featured: false
+draft: false
+series:
+  slug: skillspector-vulnerability-patterns
+  title: "SkillSpector Vulnerability Patterns"
+  order: 11
+---
+
+Ein Skill ist am besten als versioniertes Artefakt zu behandeln: Review, Digest, Signatur, Installation. Self-Modification bricht dieses Modell. Sobald der Skill sich selbst verändern kann, entspricht der geprüfte Zustand nicht mehr zwingend dem ausgeführten Zustand.
+
+RA2 ergänzt dieses Problem um Persistence: Verhalten überlebt die aktuelle Agent Session und entzieht sich damit der erwarteten Lebensdauer des Skills.
+
+<KeyTakeaway>
+Vulnerability Patterns sind keine bloße Liste verdächtiger Strings. Sie beschreiben **Sicherheitsproperties und Trust-Boundary-Verletzungen**, die bei agentischen Artefakten aus natürlicher Sprache, Code, Metadaten, Tools und Runtime-Capabilities entstehen.
+</KeyTakeaway>
+
+## Die Pattern-Familie
+
+Dieser Beitrag betrachtet `RA1`, `RA2` im SkillSpector-Snapshot `2.5.0` beziehungsweise Commit `34f6030`.
+
+| Rule | Pattern | Bedeutung |
+| --- | --- | --- |
+| `RA1` | Self-Modification | Verändert eigene Skill-Dateien, Konfiguration oder Verhalten zur Laufzeit. |
+| `RA2` | Session Persistence | Etabliert Cronjobs, Startup-Hooks oder andere Persistenz ohne explizite Autorisierung. |
+
+Die Rule IDs sind vor allem als stabile Triage-Signale nützlich. Für eine Freigabeentscheidung sollten zusätzlich Finding-Text, Datei, Zeile, Confidence, Analyzer-Coverage und das konkrete Artefakt berücksichtigt werden.
+
+## Das Sicherheitsmodell dahinter
+
+RA1 ist ein Integrity-Problem. RA2 ist ein Lifecycle- und Persistence-Problem. Zusammen unterlaufen sie die zentrale DevSecOps-Annahme, dass eine freigegebene Version reproduzierbar bleibt.
+
+Ein Agent darf Datenzustand verändern, aber sein **Trust Anchor** – Code, Policy, Signatur und Berechtigungsdefinition – sollte immutable sein.
+
+<Architecture>
+Ein Scan kann gefährliche Eigenschaften sichtbar machen. Die eigentliche Sicherheitsgrenze sollte trotzdem außerhalb des unvertrauenswürdigen Skills liegen: in Tool-Gateways, Filesystem-Isolation, Network Policy, Identity, Approval und Runtime Enforcement.
+</Architecture>
+
+## Verständliches Beispiel
+
+```text
+signiertes Skill-Paket
+        │
+        ▼
+read-only Installation
+        │
+        ├── darf Workspace-Daten verändern, wenn Policy es erlaubt
+        └── darf NICHT das eigene Skill-Paket oder Autostart des Hosts verändern
+```
+
+Diese Grenze macht nachträgliche Drift sichtbar statt sie zu normalisieren.
+
+Das Beispiel zeigt das zentrale Prinzip: Nicht jede verwendete API oder Formulierung ist automatisch bösartig. Relevant ist, **welche Autorität ein Skill erhält, welche Daten er verarbeiten kann und welche Boundary er überschreiten soll**.
+
+## Wie SkillSpector das erkennt
+
+RA1 sucht nach Anweisungen oder Code, der die eigenen Skill-/Config-Dateien verändert. RA2 erfasst typische Persistenzmechanismen wie Scheduler, Startup Scripts oder persistente State-Pfade.
+
+Die Muster sind ein Frühwarnsystem. Absolute Sicherheit entsteht erst durch read-only Mounts, unveränderliche Paketdigests und eingeschränkte Hostrechte.[^module]
+
+SkillSpector arbeitet dabei nicht mit einer einzigen monolithischen „AI Security“-Regel. Die Analyzer sind getrennte Nodes, die Findings erzeugen und im aktuellen Workflow über ein Inspection Ledger beziehungsweise Analyzer-Status sichtbar machen, welche Analyse tatsächlich ausgeführt wurde.[^registry]
+
+## False Positives, False Negatives und Kontext
+
+Self-Update kann bei normalen Anwendungen legitim sein, passt aber schlecht zu einem überprüfbaren Security-Artefakt. Auch persistenter State ist nicht grundsätzlich falsch – entscheidend ist, ob er explizit modelliert und vom Code getrennt ist.
+
+Ein Skill mit legitimer Persistenz sollte einen klaren Datenpfad besitzen, nicht seine eigene Implementierung mutieren.
+
+Das ist besonders wichtig bei Agent Skills. Dieselbe Zeichenfolge kann in drei Rollen vorkommen:
+
+```text
+Dokumentation:     beschreibt ein gefährliches Muster
+Test/Eval:         enthält absichtlich eine Angriffsprobe
+Produktivskill:    weist den Agenten tatsächlich zu diesem Verhalten an
+```
+
+Ein professionelles Review bewertet deshalb nicht nur den Match, sondern **Dateirole, Ausführbarkeit, deklarierte Capability, Datenfluss und Kontext**.
+
+<Warning>
+„Pattern gefunden“ bedeutet nicht automatisch „Skill ist bösartig“. Umgekehrt bedeutet „kein Pattern gefunden“ nicht, dass ein Skill sicher ist. Pattern Detection ist eine Evidence-Schicht innerhalb eines mehrstufigen Assurance-Prozesses.
+</Warning>
+
+## Sichere Gegenmaßnahmen
+
+- Skill-Code und Manifeste read-only installieren.
+- Updates nur als neues signiertes Paket zulassen.
+- Autostart, Cron und globale Startup-Pfade für Skills sperren.
+- Persistente Nutzdaten in dedizierte, versionierte State Stores legen.
+- Runtime-Digest regelmäßig gegen Installations-Lock verifizieren.
+
+Eine gute Remediation entfernt nicht nur den konkreten String, der einen Scanner auslöst. Sie reduziert die zugrunde liegende Fähigkeit. Sonst kann dieselbe Sicherheitsverletzung mit anderer Syntax wieder erscheinen.
+
+## Einordnung in DevSecOps und CI/CD
+
+RA1/RA2 sind besonders für Attestation wichtig. Evidence gilt für einen bestimmten Digest. Ändert sich der Skill nach dem Scan selbst, verliert die Evidence ihre Aussagekraft. Immutability ist deshalb Teil des Assurance-Modells.
+
+Ein belastbarer Workflow kann so aussehen:
+
+```text
+untrusted skill
+      │
+      ▼
+bounded loader
+      │
+      ▼
+static patterns + AST + taint + dependency/MCP analysis
+      │
+      ▼
+coverage + findings + artifact identity
+      │
+      ▼
+environment-specific policy
+      │
+      ├── allow
+      ├── require review
+      └── block
+```
+
+Der zentrale Punkt ist die Trennung zwischen **Detection** und **Decision**. Ein Scanner liefert Evidenz. Eine Policy entscheidet, welche Evidenz in Development, Sandbox, CI oder Produktion akzeptabel ist.
+
+## Review-Fragen
+
+Bei einem Finding aus dieser Pattern-Familie sollte ein Reviewer mindestens prüfen:
+
+- Entspricht das beobachtete Verhalten dem dokumentierten Zweck des Skills?
+- Ist die betroffene Capability überhaupt erforderlich?
+- Kann dieselbe Funktion mit engeren Pfaden, Tools, Domains, Commands oder Rechten umgesetzt werden?
+- Ist der Treffer tatsächlicher ausführbarer beziehungsweise handlungsleitender Inhalt oder nur Dokumentation/Testmaterial?
+- Welche Daten können die betroffene Boundary passieren?
+- Wird die Sicherheitsgrenze technisch durch den Host erzwungen oder nur textuell im Prompt beschrieben?
+- Ist das analysierte Artefakt eindeutig per Version beziehungsweise Digest identifizierbar?
+- Muss das Finding blockieren, einen Human Review auslösen oder als dokumentierte Ausnahme behandelt werden?
+
+## Warum das für Agentic DevSecOps relevant ist
+
+Klassisches DevSecOps betrachtet Source Code, Dependencies, Images, IaC und Runtime-Konfiguration. Agentic DevSecOps erweitert diese Oberfläche um **Instruktionslogik und delegierte Autorität**.
+
+Ein Skill kann formal nur Markdown sein und trotzdem operative Wirkung besitzen. Er beeinflusst, welche Tools ein Agent wählt, welche Informationen er als relevant betrachtet, welche Side Effects er auslöst und welche Grenzen er respektiert. Deshalb müssen natürliche Sprache und Toolmetadaten mit denselben Prinzipien behandelt werden, die wir bei Code bereits kennen:
+
+- Least Privilege
+- Untrusted Input
+- Explicit Trust Boundaries
+- Reproducible Artifacts
+- Policy as Code
+- Auditability
+- Defense in Depth
+
+## Fazit
+
+RA1/RA2 sind besonders für Attestation wichtig. Evidence gilt für einen bestimmten Digest. Ändert sich der Skill nach dem Scan selbst, verliert die Evidence ihre Aussagekraft. Immutability ist deshalb Teil des Assurance-Modells.
+
+Die Pattern-Familie `RA1`, `RA2` ist vor allem dann wertvoll, wenn sie nicht isoliert betrachtet wird. Ihr Nutzen entsteht durch die Kombination aus präzisem Finding, nachvollziehbarer Coverage, Kontextreview und einer Runtime, die unerlaubte Aktionen auch dann verhindert, wenn die statische Analyse etwas übersieht.
+
+<KeyTakeaway>
+Die entscheidende Frage ist nicht „Hat der Skill einen Treffer?“, sondern: **Welche Trust Boundary würde dieses Verhalten überschreiten, und welche unabhängige Kontrolle verhindert den unerlaubten Effekt?**
+</KeyTakeaway>
+
+## Quellenstand
+
+Dieser Beitrag basiert auf dem öffentlich sichtbaren SkillSpector-Release-Snapshot `2.5.0`, Commit `34f60308522f45447cd343da0aad77bcea308ad4`, Stand 2026-07-30. Die README nennt 68 Vulnerability Patterns in 17 Kategorien; der aktuelle Analyzer-Registry und Pattern-Katalog enthalten inzwischen zusätzliche Analyzer beziehungsweise Pattern-Familien. Diese Serie orientiert sich deshalb am Code-Snapshot und kennzeichnet solche Unterschiede transparent.[^readme][^defaults]
+
+[^module]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/src/skillspector/nodes/analyzers/static_patterns_rogue_agent.py
+[^defaults]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/src/skillspector/nodes/analyzers/pattern_defaults.py
+[^registry]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/src/skillspector/nodes/analyzers/__init__.py
+[^readme]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/README.md

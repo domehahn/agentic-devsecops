@@ -1,0 +1,180 @@
+---
+title: "Privilege Escalation in AI Skills: übermäßige Rechte, Root-Aufrufe und Credential-Zugriff"
+description: "PE1 bis PE3: wie SkillSpector übermäßige Berechtigungen, sudo/root-Nutzung und Zugriffe auf Credential-Dateien als Privilege-Escalation-Signale bewertet."
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Privilege Escalation
+  - Least Privilege
+  - Credentials
+  - SkillSpector
+  - Agent Security
+featured: false
+draft: false
+series:
+  slug: skillspector-vulnerability-patterns
+  title: "SkillSpector Vulnerability Patterns"
+  order: 4
+---
+
+Ein Agent Skill muss nicht selbst eine Kernel-Schwachstelle ausnutzen, um Privilegien zu eskalieren. Es reicht, wenn er den Agenten dazu bringt, breitere Tools zu verlangen, `sudo` aufzurufen oder vorhandene Credentials zu lesen.
+
+Diese Form der Eskalation ist für Agentic Systems besonders typisch: Die Privilegien existieren häufig bereits im Host oder in der Entwicklerumgebung. Der Skill versucht lediglich, sie in seinen eigenen Aktionsraum zu ziehen.
+
+<KeyTakeaway>
+Vulnerability Patterns sind keine bloße Liste verdächtiger Strings. Sie beschreiben **Sicherheitsproperties und Trust-Boundary-Verletzungen**, die bei agentischen Artefakten aus natürlicher Sprache, Code, Metadaten, Tools und Runtime-Capabilities entstehen.
+</KeyTakeaway>
+
+## Die Pattern-Familie
+
+Dieser Beitrag betrachtet `PE1`, `PE2`, `PE3` im SkillSpector-Snapshot `2.5.0` beziehungsweise Commit `34f6030`.
+
+| Rule | Pattern | Bedeutung |
+| --- | --- | --- |
+| `PE1` | Excessive Permissions | Fordert breitere Berechtigungen an, als für den dokumentierten Zweck plausibel erscheinen. |
+| `PE2` | Sudo/Root Invocation | Nutzt sudo, root oder andere Formen expliziter Privilegienerhöhung. |
+| `PE3` | Credential File Access | Greift auf SSH-, Cloud-, Token-, `.env`- oder andere Credential-Dateien zu. |
+
+Die Rule IDs sind vor allem als stabile Triage-Signale nützlich. Für eine Freigabeentscheidung sollten zusätzlich Finding-Text, Datei, Zeile, Confidence, Analyzer-Coverage und das konkrete Artefakt berücksichtigt werden.
+
+## Das Sicherheitsmodell dahinter
+
+PE1 beschreibt **Authority Expansion**, PE2 **Execution Elevation** und PE3 **Credential Acquisition**. Zusammen bilden sie eine Kette: breitere Rechte erhalten, privilegiert ausführen und dauerhafte beziehungsweise externe Identitäten übernehmen.
+
+Least Privilege muss daher auf mehreren Ebenen gelten: Manifest, Tool Gateway, Betriebssystem, Cloud-IAM und Secret Store.
+
+<Architecture>
+Ein Scan kann gefährliche Eigenschaften sichtbar machen. Die eigentliche Sicherheitsgrenze sollte trotzdem außerhalb des unvertrauenswürdigen Skills liegen: in Tool-Gateways, Filesystem-Isolation, Network Policy, Identity, Approval und Runtime Enforcement.
+</Architecture>
+
+## Verständliches Beispiel
+
+```yaml title="skill-policy.yaml"
+permissions:
+  filesystem:
+    read:
+      - "./workspace/**"
+  commands:
+    allow:
+      - "git status"
+  secrets: []
+```
+
+Eine enge Capability-Deklaration ist besser als ein allgemeines „shell“ oder „all“. Ein Skill, der lediglich Repository-Status analysiert, benötigt weder Root noch Zugriff auf `~/.ssh` oder Cloud-Credentials.
+
+Das Beispiel zeigt das zentrale Prinzip: Nicht jede verwendete API oder Formulierung ist automatisch bösartig. Relevant ist, **welche Autorität ein Skill erhält, welche Daten er verarbeiten kann und welche Boundary er überschreiten soll**.
+
+## Wie SkillSpector das erkennt
+
+SkillSpector untersucht sowohl textuelle Berechtigungsanforderungen als auch Code- und Pfadreferenzen. Der gemeinsame Static Runner enthält zusätzliche Logik, um harmlose `.env`-Setup-Dokumentation außerhalb von `SKILL.md` nicht pauschal als PE3 zu werten. Das primäre `SKILL.md` bleibt strenger, weil dort Referenzen selbst handlungsleitende Agenteninstruktionen sein können.
+
+Diese Differenzierung ist ein gutes Beispiel dafür, warum Dateirole und Kontext in Agent-Security wichtig sind.[^module]
+
+SkillSpector arbeitet dabei nicht mit einer einzigen monolithischen „AI Security“-Regel. Die Analyzer sind getrennte Nodes, die Findings erzeugen und im aktuellen Workflow über ein Inspection Ledger beziehungsweise Analyzer-Status sichtbar machen, welche Analyse tatsächlich ausgeführt wurde.[^registry]
+
+## False Positives, False Negatives und Kontext
+
+Nicht jede privilegierte Operation ist falsch. Ein Infrastruktur-Skill kann bewusst administrative Aufgaben erfüllen. Dann müssen Berechtigungen aber dokumentiert, eng begrenzt und durch eine höherwertige Freigabe geschützt sein.
+
+PE1 ist besonders schwer rein syntaktisch zu beweisen: „zu viele Rechte“ ist immer relativ zum erklärten Zweck.
+
+Das ist besonders wichtig bei Agent Skills. Dieselbe Zeichenfolge kann in drei Rollen vorkommen:
+
+```text
+Dokumentation:     beschreibt ein gefährliches Muster
+Test/Eval:         enthält absichtlich eine Angriffsprobe
+Produktivskill:    weist den Agenten tatsächlich zu diesem Verhalten an
+```
+
+Ein professionelles Review bewertet deshalb nicht nur den Match, sondern **Dateirole, Ausführbarkeit, deklarierte Capability, Datenfluss und Kontext**.
+
+<Warning>
+„Pattern gefunden“ bedeutet nicht automatisch „Skill ist bösartig“. Umgekehrt bedeutet „kein Pattern gefunden“ nicht, dass ein Skill sicher ist. Pattern Detection ist eine Evidence-Schicht innerhalb eines mehrstufigen Assurance-Prozesses.
+</Warning>
+
+## Sichere Gegenmaßnahmen
+
+- Root- und sudo-Ausführung vermeiden oder in einen separaten, kontrollierten Operator verschieben.
+- Credential-Dateien nie breit mounten oder für Skills sichtbar machen.
+- Manifestrechte auf konkrete Pfade, Domains, Commands und Tools begrenzen.
+- Kurzlebige, workload-spezifische Credentials statt Entwickleridentitäten verwenden.
+- Hochprivilegierte Skills getrennt signieren, reviewen und deployen.
+
+Eine gute Remediation entfernt nicht nur den konkreten String, der einen Scanner auslöst. Sie reduziert die zugrunde liegende Fähigkeit. Sonst kann dieselbe Sicherheitsverletzung mit anderer Syntax wieder erscheinen.
+
+## Einordnung in DevSecOps und CI/CD
+
+PE-Findings sollten mit Capability Verification gekoppelt werden: Was deklariert der Skill, was beobachtet der Scanner, und was erlaubt die Runtime tatsächlich? Eine reine Textfreigabe ist für privilegierte Fähigkeiten nicht ausreichend.
+
+Ein belastbarer Workflow kann so aussehen:
+
+```text
+untrusted skill
+      │
+      ▼
+bounded loader
+      │
+      ▼
+static patterns + AST + taint + dependency/MCP analysis
+      │
+      ▼
+coverage + findings + artifact identity
+      │
+      ▼
+environment-specific policy
+      │
+      ├── allow
+      ├── require review
+      └── block
+```
+
+Der zentrale Punkt ist die Trennung zwischen **Detection** und **Decision**. Ein Scanner liefert Evidenz. Eine Policy entscheidet, welche Evidenz in Development, Sandbox, CI oder Produktion akzeptabel ist.
+
+## Review-Fragen
+
+Bei einem Finding aus dieser Pattern-Familie sollte ein Reviewer mindestens prüfen:
+
+- Entspricht das beobachtete Verhalten dem dokumentierten Zweck des Skills?
+- Ist die betroffene Capability überhaupt erforderlich?
+- Kann dieselbe Funktion mit engeren Pfaden, Tools, Domains, Commands oder Rechten umgesetzt werden?
+- Ist der Treffer tatsächlicher ausführbarer beziehungsweise handlungsleitender Inhalt oder nur Dokumentation/Testmaterial?
+- Welche Daten können die betroffene Boundary passieren?
+- Wird die Sicherheitsgrenze technisch durch den Host erzwungen oder nur textuell im Prompt beschrieben?
+- Ist das analysierte Artefakt eindeutig per Version beziehungsweise Digest identifizierbar?
+- Muss das Finding blockieren, einen Human Review auslösen oder als dokumentierte Ausnahme behandelt werden?
+
+## Warum das für Agentic DevSecOps relevant ist
+
+Klassisches DevSecOps betrachtet Source Code, Dependencies, Images, IaC und Runtime-Konfiguration. Agentic DevSecOps erweitert diese Oberfläche um **Instruktionslogik und delegierte Autorität**.
+
+Ein Skill kann formal nur Markdown sein und trotzdem operative Wirkung besitzen. Er beeinflusst, welche Tools ein Agent wählt, welche Informationen er als relevant betrachtet, welche Side Effects er auslöst und welche Grenzen er respektiert. Deshalb müssen natürliche Sprache und Toolmetadaten mit denselben Prinzipien behandelt werden, die wir bei Code bereits kennen:
+
+- Least Privilege
+- Untrusted Input
+- Explicit Trust Boundaries
+- Reproducible Artifacts
+- Policy as Code
+- Auditability
+- Defense in Depth
+
+## Fazit
+
+PE-Findings sollten mit Capability Verification gekoppelt werden: Was deklariert der Skill, was beobachtet der Scanner, und was erlaubt die Runtime tatsächlich? Eine reine Textfreigabe ist für privilegierte Fähigkeiten nicht ausreichend.
+
+Die Pattern-Familie `PE1`, `PE2`, `PE3` ist vor allem dann wertvoll, wenn sie nicht isoliert betrachtet wird. Ihr Nutzen entsteht durch die Kombination aus präzisem Finding, nachvollziehbarer Coverage, Kontextreview und einer Runtime, die unerlaubte Aktionen auch dann verhindert, wenn die statische Analyse etwas übersieht.
+
+<KeyTakeaway>
+Die entscheidende Frage ist nicht „Hat der Skill einen Treffer?“, sondern: **Welche Trust Boundary würde dieses Verhalten überschreiten, und welche unabhängige Kontrolle verhindert den unerlaubten Effekt?**
+</KeyTakeaway>
+
+## Quellenstand
+
+Dieser Beitrag basiert auf dem öffentlich sichtbaren SkillSpector-Release-Snapshot `2.5.0`, Commit `34f60308522f45447cd343da0aad77bcea308ad4`, Stand 2026-07-30. Die README nennt 68 Vulnerability Patterns in 17 Kategorien; der aktuelle Analyzer-Registry und Pattern-Katalog enthalten inzwischen zusätzliche Analyzer beziehungsweise Pattern-Familien. Diese Serie orientiert sich deshalb am Code-Snapshot und kennzeichnet solche Unterschiede transparent.[^readme][^defaults]
+
+[^module]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/src/skillspector/nodes/analyzers/static_patterns_privilege_escalation.py
+[^defaults]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/src/skillspector/nodes/analyzers/pattern_defaults.py
+[^registry]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/src/skillspector/nodes/analyzers/__init__.py
+[^readme]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/README.md

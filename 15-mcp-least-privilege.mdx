@@ -1,0 +1,176 @@
+---
+title: "MCP Least Privilege: deklarierte Berechtigungen gegen beobachtete Capabilities prüfen"
+description: "LP1 bis LP4: Underdeclared Capabilities, Wildcards, fehlende Permission-Deklarationen und Overdeclaration bei MCP- und Agent Skills."
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - MCP
+  - Least Privilege
+  - Capabilities
+  - SkillSpector
+  - Agent Security
+featured: false
+draft: false
+series:
+  slug: skillspector-vulnerability-patterns
+  title: "SkillSpector Vulnerability Patterns"
+  order: 15
+---
+
+Berechtigungen sind nur dann nützlich, wenn Deklaration und tatsächliches Verhalten zusammenpassen. Ein Manifest kann zu wenig deklarieren, alles per Wildcard erlauben oder Rechte vorsorglich anfordern, die der aktuelle Code gar nicht nutzt.
+
+LP1–LP4 machen aus „Permissions vorhanden“ eine **Conformance-Frage**.
+
+<KeyTakeaway>
+Vulnerability Patterns sind keine bloße Liste verdächtiger Strings. Sie beschreiben **Sicherheitsproperties und Trust-Boundary-Verletzungen**, die bei agentischen Artefakten aus natürlicher Sprache, Code, Metadaten, Tools und Runtime-Capabilities entstehen.
+</KeyTakeaway>
+
+## Die Pattern-Familie
+
+Dieser Beitrag betrachtet `LP1`, `LP2`, `LP3`, `LP4` im SkillSpector-Snapshot `2.5.0` beziehungsweise Commit `34f6030`.
+
+| Rule | Pattern | Bedeutung |
+| --- | --- | --- |
+| `LP1` | Underdeclared Capability | Code verwendet Shell, Network, Filesystem, Env oder MCP-Fähigkeiten, die nicht deklariert sind. |
+| `LP2` | Wildcard Permission | `*`, `all`, `full` oder ähnliche Werte entfernen die Least-Privilege-Grenze. |
+| `LP3` | Missing Permission Declaration | Ausführbarer Skill besitzt relevante Capabilities, aber keine verwertbare Permission-Deklaration. |
+| `LP4` | Overdeclared Permission | Manifest fordert Fähigkeiten, die im statisch beobachteten Verhalten nicht benötigt werden. |
+
+Die Rule IDs sind vor allem als stabile Triage-Signale nützlich. Für eine Freigabeentscheidung sollten zusätzlich Finding-Text, Datei, Zeile, Confidence, Analyzer-Coverage und das konkrete Artefakt berücksichtigt werden.
+
+## Das Sicherheitsmodell dahinter
+
+SkillSpector bildet Code-Signale auf Capability-Kategorien wie Shell, Network, File Read/Write, Environment und MCP ab. Diese beobachteten Capabilities werden mit Manifest-Permissions beziehungsweise `allowed-tools` verglichen.
+
+Damit entstehen zwei Richtungen: Underdeclaration ist ein mögliches Deception-/Policy-Risiko; Overdeclaration vergrößert unnötig den Blast Radius.
+
+<Architecture>
+Ein Scan kann gefährliche Eigenschaften sichtbar machen. Die eigentliche Sicherheitsgrenze sollte trotzdem außerhalb des unvertrauenswürdigen Skills liegen: in Tool-Gateways, Filesystem-Isolation, Network Policy, Identity, Approval und Runtime Enforcement.
+</Architecture>
+
+## Verständliches Beispiel
+
+```yaml title="SKILL.md"
+allowed-tools:
+  - Read
+  - WebFetch
+```
+
+Wenn der Code zusätzlich `subprocess` verwendet, entsteht eine undeclared Shell Capability. Wenn dagegen `Bash` deklariert ist, aber keinerlei Command-Ausführung vorkommt, sollte die Berechtigung hinterfragt werden.
+
+Das Beispiel zeigt das zentrale Prinzip: Nicht jede verwendete API oder Formulierung ist automatisch bösartig. Relevant ist, **welche Autorität ein Skill erhält, welche Daten er verarbeiten kann und welche Boundary er überschreiten soll**.
+
+## Wie SkillSpector das erkennt
+
+Der Analyzer besitzt Capability-Patterns für Shell, Network, File Read, File Write, Env und MCP. Permission-Strings und bekannte Agent-Toolnamen werden auf dieselben Kategorien normalisiert. Wildcards werden separat erkannt.
+
+Docs-only Skills ohne ausführbare Komponenten werden als nicht anwendbar behandelt, damit fehlende Code-Capabilities nicht künstlich gegen ein Manifest gerechnet werden.[^module]
+
+SkillSpector arbeitet dabei nicht mit einer einzigen monolithischen „AI Security“-Regel. Die Analyzer sind getrennte Nodes, die Findings erzeugen und im aktuellen Workflow über ein Inspection Ledger beziehungsweise Analyzer-Status sichtbar machen, welche Analyse tatsächlich ausgeführt wurde.[^registry]
+
+## False Positives, False Negatives und Kontext
+
+Statische Capability Detection kann Wrapper oder dynamische Toolcalls übersehen. Overdeclaration ist außerdem nicht automatisch malicious – vielleicht ist der Pfad optional oder plattformspezifisch.
+
+Die beste Verification kombiniert statische Beobachtung mit Runtime Audit und explizitem Capability Contract.
+
+Das ist besonders wichtig bei Agent Skills. Dieselbe Zeichenfolge kann in drei Rollen vorkommen:
+
+```text
+Dokumentation:     beschreibt ein gefährliches Muster
+Test/Eval:         enthält absichtlich eine Angriffsprobe
+Produktivskill:    weist den Agenten tatsächlich zu diesem Verhalten an
+```
+
+Ein professionelles Review bewertet deshalb nicht nur den Match, sondern **Dateirole, Ausführbarkeit, deklarierte Capability, Datenfluss und Kontext**.
+
+<Warning>
+„Pattern gefunden“ bedeutet nicht automatisch „Skill ist bösartig“. Umgekehrt bedeutet „kein Pattern gefunden“ nicht, dass ein Skill sicher ist. Pattern Detection ist eine Evidence-Schicht innerhalb eines mehrstufigen Assurance-Prozesses.
+</Warning>
+
+## Sichere Gegenmaßnahmen
+
+- Permissions auf konkrete Capability-Kategorien und wenn möglich konkrete Ziele begrenzen.
+- Wildcards vermeiden.
+- Deklaration bei jeder Codeänderung mitreviewen.
+- Overdeclared Rechte entfernen, statt sie „für später“ stehen zu lassen.
+- Runtime verweigert nicht deklarierte Capabilities unabhängig vom Scan.
+
+Eine gute Remediation entfernt nicht nur den konkreten String, der einen Scanner auslöst. Sie reduziert die zugrunde liegende Fähigkeit. Sonst kann dieselbe Sicherheitsverletzung mit anderer Syntax wieder erscheinen.
+
+## Einordnung in DevSecOps und CI/CD
+
+LP1–LP4 eignen sich für einen Contract-Conformance-Gate. Ein Release sollte nur dann freigegeben werden, wenn beobachtete Capabilities erklärt und genehmigt sind und das Manifest keine unnötigen Rechte enthält.
+
+Ein belastbarer Workflow kann so aussehen:
+
+```text
+untrusted skill
+      │
+      ▼
+bounded loader
+      │
+      ▼
+static patterns + AST + taint + dependency/MCP analysis
+      │
+      ▼
+coverage + findings + artifact identity
+      │
+      ▼
+environment-specific policy
+      │
+      ├── allow
+      ├── require review
+      └── block
+```
+
+Der zentrale Punkt ist die Trennung zwischen **Detection** und **Decision**. Ein Scanner liefert Evidenz. Eine Policy entscheidet, welche Evidenz in Development, Sandbox, CI oder Produktion akzeptabel ist.
+
+## Review-Fragen
+
+Bei einem Finding aus dieser Pattern-Familie sollte ein Reviewer mindestens prüfen:
+
+- Entspricht das beobachtete Verhalten dem dokumentierten Zweck des Skills?
+- Ist die betroffene Capability überhaupt erforderlich?
+- Kann dieselbe Funktion mit engeren Pfaden, Tools, Domains, Commands oder Rechten umgesetzt werden?
+- Ist der Treffer tatsächlicher ausführbarer beziehungsweise handlungsleitender Inhalt oder nur Dokumentation/Testmaterial?
+- Welche Daten können die betroffene Boundary passieren?
+- Wird die Sicherheitsgrenze technisch durch den Host erzwungen oder nur textuell im Prompt beschrieben?
+- Ist das analysierte Artefakt eindeutig per Version beziehungsweise Digest identifizierbar?
+- Muss das Finding blockieren, einen Human Review auslösen oder als dokumentierte Ausnahme behandelt werden?
+
+## Warum das für Agentic DevSecOps relevant ist
+
+Klassisches DevSecOps betrachtet Source Code, Dependencies, Images, IaC und Runtime-Konfiguration. Agentic DevSecOps erweitert diese Oberfläche um **Instruktionslogik und delegierte Autorität**.
+
+Ein Skill kann formal nur Markdown sein und trotzdem operative Wirkung besitzen. Er beeinflusst, welche Tools ein Agent wählt, welche Informationen er als relevant betrachtet, welche Side Effects er auslöst und welche Grenzen er respektiert. Deshalb müssen natürliche Sprache und Toolmetadaten mit denselben Prinzipien behandelt werden, die wir bei Code bereits kennen:
+
+- Least Privilege
+- Untrusted Input
+- Explicit Trust Boundaries
+- Reproducible Artifacts
+- Policy as Code
+- Auditability
+- Defense in Depth
+
+## Fazit
+
+LP1–LP4 eignen sich für einen Contract-Conformance-Gate. Ein Release sollte nur dann freigegeben werden, wenn beobachtete Capabilities erklärt und genehmigt sind und das Manifest keine unnötigen Rechte enthält.
+
+Die Pattern-Familie `LP1`, `LP2`, `LP3`, `LP4` ist vor allem dann wertvoll, wenn sie nicht isoliert betrachtet wird. Ihr Nutzen entsteht durch die Kombination aus präzisem Finding, nachvollziehbarer Coverage, Kontextreview und einer Runtime, die unerlaubte Aktionen auch dann verhindert, wenn die statische Analyse etwas übersieht.
+
+<KeyTakeaway>
+Die entscheidende Frage ist nicht „Hat der Skill einen Treffer?“, sondern: **Welche Trust Boundary würde dieses Verhalten überschreiten, und welche unabhängige Kontrolle verhindert den unerlaubten Effekt?**
+</KeyTakeaway>
+
+## Quellenstand
+
+Dieser Beitrag basiert auf dem öffentlich sichtbaren SkillSpector-Release-Snapshot `2.5.0`, Commit `34f60308522f45447cd343da0aad77bcea308ad4`, Stand 2026-07-30. Die README nennt 68 Vulnerability Patterns in 17 Kategorien; der aktuelle Analyzer-Registry und Pattern-Katalog enthalten inzwischen zusätzliche Analyzer beziehungsweise Pattern-Familien. Diese Serie orientiert sich deshalb am Code-Snapshot und kennzeichnet solche Unterschiede transparent.[^readme][^defaults]
+
+[^module]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/src/skillspector/nodes/analyzers/mcp_least_privilege.py
+[^defaults]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/src/skillspector/nodes/analyzers/pattern_defaults.py
+[^registry]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/src/skillspector/nodes/analyzers/__init__.py
+[^readme]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/README.md

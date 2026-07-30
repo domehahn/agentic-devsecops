@@ -1,0 +1,188 @@
+---
+title: "Supply-Chain-Risiken in AI Skills: Dependencies, Remote Code, Obfuscation und Container Trust"
+description: "SC1 bis SC7 mit Fokus auf die noch nicht separat behandelten Supply-Chain-Patterns: Pinning, Remote Execution, Obfuscation, Abandonment, Typosquatting und Container Trust."
+date: "2026-07-30"
+author: "Dominik Hahn"
+topics:
+  - devsecops
+  - agentic-engineering
+tags:
+  - Supply Chain
+  - Dependencies
+  - Typosquatting
+  - Container Security
+  - SkillSpector
+featured: false
+draft: false
+series:
+  slug: skillspector-vulnerability-patterns
+  title: "SkillSpector Vulnerability Patterns"
+  order: 5
+---
+
+AI Skills sind Software Supply Chain. Selbst wenn `SKILL.md` vertrauenswürdig aussieht, kann ein Installationskommando eine veränderliche Dependency laden, ein Remote-Skript ausführen oder ein nicht verifiziertes Container Image starten.
+
+SkillSpector behandelt Supply-Chain-Risiken deshalb breiter als nur CVEs. SC4/OSV wurde im ersten Artikelpaket bereits separat behandelt; hier stehen die **anderen** Muster und ihre gemeinsame Architektur im Mittelpunkt.
+
+<KeyTakeaway>
+Vulnerability Patterns sind keine bloße Liste verdächtiger Strings. Sie beschreiben **Sicherheitsproperties und Trust-Boundary-Verletzungen**, die bei agentischen Artefakten aus natürlicher Sprache, Code, Metadaten, Tools und Runtime-Capabilities entstehen.
+</KeyTakeaway>
+
+## Die Pattern-Familie
+
+Dieser Beitrag betrachtet `SC1`, `SC2`, `SC3`, `SC4`, `SC5`, `SC6`, `SC7` im SkillSpector-Snapshot `2.5.0` beziehungsweise Commit `34f6030`.
+
+| Rule | Pattern | Bedeutung |
+| --- | --- | --- |
+| `SC1` | Unpinned Dependencies | Dependencies ohne enge Versionsbindung erlauben unerwartete zukünftige Änderungen. |
+| `SC2` | Remote Code Execution | Lädt Code aus dem Netz und führt ihn unmittelbar aus. |
+| `SC3` | Obfuscated Code | Versteckt ausführbares Verhalten hinter Base64, Hex, Marshal, Kompression oder ähnlicher Obfuscation. |
+| `SC4` | Known Vulnerable Dependency | Bekannte Schwachstellen über OSV beziehungsweise Fallback-Intelligence; bereits im ersten Paket separat behandelt. |
+| `SC5` | Abandoned Dependency | Verwendet als aufgegeben oder unmaintained bekannte Pakete. |
+| `SC6` | Typosquatting Dependency | Paketname ähnelt populären Packages und kann auf Dependency Confusion/Typosquatting hindeuten. |
+| `SC7` | Untrusted Container Image | Deaktiviert Content Trust oder Registry-Verifikation für Container Images. |
+
+Die Rule IDs sind vor allem als stabile Triage-Signale nützlich. Für eine Freigabeentscheidung sollten zusätzlich Finding-Text, Datei, Zeile, Confidence, Analyzer-Coverage und das konkrete Artefakt berücksichtigt werden.
+
+## Das Sicherheitsmodell dahinter
+
+SC1 adressiert Reproduzierbarkeit. SC2 verhindert, dass Code Review durch „download and execute“ umgangen wird. SC3 markiert Review-Evasion. SC5 und SC6 betrachten Paketidentität und Maintainer-Risiko. SC7 überträgt dieselben Vertrauensprinzipien auf Container Images.
+
+Der gemeinsame Nenner lautet: **Das geprüfte Artefakt muss identisch oder kryptographisch gebunden an das später ausgeführte Artefakt sein.**
+
+<Architecture>
+Ein Scan kann gefährliche Eigenschaften sichtbar machen. Die eigentliche Sicherheitsgrenze sollte trotzdem außerhalb des unvertrauenswürdigen Skills liegen: in Tool-Gateways, Filesystem-Isolation, Network Policy, Identity, Approval und Runtime Enforcement.
+</Architecture>
+
+## Verständliches Beispiel
+
+```text
+Schwach:
+  installiere "latest"
+  lade ein Script von einer URL und führe es direkt aus
+  starte ein Image ohne Digest oder verifizierte Herkunft
+
+Besser:
+  pinne konkrete Versionen
+  verifiziere Checksums/Signaturen
+  verwende Lockfiles
+  pinne Container per Digest
+```
+
+Das Ziel ist nicht, Updates zu verhindern. Updates sollen zu einem **neuen, reviewbaren Artefakt** werden.
+
+Das Beispiel zeigt das zentrale Prinzip: Nicht jede verwendete API oder Formulierung ist automatisch bösartig. Relevant ist, **welche Autorität ein Skill erhält, welche Daten er verarbeiten kann und welche Boundary er überschreiten soll**.
+
+## Wie SkillSpector das erkennt
+
+Der Supply-Chain-Analyzer erkennt unpinned Python-/npm-Muster, typische Download-and-Execute-Ketten und mehrere Obfuscation-Signale. SC5 arbeitet mit bekannten abandoned Packages, SC6 mit einer Liste populärer Paketnamen und Ähnlichkeitslogik. SC7 erfasst spezifische Flags, die Docker Content Trust oder Registry-Vertrauen abschalten.
+
+SC4 nutzt Live-OSV mit Fallback und ist deshalb eine andere Art von Signal: externe Vulnerability Intelligence statt rein lokaler Syntax.[^module]
+
+SkillSpector arbeitet dabei nicht mit einer einzigen monolithischen „AI Security“-Regel. Die Analyzer sind getrennte Nodes, die Findings erzeugen und im aktuellen Workflow über ein Inspection Ledger beziehungsweise Analyzer-Status sichtbar machen, welche Analyse tatsächlich ausgeführt wurde.[^registry]
+
+## False Positives, False Negatives und Kontext
+
+Listen für abandoned oder populäre Packages altern. Ein Paket kann reaktiviert werden, ein neues Typosquatting-Ziel kann noch unbekannt sein. Version Pinning schützt außerdem nicht vor einer bereits kompromittierten gepinnten Version.
+
+Deshalb gehören Provenance, Signaturen, SBOM und Repository-/Registry-Policy neben die Pattern Detection.
+
+Das ist besonders wichtig bei Agent Skills. Dieselbe Zeichenfolge kann in drei Rollen vorkommen:
+
+```text
+Dokumentation:     beschreibt ein gefährliches Muster
+Test/Eval:         enthält absichtlich eine Angriffsprobe
+Produktivskill:    weist den Agenten tatsächlich zu diesem Verhalten an
+```
+
+Ein professionelles Review bewertet deshalb nicht nur den Match, sondern **Dateirole, Ausführbarkeit, deklarierte Capability, Datenfluss und Kontext**.
+
+<Warning>
+„Pattern gefunden“ bedeutet nicht automatisch „Skill ist bösartig“. Umgekehrt bedeutet „kein Pattern gefunden“ nicht, dass ein Skill sicher ist. Pattern Detection ist eine Evidence-Schicht innerhalb eines mehrstufigen Assurance-Prozesses.
+</Warning>
+
+## Sichere Gegenmaßnahmen
+
+- Dependencies und MCP-/Container-Artefakte reproduzierbar pinnen.
+- Lockfiles und Digests committen.
+- Remote Scripts niemals ungeprüft direkt in Interpreter oder Shell pipen.
+- Obfuscation in Security-relevanten Skill-Komponenten vermeiden.
+- Package-Namen gegen offizielle Quellen verifizieren.
+- Container Signatures und Registry TLS nicht deaktivieren.
+- SC4/OSV als zusätzliche, nicht alleinige Intelligence-Schicht verwenden.
+
+Eine gute Remediation entfernt nicht nur den konkreten String, der einen Scanner auslöst. Sie reduziert die zugrunde liegende Fähigkeit. Sonst kann dieselbe Sicherheitsverletzung mit anderer Syntax wieder erscheinen.
+
+## Einordnung in DevSecOps und CI/CD
+
+Supply-Chain-Checks sollten sowohl Source als auch das tatsächlich gebaute Release-Artefakt prüfen. Ideal ist eine Kette aus Scan → SBOM → Signatur/Provenance → Policy → Installation, jeweils an denselben Digest gebunden.
+
+Ein belastbarer Workflow kann so aussehen:
+
+```text
+untrusted skill
+      │
+      ▼
+bounded loader
+      │
+      ▼
+static patterns + AST + taint + dependency/MCP analysis
+      │
+      ▼
+coverage + findings + artifact identity
+      │
+      ▼
+environment-specific policy
+      │
+      ├── allow
+      ├── require review
+      └── block
+```
+
+Der zentrale Punkt ist die Trennung zwischen **Detection** und **Decision**. Ein Scanner liefert Evidenz. Eine Policy entscheidet, welche Evidenz in Development, Sandbox, CI oder Produktion akzeptabel ist.
+
+## Review-Fragen
+
+Bei einem Finding aus dieser Pattern-Familie sollte ein Reviewer mindestens prüfen:
+
+- Entspricht das beobachtete Verhalten dem dokumentierten Zweck des Skills?
+- Ist die betroffene Capability überhaupt erforderlich?
+- Kann dieselbe Funktion mit engeren Pfaden, Tools, Domains, Commands oder Rechten umgesetzt werden?
+- Ist der Treffer tatsächlicher ausführbarer beziehungsweise handlungsleitender Inhalt oder nur Dokumentation/Testmaterial?
+- Welche Daten können die betroffene Boundary passieren?
+- Wird die Sicherheitsgrenze technisch durch den Host erzwungen oder nur textuell im Prompt beschrieben?
+- Ist das analysierte Artefakt eindeutig per Version beziehungsweise Digest identifizierbar?
+- Muss das Finding blockieren, einen Human Review auslösen oder als dokumentierte Ausnahme behandelt werden?
+
+## Warum das für Agentic DevSecOps relevant ist
+
+Klassisches DevSecOps betrachtet Source Code, Dependencies, Images, IaC und Runtime-Konfiguration. Agentic DevSecOps erweitert diese Oberfläche um **Instruktionslogik und delegierte Autorität**.
+
+Ein Skill kann formal nur Markdown sein und trotzdem operative Wirkung besitzen. Er beeinflusst, welche Tools ein Agent wählt, welche Informationen er als relevant betrachtet, welche Side Effects er auslöst und welche Grenzen er respektiert. Deshalb müssen natürliche Sprache und Toolmetadaten mit denselben Prinzipien behandelt werden, die wir bei Code bereits kennen:
+
+- Least Privilege
+- Untrusted Input
+- Explicit Trust Boundaries
+- Reproducible Artifacts
+- Policy as Code
+- Auditability
+- Defense in Depth
+
+## Fazit
+
+Supply-Chain-Checks sollten sowohl Source als auch das tatsächlich gebaute Release-Artefakt prüfen. Ideal ist eine Kette aus Scan → SBOM → Signatur/Provenance → Policy → Installation, jeweils an denselben Digest gebunden.
+
+Die Pattern-Familie `SC1`, `SC2`, `SC3`, `SC4`, `SC5`, `SC6`, `SC7` ist vor allem dann wertvoll, wenn sie nicht isoliert betrachtet wird. Ihr Nutzen entsteht durch die Kombination aus präzisem Finding, nachvollziehbarer Coverage, Kontextreview und einer Runtime, die unerlaubte Aktionen auch dann verhindert, wenn die statische Analyse etwas übersieht.
+
+<KeyTakeaway>
+Die entscheidende Frage ist nicht „Hat der Skill einen Treffer?“, sondern: **Welche Trust Boundary würde dieses Verhalten überschreiten, und welche unabhängige Kontrolle verhindert den unerlaubten Effekt?**
+</KeyTakeaway>
+
+## Quellenstand
+
+Dieser Beitrag basiert auf dem öffentlich sichtbaren SkillSpector-Release-Snapshot `2.5.0`, Commit `34f60308522f45447cd343da0aad77bcea308ad4`, Stand 2026-07-30. Die README nennt 68 Vulnerability Patterns in 17 Kategorien; der aktuelle Analyzer-Registry und Pattern-Katalog enthalten inzwischen zusätzliche Analyzer beziehungsweise Pattern-Familien. Diese Serie orientiert sich deshalb am Code-Snapshot und kennzeichnet solche Unterschiede transparent.[^readme][^defaults]
+
+[^module]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/src/skillspector/nodes/analyzers/static_patterns_supply_chain.py
+[^defaults]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/src/skillspector/nodes/analyzers/pattern_defaults.py
+[^registry]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/src/skillspector/nodes/analyzers/__init__.py
+[^readme]: https://github.com/NVIDIA/SkillSpector/blob/34f60308522f45447cd343da0aad77bcea308ad4/README.md
