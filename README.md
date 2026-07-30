@@ -9,6 +9,8 @@ Jeder Beitrag enthält:
 - negatives Beispiel
 - positives Beispiel
 - statische Erkennungsindikatoren
+- detaillierte, property-spezifische Detection-Pipeline
+- Entscheidungslogik, False-Positive-Kontext und Evidence Chain
 - technische Controls
 - Grenzen der Erkennung
 - DevSecOps-Einordnung

@@ -113,6 +113,146 @@ recommended remediation
 
 So wird aus einem Alarm eine reproduzierbare Security-Evidenz.
 
+## Wie funktioniert die Detection von Cloud Storage Exfiltration?
+
+Eine belastbare Detection für **Cloud Storage Exfiltration** sollte nicht auf einem einzelnen Schlüsselwort basieren. Für Agentic Skills muss der Scanner zunächst entscheiden, **welche Semantik oder welcher technische Datenfluss tatsächlich vorliegt** und ob daraus die Security Property verletzt wird.
+
+Für diese Property ist das primäre Analysemodell **Cloud-SDK-/CLI-Analyse plus Taint Tracking**. Extrahiert werden insbesondere **Upload-/Put-/Copy-Operationen, Bucket/Container/Share, ACL, Zielkonto und sensitive Quellen**.
+
+Die Detection lässt sich konzeptionell als Pipeline darstellen:
+
+```text
+Artefakt
+   │
+   ▼
+Normalisierung und strukturierte Parser
+   │
+   ▼
+property-spezifische Extraktion
+   │
+   ▼
+Zwischenrepräsentation / Datenfluss
+   │
+   ▼
+Kontext-, Trust- und Policy-Bewertung
+   │
+   ▼
+Finding + Evidence Chain
+```
+
+### 1. Nicht nach Wörtern, sondern nach der relevanten Relation suchen
+
+Die bereits genannten statischen Indikatoren bleiben nützlich:
+
+- Upload-Kommandos zu S3/GCS/Azure Blob/Fileshares
+- public ACLs oder unbekannte Buckets
+- sensitive Quellen direkt vor Cloud-Upload
+
+Sie sind aber nur **Features für die Analyse**. Ein Treffer auf ein Wort oder eine API ist noch kein hinreichender Beweis. Der Scanner muss daraus eine relationale Darstellung erzeugen. Für Cloud Storage Exfiltration kann diese vereinfacht so aussehen:
+
+```text
+SOURCE(SENSITIVE) -> SINK(CLOUD_STORAGE, destination, acl)
+```
+
+Die eigentliche Security-Entscheidung lautet dann sinngemäß:
+
+```text
+IF
+    sensitive Daten werden in nicht freigegebenen Cloud Storage geschrieben oder mit zu breiter Sichtbarkeit veröffentlicht
+THEN
+    report Cloud Storage Exfiltration
+```
+
+Damit wird zwischen syntaktischem Auftreten und sicherheitsrelevanter Bedeutung unterschieden.
+
+### 2. Positive und negative Kontexte auseinanderhalten
+
+Besonders bei Agentic Skills enthalten Dokumentation, Tests und Security-Guidance häufig genau die gefährlichen Strings oder APIs, die ein Scanner finden soll. Deshalb sollte die Detection immer einen **Ausschluss- beziehungsweise Kontextschritt** besitzen.
+
+Ein Finding sollte beispielsweise unterdrückt oder in der Confidence reduziert werden, wenn folgender defensive Kontext vorliegt: **Upload erfolgt in einen fest allowlisteten privaten Zielcontainer mit minimalem Datensatz**.
+
+Das Prinzip ist:
+
+```text
+risk signal present?
+        │
+        ├── no  → no finding
+        │
+        ▼ yes
+security relation established?
+        │
+        ├── no  → informational / no finding
+        │
+        ▼ yes
+benign defensive context proven?
+        │
+        ├── yes → suppress or downgrade
+        │
+        ▼ no
+      FINDING
+```
+
+Bei Text-Properties bedeutet „Kontext“ typischerweise Heading, vorherige und folgende Sätze, Negation, Modalität, Zitate und Rollenbezug. Bei Code- und Datenfluss-Properties sind dagegen AST-Struktur, Kontrollfluss, Sanitizer, Argumentherkunft, Reachability und Capability-Grenzen wichtiger als sprachlicher Kontext.
+
+### 3. Deterministische und semantische Analyse kombinieren
+
+Eine robuste Engine sollte mehrere Ebenen kombinieren:
+
+```text
+Deterministische Evidenz
+Pattern / Parser / AST / Schema / Data Flow
+                    │
+                    ├──────────────┐
+                    ▼              ▼
+            Property-Logik   semantische Analyse
+                    │              │
+                    └──────┬───────┘
+                           ▼
+                    Security Finding
+```
+
+Deterministische Analyse liefert reproduzierbare Belege. Semantische Analyse ist besonders dort hilfreich, wo die gleiche Absicht durch Paraphrasen, andere Sprachen oder mehrere Sätze ausgedrückt werden kann. Sie sollte jedoch nicht unkritisch einen strukturell widerlegten Datenfluss „erfinden“. Wo AST, Schema oder Taint Tracking einen konkreten technischen Pfad zeigen können, sollte diese Evidenz höher gewichtet werden.
+
+### 4. Die Detection muss eine Evidence Chain ausgeben
+
+Für **Cloud Storage Exfiltration** sollte ein Finding mindestens **Source→Upload-Pfad, Cloud-Provider, Zielressource, ACL/Exposure und Identity-Kontext** enthalten.
+
+Beispielhaft:
+
+```yaml
+property: 'Cloud Storage Exfiltration'
+location: "path/to/artifact:line"
+evidence:
+  detector: "Cloud-SDK-/CLI-Analyse plus Taint Tracking"
+  relation: "SOURCE(SENSITIVE) -> SINK(CLOUD_STORAGE, destination, acl)"
+  context_checked: true
+confidence: high
+```
+
+Entscheidend ist, dass ein Reviewer nicht nur sieht, **dass** etwas gefunden wurde, sondern **warum die konkrete Fundstelle die Property verletzt**.
+
+### 5. Cross-Signal Composition erhöht die Qualität
+
+Viele Angriffe auf Agentic Skills bestehen nicht aus einem einzelnen Signal. Die Detection wird deutlich stärker, wenn mehrere unabhängige Evidenzen zusammenspielen.
+
+```text
+schwaches Einzelsignal
+        +
+zweites unabhängiges Signal
+        +
+passender Daten-/Kontrollfluss
+        +
+fehlender Guardrail
+        ↓
+hoch belastbares Finding
+```
+
+Bei einem einzelnen unsicheren Hinweis kann die Engine beispielsweise `medium` melden. Wenn derselbe Pfad zusätzlich eine sensitive Capability erreicht, ein Guard fehlt und die semantische Intention zur Property passt, kann daraus ein `high` oder `critical` Finding werden. So entsteht **semantic composition**, ohne die deterministischen Belege zu verlieren.
+
+<KeyTakeaway>
+Eine gute Detection für Cloud Storage Exfiltration erkennt nicht lediglich ein verdächtiges Token. Sie rekonstruiert die sicherheitsrelevante Relation, prüft defensiven Kontext, korreliert strukturelle Evidenz und liefert einen nachvollziehbaren Beweis dafür, warum das Verhalten eines Agentic Skills die Security Property verletzt.
+</KeyTakeaway>
+
 ## Technische Controls
 
 Geeignete Gegenmaßnahmen sind unter anderem:
