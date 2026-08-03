@@ -1,32 +1,93 @@
 ---
-title: "Your article title"
-description: "A one-sentence summary shown in article lists, previews, and SEO metadata."
-date: "2026-07-28"
+title: "Ihr Artikeltitel hier"
+description: "Eine prägnante Ein-Satz-Zusammenfassung für Vorschau, SEO und Social Media. Max. 160 Zeichen."
+date: "2026-08-02"
 author: "dome"
 topics:
   - agentic-engineering
 tags:
   - AI Agents
+  - Security
 featured: false
 draft: true
+language: de
+ai:
+  # ⚠️ PFLICHT für Artikel ab 2026-08-02 (EU AI Act Art. 50)
+  assisted: false  # true = KI-Tools wurden verwendet (ChatGPT, Claude, Copilot etc.)
+  
+  # Falls assisted: true, empfohlen:
+  # humanReviewed: true
+  # reviewedBy: "Dominik Hahn"
+  # reviewedAt: "2026-08-02"
+  
+  # Optional - überschreibt Standard-Disclosure-Text:
+  # disclosure: "Dieser Beitrag wurde mit KI-Unterstützung erstellt und redaktionell geprüft."
+  
+  # Optional - Liste verwendeter Tools:
+  # tools:
+  #   - "ChatGPT"
+  #   - "GitHub Copilot"
+  #   - "Claude"
+
+# Optional: Artikel-Serie (gruppiert verwandte Artikel)
+# series:
+#   slug: agentic-engineering-foundations
+#   title: "Agentic Engineering Foundations"
+#   order: 1
 ---
 
-Write your article body here using Markdown and MDX.
+Schreiben Sie Ihren Artikel-Body hier mit Markdown und MDX.
 
-## A section heading
+## Eine Überschrift
 
-Regular paragraphs, lists, tables, and links all work as standard Markdown.
+Normale Absätze, Listen, Tabellen und Links funktionieren wie in Standard-Markdown.
 
 ```typescript
-// Fenced code blocks get syntax highlighting, a copy button,
-// and can carry a filename + highlighted lines:
-const example = "like this";
+// Code-Blöcke erhalten Syntax-Highlighting, einen Copy-Button
+// und können Dateinamen + hervorgehobene Zeilen enthalten:
+const example = "wie hier";
 ```
 
 <Note>
-Use `<Note>`, `<Warning>`, `<Architecture>`, and `<KeyTakeaway>` for callouts.
+Verwenden Sie `<Note>`, `<Warning>`, `<Architecture>` und `<KeyTakeaway>` für Callouts.
 </Note>
 
-Set `draft: false` and give the file a real, URL-friendly filename (its
-filename becomes the article's slug) when you're ready to publish it. See
-`content/blog/README.md` for the full frontmatter reference.
+<Warning>
+Wichtige Warnungen oder Risiken werden in einer roten Box hervorgehoben.
+</Warning>
+
+### Listen und Aufzählungen
+
+- **Unnummerierte Liste:** Einfach mit `-` oder `*` beginnen
+- **Nummerierte Liste:** Mit `1.`, `2.` etc.
+- **Verschachtelt:** Einrücken mit 2 Leerzeichen
+
+### Code-Beispiele mit Dateinamen
+
+```bash title="terminal"
+npm run build
+npm test
+```
+
+```yaml title="frontmatter-example.yaml" {3-5}
+ai:
+  assisted: true
+  humanReviewed: true  # Zeilen 3-5 werden hervorgehoben
+  reviewedBy: "Name"
+  reviewedAt: "2026-08-02"
+```
+
+### Fußnoten und Referenzen
+
+Sie können Fußnoten für Quellenangaben verwenden:[^1]
+
+Oder inline Links: [RFC 9116 Security.txt](https://www.rfc-editor.org/info/rfc9116)
+
+[^1]: Beispiel-Quelle: "Titel des Papers", Autor et al., 2026. https://example.com
+
+## Veröffentlichung
+
+Setzen Sie `draft: false` und geben Sie der Datei einen aussagekräftigen, URL-freundlichen Dateinamen (der Dateiname wird zur Artikel-URL). Siehe `content/blog/README.md` für die vollständige Frontmatter-Referenz und Best Practices.
+
+**Hinweis zur AI-Transparenz (gültig ab 2026-08-02):** Artikel, die am oder nach dem 2. August 2026 veröffentlicht werden, müssen das `ai`-Feld enthalten, um die EU AI Act Art. 50 Transparenzpflicht zu erfüllen. Setzen Sie `assisted: true`, wenn KI-Tools bei der Erstellung verwendet wurden. Wenn `humanReviewed: true`, geben Sie auch `reviewedBy` und `reviewedAt` an.
+
