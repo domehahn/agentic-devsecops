@@ -1,0 +1,377 @@
+---
+title: "Part 1: Agent Runtimes & Sandboxing – Stateful Execution Without Implicit Trust"
+description: "A technical long-form essay on runtime architectures for AI agents: durable state, isolated code execution, Workers, containers, sandboxes, checkpointing, capabilities, and secure long-running workloads."
+date: "2026-08-22"
+author: "dome"
+topics:
+  - platform-engineering
+  - devsecops
+  - ai-engineering
+tags:
+  - Cloudflare Workers
+  - Durable Objects
+  - Sandboxing
+  - Serverless
+draft: false
+series:
+  slug: "llmops-platform-infrastructure"
+  title: "LLMOps & Platform Infrastructure: The Agent Runtime"
+  order: 1
+ai:
+  assisted: true
+  humanReviewed: true
+  reviewedBy: "Dominik Hahn"
+  reviewedAt: "2026-08-22"
+---
+
+A chat endpoint lives for milliseconds or seconds: request in, model call, response out. A coding agent, by contrast, may spend much longer modifying files, starting processes, running tests, waiting for external systems, and resuming from an earlier state after failures. That fundamentally changes runtime requirements.
+
+The wrong conclusion would be that “serverless” is inherently unsuitable. Modern platforms combine short-lived compute primitives with **durable state, isolated execution, and resumable workflows**. Cloudflare, for example, combines Workers, Durable Objects, and Containers in its Sandbox SDK; the sandbox runs in isolation while a Durable Object identity anchors state and routing.[^1][^2]
+
+The real architecture question is therefore: **Which state must be durable, which code is trusted, and which execution must be isolated?**
+
+---
+
+## 1. An Agent Runtime Is a Control Plane Plus an Execution Plane
+
+A robust agent platform separates two responsibilities:
+
+```text
+Control Plane
+- conversation / task state
+- planning state
+- identity
+- policy decisions
+- checkpoints
+- orchestration
+
+Execution Plane
+- shell
+- compiler
+- browser
+- package manager
+- filesystem
+- test processes
+```
+
+This prevents the entire agent process from requiring the same privileges as the code it executes.
+
+```text
+User
+ ↓
+Agent Runtime / Orchestrator
+ ↓ capability request
+Policy Broker
+ ↓ scoped grant
+Sandbox
+ ↓
+Untrusted code / tools
+```
+
+The orchestrator remains small and controlled. Potentially dangerous execution is placed in a separate security domain.
+
+---
+
+## 2. Statefulness Is Not the Same as a Permanently Running Process
+
+An agent may need to “remember” work over long periods. That does not mean the same Linux process must run for days.
+
+The relevant state can be persisted:
+
+```yaml
+run_id: task-4812
+phase: integration-test
+repo_commit: abc123
+workspace_snapshot: ws-99
+pending_action: wait-for-ci
+budget_remaining: 4
+```
+
+The runtime can later restore execution from that checkpoint.
+
+Cloudflare now documents Durable Execution for its Agents using `runFiber()` and `startFiber()`: work can be registered, checkpointed, and resumed after eviction.[^3]
+
+This is a general distributed-systems principle: **durability belongs in state and workflow, not in the hope that a process never dies.**
+
+---
+
+## 3. Sandboxing Starts with the Threat Model
+
+A coding agent may execute code it has just generated itself. From a DevSecOps perspective, that code is **untrusted**.
+
+Threats include:
+
+- reading host secrets,
+- accessing other workspaces,
+- network exfiltration,
+- fork bombs and resource abuse,
+- privilege escalation,
+- manipulation of the agent control plane.
+
+Cloudflare’s current Sandbox security model describes separate VMs per sandbox with isolated filesystems, processes, network stacks, and resource limits.[^4]
+
+Regardless of provider, the platform should have at least the following boundaries:
+
+```text
+Filesystem namespace
+Process namespace
+Network policy
+CPU / memory / disk quota
+Execution timeout / cancellation
+Credential isolation
+Workspace identity
+```
+
+---
+
+## 4. Containers, MicroVMs, WASM, and Isolates Are Not Interchangeable Terms
+
+Agent platforms use different isolation primitives.
+
+### Isolates / WASM-Style Runtimes
+
+Strengths:
+
+- very fast startup,
+- low resource overhead per execution,
+- narrow capability surface.
+
+Weaknesses:
+
+- restricted system access,
+- not every toolchain runs unchanged.
+
+### Containers
+
+Strengths:
+
+- familiar Linux environment,
+- package managers and compilers,
+- broad tool compatibility.
+
+Weaknesses:
+
+- isolation depends heavily on runtime and host configuration.
+
+### MicroVM / VM-Based Isolation
+
+Strengths:
+
+- stronger kernel isolation,
+- suitable for untrusted workloads.
+
+Weaknesses:
+
+- higher resource and lifecycle overhead.
+
+A platform can combine these layers. Cloudflare’s current Sandbox SDK runs on Containers that, according to its security documentation, are each isolated in their own VM.[^4]
+
+The important point is that neither “container” nor “WASM” is secure by definition. Security comes from the **concrete boundary and its configuration**.
+
+---
+
+## 5. Network Access Should Be a Capability
+
+A common design mistake is:
+
+```text
+Sandbox == isolated filesystem
+Network == unrestricted
+```
+
+A compromised agent can then exfiltrate sensitive data despite filesystem isolation.
+
+A better approach is:
+
+```text
+Default: egress deny
+Allow:
+  - package registry through proxy
+  - approved Git host
+  - test endpoints
+Deny:
+  - metadata endpoints
+  - internal control plane
+  - arbitrary internet
+```
+
+For tasks requiring real web research, a dedicated search/fetch capability can be safer than generic TCP access.
+
+---
+
+## 6. Secrets Do Not Belong in the Workspace
+
+An agent sometimes needs credentials—for example to create a pull request. That does not mean a long-lived Personal Access Token should be exposed as an environment variable to every shell process.
+
+A stronger pattern is:
+
+```text
+Agent requests "create_pull_request"
+        ↓
+Policy checks scope
+        ↓
+Broker creates short-lived credential / performs action
+        ↓
+Sandbox never receives broad permanent secret
+```
+
+This **capability broker** architecture limits the blast radius of a compromised workspace.
+
+---
+
+## 7. Workspace and Agent State Should Have Different Lifecycles
+
+An agent can exist for a long time without keeping its compute sandbox warm permanently.
+
+```text
+Agent Identity: days/weeks
+Task State: hours/days
+Sandbox: minutes/hours
+Process: seconds/minutes
+```
+
+Cloudflare’s Sandbox Lifecycle similarly distinguishes sandbox identity from active container state.[^2]
+
+This separation enables:
+
+- suspend/resume,
+- lower idle costs,
+- clean garbage collection,
+- workspace snapshots,
+- restart after failure.
+
+---
+
+## 8. Idempotency Is Mandatory for Resumable Agents
+
+If a runtime repeats a step after a crash, it must not accidentally trigger the same external effect twice.
+
+Bad:
+
+```text
+retry -> create Jira issue -> duplicate issue
+```
+
+Better:
+
+```text
+operation_id = task-4812/create-issue
+
+Tool Gateway checks:
+operation_id already completed?
+  yes -> return previous result
+  no  -> execute and persist result atomically
+```
+
+Durable workflows need the same foundations as payment systems: idempotency keys, atomic state transitions, and deduplicatable events.
+
+---
+
+## 9. Resource Budgets Protect Against Unbounded Autonomy
+
+An agent should have not only a token budget but a **runtime budget**:
+
+```yaml
+limits:
+  wall_time: 45m
+  cpu_seconds: 900
+  memory: 4Gi
+  disk: 10Gi
+  child_processes: 64
+  network_bytes: 500Mi
+  tool_calls: 120
+```
+
+The exact values are workload-specific. A blanket requirement such as “cold start under 10 ms” is not a universal agent requirement. Latency matters for some interactive tasks; for a 30-minute build, safe resumption may matter far more.
+
+---
+
+## 10. Target Architecture
+
+```text
+                    ┌────────────────────┐
+User / Event ──────>│ Durable Agent State│
+                    └─────────┬──────────┘
+                              ↓
+                    ┌────────────────────┐
+                    │ Orchestrator       │
+                    │ identity + policy  │
+                    └─────────┬──────────┘
+                              ↓
+                    ┌────────────────────┐
+                    │ Capability Broker  │
+                    └─────────┬──────────┘
+                              ↓
+                    ┌────────────────────┐
+                    │ Isolated Sandbox   │
+                    │ files/process/net  │
+                    └────────────────────┘
+```
+
+State can outlive the sandbox. Privileges can outlive individual tool calls without remaining permanently inside the workspace.
+
+---
+
+## 11. Ephemeral Workspaces and Reproducible Environments
+
+A sandbox is reliable only if the agent is not benefiting from accidental historical state. Persistent developer VMs accumulate packages, credentials, and files that can make a task appear to work even though the build would fail on a clean machine.
+
+For coding agents, a reproducible workspace is therefore valuable:
+
+```text
+Base Image + pinned toolchain
+        ↓
+Repository @ commit
+        ↓
+Declared dependencies
+        ↓
+Task-specific writable layer
+```
+
+Prefer to persist **artifacts and checkpoints**, not uncontrolled machine state. When an agent resumes later, the platform can restore a snapshot or reconstruct the workspace deterministically.
+
+This improves not only security but also debuggability: a failed run can be reproduced with the same image version, commit, and dependency lockfile.
+
+---
+
+## 12. Sandbox Escape Is Not the Only Risk
+
+When teams think about isolation, they often focus on kernel escapes. In practice, much simpler paths matter: a mounted Docker socket, a cloud metadata endpoint, an SSH agent, an overprivileged service account, or a writable mount into the host repository.
+
+A sandbox review should therefore examine not only CVEs but the effective capability surface:
+
+```text
+What can this workspace read?
+What can it write?
+Where can it connect?
+Which identity does it inherit?
+Which resources can it exhaust?
+How is it destroyed?
+```
+
+A technically strong VM boundary provides little protection if the sandbox can legitimately access all production data using a highly privileged API token. Isolation and least privilege must be designed together.
+
+---
+
+## Conclusion
+
+Agent runtimes combine **durable state with short-lived, controlled execution**. Modern platforms show that “serverless” and long-running agents are not contradictory: state and checkpoints can survive process lifetimes while untrusted code runs in isolated execution environments.[^1][^3]
+
+For DevSecOps, the most important boundary is the one between the agent control plane and execution plane. Filesystem, network, credentials, and resources should be treated as explicit capabilities. The more autonomous the agent, the less its sandbox may implicitly trust the host.
+
+The next part asks how these distributed workflows can be understood at all: **Agent Observability, tracing, and which signals should be measured—without blindly logging sensitive content or internal reasoning text.**
+
+---
+
+## Literature & Primary Sources
+
+[^1]: Cloudflare (2026). *Sandbox SDK – Overview.* https://developers.cloudflare.com/sandbox/
+[^2]: Cloudflare (2026). *Sandbox lifecycle.* https://developers.cloudflare.com/sandbox/concepts/sandboxes/
+[^3]: Cloudflare (2026). *Durable execution with fibers.* https://developers.cloudflare.com/agents/runtime/execution/durable-execution/
+[^4]: Cloudflare (2026). *Sandbox SDK Security model.* https://developers.cloudflare.com/sandbox/concepts/security/
+
+## Metadata
+
+**SEO Title:** Agent Runtimes & Sandboxing: Secure Execution for Autonomous AI Agents  
+**Meta Description:** Durable state, isolated code execution, Cloudflare Workers/Containers, capabilities, network boundaries, and secure long-running AI agents.  
+**Slug:** `serverless-agent-runtimes-und-sandboxing`

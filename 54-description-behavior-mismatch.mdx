@@ -1,0 +1,184 @@
+---
+title: 'Description–Behavior Mismatch: Verifying What an Agentic Tool Actually Does'
+description: A detailed essay on comparing declared behavior with observed capabilities
+  using AST, taint, boundary analyzers, semantic comparison, contracts, and evidence
+  pairs.
+date: '2026-07-30'
+author: dome
+topics:
+- agentic-engineering
+- devsecops
+tags:
+- Security Property
+- Description/Behavior mismatch
+- Agentic Security
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: Security Properties for Agentic Skills
+  order: 54
+---
+
+## Trusting prose is not enough
+
+Human reviewers often approve a tool by reading its description. Attackers—and ordinary engineering drift—can exploit the gap between prose and implementation. A tool advertised as a read-only formatter may execute a shell, write outside the workspace, or send data to a remote service.
+
+Trust should be based on a comparison between claimed capabilities and observed behavior. Natural-language descriptions are useful evidence, but they must be checked against deterministic code and configuration observations. The original `skil` control model expresses the same idea as `DESCRIBED_BEHAVIOR != OBSERVED_BEHAVIOR`. That relation is more useful than a label such as “suspicious” because it specifies what must be evidenced and what a legitimate counterexample must break.
+
+## Property at a glance
+
+| Dimension | Assessment |
+| --- | --- |
+| Security property | Description–Behavior Mismatch |
+| Relevant `skil` controls | `SKIL-MCP-006`, `SKIL-INTENT-DESCRIPTION`, `SKIL-INTENT-IMPLEMENTATION` |
+| Primary analysis mechanism | semantic comparison + deterministic local contradiction signals |
+| Declared coverage character | PROVIDER_BACKED / partly deterministic |
+| Core security relation | `DESCRIBED_BEHAVIOR != OBSERVED_BEHAVIOR` |
+
+<Architecture>
+Description → claimed capability set → AST/Taint/Boundary observations → semantic/set comparison → contradiction evidence → Finding
+</Architecture>
+
+## Directional mismatch and why it matters
+
+A deliberately small positive fixture from the source property illustrates the boundary:
+
+```md
+Description: "Read-only documentation formatter."
+Observed behavior: executes shell commands and uploads files to an external service.
+```
+
+The safe counterexample changes the semantics rather than merely deleting a suspicious token:
+
+```md
+Description: "Formats workspace Markdown and reads only the provided files."
+Observed behavior: Markdown parsing and writes within the declared workspace.
+```
+
+The purpose of pairing them is not to teach exploitation. It is to force the detector to explain which relation changes between the two cases. A scanner that fires on both has learned vocabulary; a scanner that can explain the difference has begun to model the security property.
+
+## Normalizing claimed capabilities
+
+A semantic layer can translate phrases such as “read-only,” “local,” “formats Markdown,” or “no network access” into a normalized claim set. This representation is intentionally coarse; its purpose is to create comparable assertions, not to prove program semantics from prose. The same model supports change detection: when identity, configuration or code changes, the platform can recompute the relation and show exactly which part of the previously reviewed assumption no longer holds.
+
+## Extracting observed behavior
+
+AST calls reveal process or network APIs, taint shows whether sensitive data reaches them, boundary rules reveal paths and targets, and manifests reveal declared permissions. Each observation should retain provenance so the mismatch finding can cite the concrete evidence behind “observed behavior.” In an agentic environment this distinction becomes operational because model-generated plans can select the relevant value or capability at runtime. The host therefore needs evidence that can survive from code review into execution policy.
+
+## Mismatch is directional
+
+Understatement and overstatement have different risks. A read-only description paired with network upload is deceptive or stale; a description claiming broad capability while code currently uses little may indicate excessive permission or future authority. Keep these properties distinct even if one comparison engine supports both. The design implication is that detection and authorization must remain separate: the scanner identifies the condition, while a policy layer decides whether the condition is permissible in this deployment context.
+
+## Semantic models should supplement deterministic evidence
+
+An LLM can notice nuanced contradictions that static rules miss, but its output is probabilistic. High-confidence findings should ground semantic conclusions in concrete calls, paths, permission fields or data flows whenever possible. This also improves explainability. Reviewers can see the specific security fact rather than receiving a generic severity label, and future tooling can compose that fact with independent findings without double-counting the same evidence.
+
+## Drift detection belongs in CI
+
+Even an initially honest description can become wrong after refactoring. Description–behavior comparison should run on every meaningful change and surface capability deltas in code review, making documentation part of the security contract rather than stale marketing text. A useful implementation records both the positive observation and the guard that would have made the path safe. That makes remediation testable and turns false-positive handling into explicit logic instead of a collection of suppressions.
+
+## Keeping documentation synchronized with code
+
+For this property, a finding is defensible only when the scanner can reconstruct the relation `DESCRIBED_BEHAVIOR != OBSERVED_BEHAVIOR` from observable evidence. The relevant implementation controls are `SKIL-MCP-006`, `SKIL-INTENT-DESCRIPTION`, `SKIL-INTENT-IMPLEMENTATION`. The mechanism—semantic comparison + deterministic local contradiction signals—should therefore emit more than a Boolean match: reviewers need location, the structured observation, context resolution, the decision path, and the coverage state. The source material characterizes current coverage as PROVIDER_BACKED / partly deterministic; that statement should travel with the finding rather than being lost in presentation.
+
+A compact machine-readable evidence record can retain the essentials without pretending to encode the entire analysis:
+
+```yaml
+property_order: 54
+property: "description–behavior-mismatch"
+controls: "SKIL-MCP-006, SKIL-INTENT-DESCRIPTION, SKIL-INTENT-IMPLEMENTATION"
+mechanism: "semantic comparison + deterministic local contradiction signals"
+security_relation: "DESCRIBED_BEHAVIOR != OBSERVED_BEHAVIOR"
+coverage: "PROVIDER_BACKED / partly deterministic"
+evidence:
+  raw_location: true
+  structured_observation: true
+  context_resolved: true
+  safe_countercase_tested: true
+```
+
+## False positives, ambiguity, and safe counterexamples
+
+Generic descriptions are difficult to verify and can create apparent mismatch. The remediation is not to suppress the detector but to make the contract more precise: specify read/write scope, network targets, process execution and side-effect classes explicitly.
+
+Coverage should be treated as first-class security data. Deterministic syntax and configuration observations can often be reproduced exactly, while intent, future identity and runtime targets may remain uncertain. A mature scanner reports those asymmetries instead of collapsing them into one confidence score. This is particularly important in agentic systems, where the model may choose arguments and tools only after deployment.
+
+## Runtime contract enforcement
+
+Enforce the reviewed capability contract independently of the description. If code attempts an undeclared network or filesystem action, runtime policy should deny it even if static review missed the mismatch.
+
+Defense in depth is intentionally redundant. Authoring lint, static analysis, contract verification, supply-chain verification, runtime policy and audit telemetry answer different questions. A strong result from one layer should never be used as a reason to remove the others.
+
+## Evidence pairs for reviewers
+
+True-positive fixtures should cover canonical violations, while true-negative fixtures should intentionally reuse similar tokens and syntax so the detector proves it understands context. Boundary cases should change one security-relevant fact at a time. Mutation tests can vary scope, target, normalization, version, guard, or sink. Holdout fixtures protect against overfitting to the public examples. For **Description–Behavior Mismatch**, the most valuable tests are those that preserve the surface appearance while changing the underlying security relation; that is how the suite verifies semantics instead of vocabulary.
+
+For `skil`, implementation claims should be checked against the repository’s control matrix, external-control crosswalk, analyzer tests and any provider-specific tests. Provider-backed coverage—such as OSV or external rule packs—must state whether the provider actually ran.
+
+## Architecture drill-down: from finding to enforceable boundary
+
+A design review for this MCP trust surface property should begin by drawing the trust boundary rather than opening with a rule ID. Identify who controls the input, which component interprets it, what authority is available at that point, and which deterministic guard is expected to stop an unsafe transition. Then map `DESCRIBED_BEHAVIOR != OBSERVED_BEHAVIOR` onto that diagram. The purpose of semantic comparison + deterministic local contradiction signals is to provide one or more observable edges in that model; it is not a substitute for the model itself. Reviewers should ask whether the same relation can be created indirectly through wrappers, generated configuration, aliases, cached metadata, transitive dependencies, or delegated tools. If so, the implementation needs either deeper static summaries or a runtime control at the unresolved boundary. Finally, confirm that evidence identifiers survive across CI, packaging and runtime so an observed denial or drift event can be traced back to the assumption approved in code review.
+
+The paired fixtures also serve as an architectural regression test. The unsafe example begins with `Description: "Read-only documentation formatter."` while the safe example begins with `Description: "Formats workspace Markdown and reads only the provided files."`. The important difference is the security relation, not the cosmetic text. If a refactor causes both to produce the same result, the detector or policy has lost a meaningful distinction.
+
+## Common implementation traps
+
+Several implementation mistakes recur around **Description–Behavior Mismatch**, even when the high-level policy is correct:
+
+**1. Trusting model-visible metadata as if it were authorization policy.** Descriptions and schemas can guide planning, but deterministic host policy must own credentials, capability scope and approvals. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
+
+**2. Binding policy only to a display name.** Tool identity, server identity, metadata fingerprint and issuer relationships may need to be pinned so review survives catalog changes. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
+
+**3. Validating only at discovery time.** Cached catalogs, changed defaults, mutable packages and long-lived approvals create time-of-check/time-of-use gaps unless the host revalidates before high-impact calls. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
+
+A useful review discipline is to turn every exception into a scoped, expiring artifact with an owner and rationale. Permanent blanket suppressions hide whether the architecture improved; narrow exceptions preserve the signal and make technical debt measurable.
+
+## How this property composes with adjacent findings
+
+**Behavior mismatch plus capability underdeclaration.** Description–behavior mismatch often explains why a capability contract is wrong. If the description claims read-only behavior while AST and taint evidence show network writes, the system may emit both mismatch and underdeclaration findings linked to the same observation. The relationship should be explicit to avoid duplicate, context-free alerts.
+
+This composition model is deliberately graph-like: each detector contributes a typed fact and shared evidence identifiers allow a higher-level policy engine to connect them. That prevents one rule from becoming an overloaded catch-all and makes severity escalation explainable.
+
+## Operational signals and measurable assurance
+
+Track capability deltas per pull request, mismatches confirmed by reviewers, stale descriptions, semantic-only findings later grounded by deterministic evidence, and runtime contract violations that reveal static blind spots.
+
+Metrics should be tied to an explicit denominator and deployment profile. A low finding count may mean strong controls, weak coverage, or simply little exposure; telemetry and coverage state are needed to tell those cases apart. Trend the data over time and review unexpected changes in both positive findings and scanner-negative regression behavior.
+
+## Engineering implications beyond the scanner
+
+MCP security is split between protocol mechanics and host policy. The 2026-07-28 revision improves routability, caching semantics and authorization hardening, but it deliberately does not make tool descriptions trusted or grant least privilege automatically. Hosts still own capability selection, token scope, approval, identity pinning and the decision about what model-visible metadata may influence planning.
+
+The broader lesson is that an agentic skill is simultaneously text, code, configuration, a tool contract and a supply-chain artifact. Security review should follow the boundary that is actually crossed—data, authority, identity, execution, or control-plane visibility—rather than forcing every risk into the same detection template.
+
+## Measuring detector quality
+
+A reviewer should be able to answer four questions before accepting this property as controlled:
+
+1. **What exact security relation is being asserted?** Here it is `DESCRIBED_BEHAVIOR != OBSERVED_BEHAVIOR`.
+2. **What concrete evidence supports the relation?** The evidence must come from semantic comparison + deterministic local contradiction signals, not from a keyword alone.
+3. **What near-neighbor safe case has been tested?** The paired negative fixture should differ in the property, not merely in spelling.
+4. **What remains outside static visibility?** Runtime identity, dynamic values, provider state and policy decisions must be named explicitly.
+
+## Implementation evidence in `skil`
+
+- [Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – native control identifiers and scanner-positive/scanner-negative coverage.
+- [External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – property-level equivalence and coverage states.
+- [External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – implementation differences, mechanisms, and documented gaps.
+
+## Standards, research, and references
+
+1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
+4. [OWASP GenAI – LLM06:2025 Excessive Agency](https://genai.owasp.org/llmrisk/llm062025-excessive-agency/)
+5. [OWASP – Top 10 for Agentic Applications for 2026](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)
+6. [Model Context Protocol – Tools, Specification 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)
+7. [NIST AI 100-1 – Artificial Intelligence Risk Management Framework (AI RMF 1.0), 2023](https://doi.org/10.6028/NIST.AI.100-1)
+8. [Debenedetti et al. – AgentDojo: A Dynamic Environment to Evaluate Attacks and Defenses for LLM Agents, NeurIPS 2024](https://arxiv.org/abs/2406.13352)
+9. [Model Context Protocol Blog – The 2026-07-28 Specification](https://blog.modelcontextprotocol.io/posts/2026-07-28/)
+
+## Conclusion
+
+**Description–Behavior Mismatch** is valuable only when it is treated as a falsifiable security property rather than a checklist term. The goal is not to declare an entire skill “malicious” or “safe.” The goal is to state what boundary may be crossed, show the evidence that supports that statement, preserve the coverage limits, and make the safe countercondition explicit. That produces findings engineers can test, reviewers can reproduce, and runtime policy can enforce.

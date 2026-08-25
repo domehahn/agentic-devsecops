@@ -1,0 +1,382 @@
+---
+title: "Part 1: Specification-Driven Development – From Prompt to Executable Contract"
+description: "A technical essay on Specification-Driven Development for coding agents: requirements, schemas, OpenAPI, ADRs, acceptance tests, constraints, and verifiable agent loops."
+date: "2026-08-22"
+author: "dome"
+topics:
+  - agentic-engineering
+  - software-architecture
+  - developer-experience
+tags:
+  - Specification Driven Development
+  - OpenAPI
+  - Architecture
+  - Design Patterns
+draft: false
+series:
+  slug: "agentic-software-engineering-patterns"
+  title: "Agentic Software Engineering & Multi-Agent Design Patterns"
+  order: 1
+ai:
+  assisted: true
+  humanReviewed: true
+  reviewedBy: "Dominik Hahn"
+  reviewedAt: "2026-08-22"
+---
+
+Agentic software development shifts the bottleneck. When a human writes every line of code manually, a vague requirement can be refined gradually during implementation. A coding agent, by contrast, can produce hundreds of lines in seconds—and propagate an unclear assumption across the entire system just as quickly.
+
+That is why the most important resource in an agent workflow is not the longest prompt, but a **verifiable specification**.
+
+Specification-Driven Development (SDD) is not a single formally standardized process. The term is used here as an engineering pattern: requirements are expressed so that the agent understands not only *roughly what is meant*, but so that both implementation and outcome can be checked against explicit contracts, acceptance criteria, and invariants.
+
+---
+
+## 1. Precision Is More Than Detailed Prose
+
+A long user story can still be ambiguous:
+
+> “Build a secure endpoint for updating user profiles. It should be fast and return good errors.”
+
+The agent still has to infer:
+
+- Which fields may be changed?
+- What does “secure” mean?
+- Which authentication already exists?
+- Which status codes apply?
+- What happens with unknown fields?
+- Which performance limit matters?
+
+A specification decomposes this uncertainty into machine-verifiable and human-interpretable components.
+
+```text
+Intent
+  + API Contract
+  + Domain Rules
+  + Security Constraints
+  + Acceptance Tests
+  + Architecture Decisions
+  = Executable Specification
+```
+
+Not every requirement needs to be formal. But every critical assumption should become **explicit** somewhere.
+
+---
+
+## 2. Schemas Describe Structure—Not the Entire Meaning
+
+OpenAPI and JSON Schema are excellent building blocks for agents because they make structure precise and enable automated validation.[^1][^2]
+
+```yaml
+paths:
+  /users/{id}:
+    patch:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUser'
+```
+
+A JSON Schema can specify that `displayName` must not exceed 80 characters. It cannot automatically determine **who** may change that field under which business rules.
+
+A good specification therefore has several layers:
+
+```text
+Schema          -> What shape does the data have?
+Contract        -> Which interface applies?
+Invariant       -> What must always remain true?
+Policy          -> Who may do what under which conditions?
+Acceptance Test -> How do we know the goal is met?
+ADR             -> Why was the architecture chosen this way?
+```
+
+A common mistake in agentic engineering is to equate “machine-readable” with “complete.”
+
+---
+
+## 3. Acceptance Criteria Are the Bridge to Autonomy
+
+The longer an agent is expected to iterate independently, the more strongly the goal must be **externally verifiable**.
+
+Bad:
+
+```text
+Make the API robust.
+```
+
+Better:
+
+```text
+Given an authenticated user
+When PATCH /users/{id} contains an unknown property
+Then return HTTP 400
+And do not persist any changes.
+```
+
+Better still is an executable integration test.
+
+```typescript
+it('rejects unknown profile fields without mutation', async () => {
+  const before = await loadUser(id);
+  const response = await patchUser(id, { admin: true });
+  expect(response.status).toBe(400);
+  expect(await loadUser(id)).toEqual(before);
+});
+```
+
+The key effect is that the agent no longer has to decide for itself whether its solution is “good enough.” The test becomes a **deterministic part of the objective function**.
+
+---
+
+## 4. Specification and Implementation Must Be Versioned Separately
+
+If the same agent can freely modify both the requirement and the solution, it can “solve” a failing test by weakening the test.
+
+A more robust structure is:
+
+```text
+/spec
+  openapi.yaml
+  acceptance/
+  architecture/
+/src
+/tests
+```
+
+With policy such as:
+
+```text
+Spec changes     -> require explicit review
+Implementation   -> agent may modify
+Generated tests  -> allowed only in designated area
+Baseline tests   -> protected
+```
+
+This makes specification drift visible. An agent may still **propose** a specification change, but should not silently redefine the target in order to legitimize its own implementation.
+
+---
+
+## 5. ADRs Prevent Local Optimization Against the Architecture
+
+Coding agents are strong at solving local problems. That strength can become dangerous when a small requirement is implemented correctly while violating long-term architecture decisions.
+
+Architecture Decision Records (ADRs) can preserve the relevant intent:
+
+```markdown
+# ADR-017: Authentication remains at the API gateway
+
+Status: Accepted
+
+## Decision
+Services must not implement independent JWT verification.
+
+## Consequences
+All new endpoints rely on the gateway identity context.
+```
+
+The agent then receives not just a rule, but a documented design decision. ADRs are especially valuable when they are short, current, and linked to affected components.
+
+---
+
+## 6. AGENTS.md Is a Context Contract, Not a Product Specification
+
+The open `AGENTS.md` format provides a predictable place for build steps, tests, and repository conventions and is described as a kind of README for coding agents.[^3]
+
+A professional separation looks like this:
+
+```text
+AGENTS.md
+  -> How should an agent work in this repository?
+
+/spec
+  -> What must the product / feature satisfy?
+
+ADRs
+  -> Why do particular architecture decisions apply?
+
+Tests
+  -> Is the concrete implementation correct?
+```
+
+If everything is placed into one giant `AGENTS.md`, context costs rise and conflicts become difficult to maintain. Repository rules should be stable; feature requirements belong closer to the feature itself.
+
+---
+
+## 7. An Agent Loop Needs a Completion Contract
+
+A good implementation loop has a defined stopping condition:
+
+```text
+Inspect
+  ↓
+Plan
+  ↓
+Implement
+  ↓
+Format / Lint / Typecheck
+  ↓
+Unit + Integration Tests
+  ↓
+Security / Policy Checks
+  ↓
+Acceptance Criteria satisfied?
+   ├─ no -> diagnose -> iterate
+   └─ yes -> produce evidence -> stop
+```
+
+Without a completion contract, two failure modes emerge:
+
+- **Premature Success:** the agent declares the task complete although important checks are missing.
+- **Infinite Improvement:** the agent keeps refactoring although the objective has already been met.
+
+An explicit `done` criterion is therefore as important as the requirement itself.
+
+---
+
+## 8. Specifications Need Negative Requirements
+
+Humans often describe what a system should do. For autonomous implementation, it is equally important to define what **must not** happen.
+
+```yaml
+constraints:
+  - must_not_modify: database-schema
+  - must_not_add: new-runtime-dependency
+  - must_not_disable: existing-security-test
+  - must_not_call: external-network-during-tests
+```
+
+Negative constraints reduce the solution space. They prevent typical “success at any cost” patches such as deleting a failing test, weakening validation, or introducing an unwanted dependency.
+
+---
+
+## 9. Evals Belong in the Specification of an Agent
+
+For probabilistic components, a single unit test is not always enough. Anthropic describes agent evals as a central prerequisite for making behavioral changes visible before production.[^4]
+
+An agent eval might contain 100 representative repository tasks and measure:
+
+- task success,
+- regression rate,
+- unauthorized file changes,
+- test pass rate,
+- tool calls,
+- cost,
+- human-review corrections.
+
+The specification therefore becomes two-dimensional:
+
+```text
+Feature Spec   -> What should this change do?
+Agent Eval     -> How reliably does our agent implement changes of this kind?
+```
+
+Both are required for a production agent platform.
+
+---
+
+## 10. The SDD Repository as an Executable Contract
+
+A scalable structure can look like this:
+
+```text
+repo/
+├── AGENTS.md
+├── specs/
+│   ├── api/openapi.yaml
+│   ├── schemas/
+│   ├── acceptance/
+│   └── constraints/
+├── docs/adr/
+├── src/
+├── tests/
+└── .github/workflows/verify.yml
+```
+
+CI then validates not just code but the contract itself:
+
+```text
+OpenAPI valid?
+Schema compatible?
+Acceptance tests pass?
+Protected constraints respected?
+Architecture checks pass?
+Security checks pass?
+```
+
+Natural language is thus progressively transformed into deterministic boundaries.
+
+---
+
+## 11. Complete Example: From Requirement to Evidence
+
+Consider a seemingly small requirement: an existing REST endpoint should become idempotent. In a purely prompt-driven workflow, an agent might immediately search the source code and add a cache or database table. An SDD pipeline first forces the contract to become precise.
+
+```text
+Business Intent:
+Duplicate requests must produce the business effect only once.
+
+Contract:
+Header "Idempotency-Key" is mandatory for POST /payments.
+
+Invariant:
+Same key + same request -> same business response.
+Same key + different request -> conflict.
+
+Acceptance:
+- parallel duplicates create exactly one payment
+- retry after timeout creates no second payment
+- key expires after a defined period
+```
+
+Only then may the agent inspect the existing architecture. Perhaps a Redis cluster already exists; perhaps an ADR explicitly forbids adding such a dependency. The specification does not automatically choose the implementation, but it reveals which questions remain open.
+
+After the change, the agent produces not only a diff but evidence:
+
+```text
+Contract validation: pass
+Concurrency test: pass
+Retry test: pass
+Typecheck: pass
+SAST: pass
+Architecture constraint: pass
+```
+
+The example shows the real advantage of SDD: the agent can change its implementation strategy without changing the meaning of “correct.”
+
+---
+
+## 12. Where Specification-Driven Development Reaches Its Limits
+
+Not every requirement can or should be fully formalized in advance. UX work, exploratory product development, and novel algorithms contain genuine uncertainty. An over-formalized specification can suppress innovation or create only an illusion of precision.
+
+SDD should therefore be iterative. A spike can first clarify open questions; only then are stable findings converted into schemas, tests, or ADRs. The specification is not a replacement for discovery—it is the point at which **discovery results become verifiable engineering contracts**.
+
+Another edge case is a wrong specification. An agent that implements a flawed acceptance test perfectly has worked correctly in a technical sense and incorrectly in a business sense. Review and domain ownership therefore remain indispensable.
+
+---
+
+## Conclusion
+
+In agentic engineering, Specification-Driven Development does not mean translating every idea into a formal language. It means **eliminating uncertainty where an autonomous agent would otherwise have to make the decision itself**.
+
+OpenAPI, JSON Schema, acceptance tests, ADRs, and repository rules each play different roles. Together they form an executable contract between business intent and machine implementation.[^1][^2][^3]
+
+The more autonomously a coding agent works, the less “done” can be a subjective self-assessment by the model. The target must be defined externally through tests, constraints, and verifiable evidence.
+
+The next part addresses the next architecture question: **When is one agent enough—and when does multi-agent orchestration actually make sense?**
+
+---
+
+## Literature & Primary Sources
+
+[^1]: OpenAPI Initiative. *OpenAPI Specification.* https://spec.openapis.org/oas/latest.html
+[^2]: JSON Schema. *JSON Schema Specification.* https://json-schema.org/specification
+[^3]: AGENTS.md Project. *AGENTS.md – a simple, open format for guiding coding agents.* https://agents.md/
+[^4]: Anthropic (2026). *Demystifying evals for AI agents.* https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents
+
+## Metadata
+
+**SEO Title:** Specification-Driven Development for AI Coding Agents  
+**Meta Description:** How OpenAPI, JSON Schema, acceptance tests, ADRs, and constraints enable verifiable autonomous software development with coding agents.  
+**Slug:** `specification-driven-development`

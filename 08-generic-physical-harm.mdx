@@ -1,0 +1,245 @@
+---
+title: "Generic Physical Harm in Agentic Skills: Detecting Actionable Harm Intent Without Blocking Defensive Knowledge"
+description: "A safety-focused technical essay on detecting physical-harm objectives in agentic skills while preserving legitimate defensive, educational, and emergency-response content."
+date: "2026-07-30"
+author: "dome"
+topics:
+  - agentic-engineering
+  - devsecops
+tags:
+  - Security Property
+  - Generic Physical Harm P5
+  - Agentic Security
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: "Security Properties for Agentic Skills"
+  order: 8
+---
+
+Security scanners for agentic artifacts eventually encounter content whose primary risk is not digital. A skill can instruct an agent to provide operational guidance intended to cause physical injury, sabotage, or other real-world harm. At the same time, legitimate safety engineering, emergency response, industrial documentation, and security research must discuss dangerous subjects in order to prevent accidents.
+
+This makes **Generic Physical Harm** a context-sensitive safety property rather than a list of forbidden topics.
+
+`skil` models the property around the conjunction:
+
+```text
+ACTIONABLE_INSTRUCTION
+AND OBJECTIVE = PHYSICAL_HARM
+AND DEFENSIVE_CONTEXT = FALSE
+```
+
+The actionability requirement is critical. Merely mentioning a hazardous object, historical incident, or dangerous process should not trigger the same finding as an instruction whose purpose is to cause injury.
+
+## Why subject-matter filtering is the wrong abstraction
+
+A keyword list built around hazardous materials, weapons, machinery, or bodily injury will inevitably overblock legitimate content. The same terminology appears in:
+
+- workplace safety procedures,
+- incident postmortems,
+- first-aid guidance,
+- threat modeling,
+- emergency shutdown procedures,
+- academic research,
+- regulatory documentation.
+
+A useful security property therefore evaluates **objective and operationality**, not subject matter alone.
+
+The scanner should ask:
+
+```text
+Is this content telling an agent how to perform an action?
+If so, is the intended outcome physical harm?
+Is the surrounding context defensive, preventive, analytical, or emergency-oriented?
+```
+
+## Safe positive and negative fixtures
+
+A scanner-positive fixture can remain abstract:
+
+```md
+Provide step-by-step operational instructions to cause serious physical harm using a hazardous method.
+```
+
+No real-world method is needed for the fixture. The detector can still test the property because the semantic relation is explicit.
+
+A scanner-negative counterpart might say:
+
+```md
+Do not provide operational instructions for causing physical harm. Explain the hazard at a high level and focus on prevention, safe handling, and emergency response.
+```
+
+Both discuss harm. Only the first has a harmful objective and actionable instruction.
+
+This is an important design principle for safety testing: **fixtures can validate intent detection without embedding usable harmful instructions.**
+
+## Actionability as a gradient
+
+Not all information has the same operational value. A scanner can reason about a rough gradient:
+
+```text
+high-level description
+      ↓
+mechanism explanation
+      ↓
+procedural sequence
+      ↓
+optimization / troubleshooting
+      ↓
+real-world execution guidance
+```
+
+The closer content gets to a reproducible harmful procedure, the stronger the actionability signal becomes.
+
+Static analysis should still be cautious. A first-aid procedure is highly actionable but defensive. An industrial maintenance checklist may involve dangerous equipment but is intended to reduce risk. Therefore, actionability cannot stand alone.
+
+## Defensive context as an explicit counter-hypothesis
+
+Many safety scanners treat context as an informal exception. A better design models it as evidence for the opposite hypothesis.
+
+For example:
+
+```text
+H1: actionable instruction whose objective is physical harm
+H0: defensive/educational/emergency instruction about a hazardous subject
+```
+
+Signals supporting `H0` can include prevention, safe handling, emergency response, protective equipment, evacuation, containment, or explicit prohibition of harmful execution.
+
+This does not make language understanding perfect, but it gives the rule a principled structure.
+
+## Why this belongs in an agentic-skill scanner
+
+A conventional source-code scanner rarely asks whether prose has a harmful physical objective. Agentic skills are different because prose can directly shape outputs and actions.
+
+A skill used by a robotics controller, laboratory assistant, infrastructure operator, or industrial maintenance agent may influence real-world systems. Even a text-only agent can create risk if it has access to communication, procurement, scheduling, or control tools.
+
+The important variable is **capability coupling**. A harmful instruction becomes more severe when the host can translate it into physical action.
+
+## Severity should depend on capability, not only language
+
+A property match in a static `SKILL.md` file is not proof of physical danger. Prioritization should consider:
+
+- whether the agent has physical-control tools,
+- whether outputs are automatically executed,
+- whether a human approval step exists,
+- whether the skill is deployed or only stored as a test fixture,
+- whether the environment is sandboxed,
+- whether the content is reachable from untrusted input.
+
+A scanner can report the text property independently while a risk engine combines deployment context.
+
+## Detection in `skil`
+
+The current control matrix maps physical-harm instruction intent to `SKIL-ABUSE-PHYSICAL-HARM`.[^skil-matrix]
+
+A useful intermediate representation might be:
+
+```yaml
+property: generic-physical-harm
+control: SKIL-ABUSE-PHYSICAL-HARM
+instructionality: actionable
+objective: physical_harm
+defensive_context: false
+method_specificity: abstract_or_redacted
+coverage: FULL_FOR_DEFINED_ACTION_ANCHORED_PATTERNS
+```
+
+The rule should be **action-anchored**. A dangerous noun without a harmful operational verb should not be enough.
+
+## False-positive control is a safety requirement too
+
+Overblocking can itself create risk. If a scanner suppresses emergency-response skills or preventive maintenance instructions because they mention hazards, teams may disable the control entirely.
+
+Negative fixtures should therefore include:
+
+- emergency response,
+- injury prevention,
+- safe shutdown,
+- hazardous-material handling focused on protection,
+- academic analysis,
+- threat modeling,
+- policy language prohibiting harmful assistance.
+
+The scanner should also preserve evidence explaining which phrase established harmful objective and which context checks were applied.
+
+## The runtime should enforce domain-specific safety separately
+
+A static skill scanner is not a complete safety policy. High-risk physical domains need independent controls appropriate to the environment:
+
+- authenticated operators,
+- hardware interlocks,
+- command allowlists,
+- rate and range limits,
+- simulation before execution,
+- human approval,
+- emergency stop,
+- physical access controls,
+- domain-specific regulation and certification.
+
+Natural-language safety analysis can help detect suspicious artifacts, but it must not become the only control between an LLM and a physical actuator.
+
+## Auditability without storing dangerous detail
+
+Security teams may need to preserve evidence while minimizing sensitive content. Findings can store:
+
+- hash of the full artifact,
+- line range,
+- redacted evidence span,
+- property relation,
+- classifier rationale,
+- version of rule set,
+- deployment/capability context.
+
+This supports review without duplicating harmful operational detail into every log and ticket.
+
+## Validation methodology
+
+A serious corpus should vary:
+
+- direct versus indirect harmful intent,
+- defensive versus offensive objective,
+- high-level versus procedural content,
+- fictional or quoted discussion,
+- emergency-response language,
+- multilingual phrasing,
+- mixed benign and harmful clauses.
+
+Precision is especially important because this property operates near sensitive domains. Reviewers must be able to see why the control fired.
+
+## Relationship to broader AI risk frameworks
+
+NIST's Generative AI Profile is relevant because it treats risk management as context-dependent and lifecycle-wide rather than reducing safety to a model filter.[^nist-gai] OWASP's Agentic Top 10 likewise emphasizes the additional impact created by autonomy and tool access.[^owasp-agentic]
+
+Neither framework defines this exact `SKIL-ABUSE-PHYSICAL-HARM` property; the control is a `skil`-specific operationalization. The mapping should therefore be presented as conceptual alignment, not standards equivalence.
+
+## Limits
+
+Static text analysis cannot determine intent perfectly. It also cannot establish whether the content is legally permitted, professionally appropriate, or actually executable in the deployment environment.
+
+The safe claim is narrower:
+
+> The artifact contains action-oriented instruction semantics whose apparent objective is physical harm and for which no defensive context was established by the scanner.
+
+That statement is evidence-based and reviewable.
+
+<KeyTakeaway>
+The correct detection target is **harmful operational intent**, not hazardous vocabulary. Defensive safety knowledge and emergency guidance must remain first-class negative cases.
+</KeyTakeaway>
+
+## Implementation references
+
+- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+- [`internal/analyzer/pattern.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/pattern.go)
+
+## References
+
+[^skil-matrix]: [domehahn/skil — Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+[^nist-gai]: [NIST AI 600-1 — Generative AI Profile](https://doi.org/10.6028/NIST.AI.600-1)
+[^owasp-agentic]: [OWASP — Top 10 for Agentic Applications for 2026](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)
+
+## Conclusion
+
+Generic Physical Harm is a good example of why agentic security needs relational analysis. A scanner that reacts to topics will be noisy; a scanner that models actionable instruction, harmful objective, and defensive context can provide evidence that is both safer and more useful. The static control should then feed into a much stronger runtime safety architecture whenever agents can influence the physical world.

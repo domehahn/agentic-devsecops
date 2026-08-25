@@ -1,0 +1,226 @@
+---
+title: "Excessive Permissions in Agentic Skills: Measuring the Gap Between Required and Granted Authority"
+description: "A deep security essay on excessive permissions in agentic skills, including capability modeling, least privilege, wildcard grants, MCP authorization, contract verification, blast-radius analysis, and runtime policy."
+date: "2026-07-30"
+author: "dome"
+topics:
+  - agentic-engineering
+  - devsecops
+tags:
+  - Security Property
+  - Excessive Permissions
+  - Agentic Security
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: "Security Properties for Agentic Skills"
+  order: 14
+---
+
+The safest agent is not the one that “knows” it should avoid dangerous actions. It is the one that **does not possess unnecessary authority in the first place**.
+
+Excessive Permissions measures the difference between what a task requires and what the runtime grants:
+
+```text
+GRANTED_CAPABILITIES ⊃ REQUIRED_CAPABILITIES
+```
+
+This is a classic least-privilege principle, but agentic systems make the gap especially important because the decision about *which* capability to use is often delegated to a probabilistic model exposed to untrusted context.
+
+## Permissions become exploit multipliers
+
+Prompt injection, hallucination, or planning error can only cause actions that the runtime makes possible. If an agent used only for documentation can also delete repositories, write cloud IAM policies, read secrets, and send arbitrary network requests, every model failure inherits that unnecessary blast radius.
+
+OWASP defines Excessive Agency around three recurring causes: excessive functionality, excessive permissions, and excessive autonomy.[^owasp-agency] The `skil` property isolates the permission dimension so it can be reviewed and tested directly.
+
+## Wildcards are a useful but incomplete signal
+
+A manifest such as:
+
+```yaml
+permissions:
+  - "*"
+```
+
+is an obvious positive candidate. But excessive permission can also occur without wildcards:
+
+```yaml
+permissions:
+  - repo.read
+  - repo.write
+  - repo.delete
+  - secrets.read
+  - network.connect
+```
+
+if the skill only needs `repo.read`.
+
+Therefore, wildcard detection provides strong evidence for overbreadth, while **contract verification** is needed to compare granted capabilities with task requirements.
+
+## Capability algebra
+
+A useful way to reason about permissions is as sets.
+
+Let:
+
+```text
+R = capabilities required by the declared task
+G = capabilities granted to the agent
+O = capabilities observed in implementation or runtime
+```
+
+Then:
+
+```text
+G - R = over-granted authority
+O - G = undeclared or policy-violating behavior
+R - G = missing capability / likely functional failure
+```
+
+This simple algebra separates three different problems that are often collapsed into one scanner warning.
+
+## Structured permissions are easier to secure than prose
+
+A natural-language instruction such as “the agent may access the repository” is ambiguous. Does that mean read, write, delete, administer webhooks, or manage secrets?
+
+Structured capability contracts can express operation and scope:
+
+```yaml
+permissions:
+  - "filesystem.read:./docs/**"
+  - "network.connect:https://api.example"
+```
+
+The more precise the capability model, the more meaningful least-privilege verification becomes.
+
+## `skil` control model
+
+The current repository maps excessive agency/tool scope to controls including `SKIL-AGENCY-TOOLS` and `SKIL-MCP-001`; contract verification provides the stronger declared-versus-observed comparison.[^skil-matrix][^skil-crosswalk]
+
+Earlier article drafts referenced a generic `SKIL-CAP-001`. The current control matrix should be treated as authoritative for published control IDs; capability declaration and verification are represented more granularly in the current repository.
+
+## Permissions have dimensions, not just names
+
+A capability can be overbroad along several axes:
+
+- **operation** — read versus write versus delete;
+- **resource** — one repository versus all repositories;
+- **tenant** — current tenant versus cross-tenant;
+- **destination** — one API versus arbitrary network;
+- **time** — one task versus long-lived token;
+- **data class** — public files versus secrets;
+- **environment** — sandbox versus production.
+
+A permission model that captures only `tool_name` leaves substantial ambient authority.
+
+## OAuth and MCP: scopes should be minimized
+
+RFC 9700 recommends restricting access-token privileges to the minimum required and audience-restricting tokens to intended resource servers.[^oauth-bcp]
+
+The MCP 2025-11-25 authorization specification goes further in its own domain: clients include resource indicators, servers validate token audience, and scope minimization is part of the authorization model.[^mcp-auth]
+
+This is directly relevant to agentic tool access. A model should not hold a broad bearer token that can be replayed across unrelated MCP servers or downstream APIs.
+
+## Evidence should compare authority with purpose
+
+A finding can be expressed as:
+
+```yaml
+property: excessive-permissions
+controls:
+  - SKIL-AGENCY-TOOLS
+  - SKIL-MCP-001
+declared_purpose: documentation_review
+required_capabilities:
+  - repo.read
+granted_capabilities:
+  - repo.read
+  - repo.write
+  - repo.delete
+excess:
+  - repo.write
+  - repo.delete
+```
+
+This is significantly more useful than reporting “permissions are broad.”
+
+## The hard problem: determining required capability
+
+Static analysis cannot always infer `R`, the required set. Purpose is partly semantic and organizational.
+
+`skil` addresses this through an assurance model that distinguishes static detection from explicit reviewed contracts. This is an important design choice: it avoids pretending that a heuristic can always determine what permissions a business process legitimately needs.[^skil-crosswalk]
+
+## False positives and intentional privilege
+
+Some administrative skills legitimately require broad authority. That does not make the finding meaningless. It changes the response:
+
+- isolate the workload,
+- require stronger approval,
+- use a dedicated identity,
+- shorten credential lifetime,
+- increase audit detail,
+- restrict when and where the skill can run.
+
+“Intentional” should lead to compensating controls, not automatic dismissal.
+
+## Runtime least privilege
+
+The best architecture avoids placing all capabilities in one tool set. Instead:
+
+```text
+planner agent
+   ↓ proposes action
+policy/router
+   ↓ selects narrow executor
+scoped executor identity
+   ↓ performs one operation
+```
+
+This separates reasoning authority from execution authority.
+
+## Permission creep over time
+
+Agentic platforms evolve rapidly. A tool may gain new operations, a service account may accumulate roles, or an MCP server may expose more tools after an update.
+
+Therefore, least privilege is not a one-time review. Continuous verification should compare:
+
+- declared capability contract,
+- discovered tool schemas,
+- IAM policy,
+- observed runtime calls.
+
+Differences should be visible in CI or deployment review.
+
+## Relationship to CWE-269
+
+CWE-269 describes improper privilege management and recommends careful handling of privileges, explicit trust zones, least privilege, and separation of privilege.[^cwe269] Agentic excessive-permission findings are a modern specialization of this long-standing security principle.
+
+## Limits
+
+Static files may not reveal effective cloud IAM, inherited roles, dynamic MCP discovery, or host-side policy. Conversely, a broad declaration may be reduced by runtime enforcement.
+
+The scanner should distinguish **declared authority**, **observed capability**, and **effective runtime authority** rather than treating them as interchangeable.
+
+<KeyTakeaway>
+The most important metric is not how many tools an agent has, but the **difference between necessary authority and effective authority**. Every unnecessary capability expands the blast radius of prompt injection, model error, and supply-chain compromise.
+</KeyTakeaway>
+
+## Implementation references
+
+- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+- [`internal/analyzer/mcp.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/mcp.go)
+
+## References
+
+[^skil-matrix]: [domehahn/skil — Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+[^skil-crosswalk]: [domehahn/skil — External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+[^owasp-agency]: [OWASP GenAI — LLM06:2025 Excessive Agency](https://genai.owasp.org/llmrisk/llm062025-excessive-agency/)
+[^cwe269]: [MITRE CWE-269 — Improper Privilege Management](https://cwe.mitre.org/data/definitions/269.html)
+[^oauth-bcp]: [RFC 9700 — Best Current Practice for OAuth 2.0 Security](https://www.rfc-editor.org/rfc/rfc9700.html)
+[^mcp-auth]: [Model Context Protocol — Authorization, Specification 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
+
+## Conclusion
+
+Excessive Permissions converts otherwise containable model failures into high-impact incidents. Static wildcard detection is useful, but the deeper engineering goal is contract-based least privilege: define what the task requires, grant only that authority, bind credentials to the intended resources, and continuously compare declared, observed, and effective capability.

@@ -1,0 +1,426 @@
+---
+title: "Cloud Metadata SSRF in Agentic Skills: When a Network Request Becomes an Identity Breach"
+description: "A deep technical essay on cloud metadata SSRF in agentic systems: workload identity boundaries, AWS IMDSv2, Google and Azure metadata services, static detection in skil, runtime controls, evidence design, and verification."
+date: "2026-08-25"
+author: "dome"
+topics:
+  - agentic-engineering
+  - devsecops
+tags:
+  - Security Property
+  - Cloud Metadata SSRF
+  - Agentic Security
+  - Workload Identity
+  - SSRF
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: "Security Properties for Agentic Skills"
+  order: 61
+---
+
+A request to a cloud metadata service is easy to misclassify as a networking issue. In a modern cloud workload, it is more accurate to treat it as an **identity-boundary event**.
+
+The dangerous part is usually not the HTTP transaction itself. The dangerous part is that a process can cross from ordinary application context into an infrastructure-managed identity plane. Metadata services expose information that the cloud platform intentionally makes available *from inside the workload*: instance attributes, environment details, identity documents, and—depending on platform and endpoint—credentials or access tokens. AWS explicitly documents instance metadata as locally available to software running on an EC2 instance; Google Compute Engine exposes metadata and OAuth access tokens through its metadata server; Azure exposes instance metadata through IMDS on the VM network path.[^1][^2][^3]
+
+For an autonomous agent, that distinction matters even more. An agent may receive a URL from a prompt, a retrieved document, an MCP tool result, generated code, or another agent. If that value is converted into a server-side request without an independent policy check, the model becomes a decision layer for a network capability that may be able to reach resources the user cannot reach directly. The classic SSRF *confused deputy* therefore acquires an agentic form:
+
+```text
+untrusted instruction or data
+        ↓
+model chooses / constructs destination
+        ↓
+runtime performs request with workload network position
+        ↓
+cloud metadata boundary
+        ↓
+workload identity or privileged instance information
+```
+
+The security property is not merely “do not use `169.254.169.254`.” It is:
+
+> **An agent-controlled or application-controlled request must not cross into a cloud workload identity service unless that access is explicit, necessary, narrowly scoped, and enforced outside the model.**
+
+<Note>
+In this series, **scanner-positive** means that the scanner found evidence for a security concern and emitted a finding. **Scanner-negative** means that the legitimate counterpart must not trigger this property. A negative static result is not a proof that runtime SSRF is impossible.
+</Note>
+
+## The identity plane hidden behind a local address
+
+Cloud metadata services deliberately occupy unusual network positions. They are reachable from the workload but are not ordinary application dependencies.
+
+On AWS EC2, the Instance Metadata Service can be enabled or disabled per instance. AWS documents both IMDSv1 and the session-oriented IMDSv2; when IMDSv2 is required, a request must first obtain a session token. AWS also exposes both an IPv4 metadata endpoint and an IPv6 endpoint on supported configurations.[^1][^4] OWASP describes IMDSv2 as a defense-in-depth control that mitigates some SSRF scenarios and recommends disabling IMDSv1 where possible.[^5]
+
+Google Compute Engine exposes its metadata server through `metadata.google.internal`, the link-local IPv4 address, and—in relevant environments—IPv6. Google requires the `Metadata-Flavor: Google` request header for metadata queries and documents that OAuth2 access tokens can be obtained through service-account metadata endpoints.[^2]
+
+Azure IMDS is similarly exposed at a link-local address and requires the `Metadata: true` header. Microsoft explicitly notes that IMDS is accessible to applications on the VM and warns against storing sensitive values in user data.[^3]
+
+These mechanisms are not interchangeable. Their request requirements, endpoint structures, and identity models differ. A robust security model therefore separates two questions:
+
+1. **Is this destination part of a metadata or workload-identity plane?**
+2. **Can the requesting component legitimately cross that boundary?**
+
+A detector that answers only the first question is useful, but it is not a complete authorization system.
+
+<Architecture>
+**Cloud Metadata SSRF control plane**
+
+`Source of destination` → `request primitive` → `canonical destination classification` → `metadata/workload-identity boundary` → `policy decision` → `network enforcement` → `auditable result`
+</Architecture>
+
+## Why agentic systems make metadata SSRF more dangerous
+
+Traditional SSRF often begins with a web parameter such as an image URL, webhook callback, or import location. Agentic systems dramatically expand the number of values that may influence a request:
+
+- prompt content;
+- tool arguments proposed by a model;
+- retrieved RAG documents;
+- MCP tool outputs or descriptions;
+- repository files;
+- task memory;
+- generated code;
+- another agent's message;
+- configuration discovered at runtime.
+
+This changes the threat model from “is one HTTP parameter validated?” to **which information sources are allowed to influence network authority**.
+
+Consider an agent with a generic `fetch_url` tool. Even if the tool schema looks harmless, the effective authority depends on the runtime:
+
+```text
+Model authority:
+    "I may propose a URL"
+
+Tool authority:
+    "I can issue outbound HTTP requests"
+
+Workload authority:
+    "I run inside a cloud VM or container"
+
+Network authority:
+    "I can reach link-local infrastructure endpoints"
+```
+
+The intersection is the security boundary. The model should not be able to convert linguistic influence into infrastructure identity merely because all four layers happen to be connected.
+
+This is why prompt injection defenses alone are insufficient. A model can be perfectly aligned and still make a mistaken request. Conversely, an untrusted document can manipulate the model even when the application code contains no explicit malicious string. The decisive control is **capability containment**.
+
+## What `SKIL-BOUNDARY-METADATA` currently proves—and what it does not
+
+The current `skil` security control matrix maps cloud metadata access to `SKIL-BOUNDARY-METADATA`.[^6] The implementation in `internal/analyzer/boundary.go` is intentionally narrow and high-signal: it is a deterministic boundary analyzer that evaluates text/code lines against patterns for known metadata endpoints and contextual terms such as metadata, identity, token, or credentials.[^7]
+
+The current pattern includes, among other indicators:
+
+```text
+169.254.169.254
+metadata.google.internal
+100.100.100.200
+fd00:ec2::254
+latest/meta-data
+computeMetadata/v1
+```
+
+This design has two useful properties.
+
+First, it is **reproducible**. A finding does not depend on an opaque model judgment. The analyzer can point to the exact line and the exact boundary rule.
+
+Second, it is **bounded**. It does not claim to solve arbitrary URL resolution, DNS behavior, runtime redirects, string construction, or every provider-specific identity endpoint.
+
+That second property is important. A static scanner should never transform “I did not recognize a metadata destination” into “metadata SSRF cannot occur.”
+
+A more precise coverage statement is:
+
+```text
+verified:
+  explicit supported metadata indicators in observable text/code
+
+partially_resolved:
+  constructed or aliased destinations where only some components are visible
+
+runtime_dependent:
+  DNS, redirects, proxy behavior, runtime routing, service discovery
+
+not_observable:
+  destinations generated entirely by external systems unavailable to the scan
+```
+
+<KeyTakeaway>
+`SKIL-BOUNDARY-METADATA` is best interpreted as **evidence of an infrastructure-boundary crossing**, not as a universal SSRF theorem. Its strength is deterministic high-signal detection; its limitation is the finite set of statically visible representations.
+</KeyTakeaway>
+
+## A safer positive and negative test model
+
+For documentation and regression tests, examples should demonstrate the property without turning the article into an exploitation guide.
+
+A scanner-positive fixture can use a non-executed snippet:
+
+```python
+# Regression fixture: explicit metadata endpoint reference
+METADATA_URL = "http://169.254.169.254/example-metadata-path"
+response = http_client.get(METADATA_URL)
+```
+
+The relevant evidence is not the word `metadata` alone. It is the relation:
+
+```text
+request primitive
+    +
+recognized cloud metadata destination
+    =
+metadata boundary crossing
+```
+
+A scanner-negative counterpart should remain visually similar while being semantically ordinary:
+
+```python
+PUBLIC_SCHEMA_URL = "https://metadata.example/public/schema"
+response = http_client.get(PUBLIC_SCHEMA_URL, timeout=2)
+```
+
+The token *metadata* still appears, but the destination is not a cloud metadata service.
+
+This is exactly why security properties need negative fixtures. A pattern that simply searches for the word `metadata` produces noise; a pattern that requires a known boundary indicator produces materially better evidence.
+
+## Endpoint classification is harder than string comparison
+
+A production-grade SSRF control cannot stop at literal IP matching.
+
+URLs have syntax, names resolve to addresses, addresses belong to ranges, and HTTP clients can follow redirects. The security decision therefore needs a **canonicalization pipeline**:
+
+```text
+raw value
+  ↓
+strict URL parse
+  ↓
+scheme policy
+  ↓
+host normalization
+  ↓
+DNS / IP resolution
+  ↓
+address classification
+  ↓
+redirect policy
+  ↓
+connection-time enforcement
+```
+
+OWASP recommends allowlisting when applications communicate only with known trusted destinations, warns that deny-lists are bypass-prone, and recommends disabling automatic redirect following where it would undermine validation.[^5]
+
+The subtle design point is that validation and connection must agree on the same destination. A policy engine that approves one representation while the HTTP library ultimately connects to another creates a time-of-check/time-of-use gap.
+
+For agent runtimes, an even stronger pattern is to remove arbitrary URLs from the model-facing interface altogether:
+
+```json
+{
+  "tool": "query_service",
+  "arguments": {
+    "service": "status-api",
+    "operation": "health"
+  }
+}
+```
+
+The runtime maps `status-api` to a reviewed endpoint. The model never receives authority to choose a raw host.
+
+## Cloud-native controls should reduce the value of metadata access
+
+Application-layer SSRF prevention is necessary, but cloud configuration should assume that application bugs can exist.
+
+### AWS
+
+AWS provides several relevant controls:
+
+- require IMDSv2 rather than allowing IMDSv1;
+- disable IMDS entirely where the workload does not need it;
+- configure metadata options centrally where appropriate;
+- constrain workload IAM permissions so that a token, even if exposed, has limited authority.[^1][^4]
+
+IMDSv2 is important, but it should not be presented as “SSRF solved.” It changes the request protocol and blocks some classes of unintended metadata retrieval; it does not eliminate the need for application and network controls.[^5]
+
+### Google Cloud and GKE
+
+Google's metadata service requires an explicit request header, but a sufficiently capable server-side request primitive may still be able to set headers. The deeper control is identity architecture. In GKE, Google recommends Workload Identity Federation for GKE and describes it as the preferred mechanism for assigning distinct, fine-grained workload identities without service-account key files; it also replaces older metadata concealment approaches.[^8]
+
+### Azure
+
+Azure IMDS requires the `Metadata: true` header and bypasses proxies in Microsoft's documented access pattern.[^3] Again, this is useful friction, not an authorization substitute. Workload permissions still need least privilege, and applications that do not need metadata access should not receive a general mechanism capable of reaching it.
+
+## Runtime network policy is the real enforcement layer
+
+Static analysis can identify suspicious capability paths before deployment. Runtime controls decide what is actually possible.
+
+For an agent execution environment, a strong outbound architecture can look like this:
+
+```text
+Agent
+  ↓
+Tool broker
+  ↓
+Destination policy
+  ├─ named public APIs
+  ├─ explicit internal services
+  └─ deny infrastructure identity ranges
+  ↓
+Egress proxy / network policy
+  ↓
+Network
+```
+
+The model never becomes the policy engine.
+
+A useful invariant is:
+
+```text
+ALLOW(request) =
+    tool_is_authorized
+    ∧ destination_is_authorized
+    ∧ scheme_is_authorized
+    ∧ resolved_address_is_authorized
+    ∧ redirect_target_is_authorized
+```
+
+If any term is unknown, a high-assurance runtime should fail closed or require escalation to a reviewed path.
+
+## Evidence design: a finding should explain the boundary
+
+A mature finding should preserve enough information for a reviewer to reconstruct the decision:
+
+```yaml
+finding:
+  property: cloud-metadata-ssrf
+  rule_id: SKIL-BOUNDARY-METADATA
+  category: infrastructure-boundary
+  observed:
+    request_primitive: true
+    destination_class: cloud_metadata
+    representation: explicit
+  scope:
+    static_visibility: line-local
+    dns_resolved: false
+    redirect_chain_observed: false
+  impact:
+    possible_identity_boundary: true
+  confidence:
+    evidence: high
+    completeness: bounded
+```
+
+Notice the separation between **confidence in the observed evidence** and **completeness of coverage**. The scanner may be highly confident that a literal metadata endpoint appears while still acknowledging that it has not modeled every runtime behavior.
+
+That distinction prevents a common reporting failure: using one confidence score to conflate rule certainty, exploitability, and coverage.
+
+## Detection composition: metadata access becomes more serious when combined
+
+The most useful security reasoning often happens *between* properties.
+
+A metadata finding can compose with:
+
+- `SKIL-TAINT-NETWORK` if untrusted input reaches the request;
+- credential or secret handling findings if returned material is propagated;
+- cloud exfiltration findings if sensitive output crosses another boundary;
+- excessive agency findings if the tool is broadly callable;
+- approval-bypass findings if a high-impact request is executed without review.
+
+The relationship can be represented as a graph:
+
+```text
+Untrusted source
+   ↓
+Dynamic network target
+   ↓
+Cloud metadata boundary
+   ↓
+Identity-bearing response
+   ↓
+Privileged cloud operation
+```
+
+Each edge should be evidenced independently. Severity should rise because the chain is demonstrated, not because several unrelated findings happen to exist in the same repository.
+
+## How to validate the detector scientifically
+
+A meaningful regression suite for cloud metadata SSRF should include more than one canonical IPv4 string.
+
+It should test:
+
+| Test family | Purpose |
+| --- | --- |
+| canonical provider endpoints | baseline recall |
+| provider DNS names | hostname classification |
+| IPv4 and IPv6 forms supported by the rule | representation coverage |
+| ordinary public hosts containing the word `metadata` | precision |
+| documentation discussing metadata defensively | context handling |
+| URL construction split across variables | analysis boundary |
+| model/tool output feeding a request | composition with taint |
+| runtime-only resolution | expected `runtime_dependent` state |
+
+The output of the test suite should not be only “N tests passed.” It should state the known support matrix.
+
+For example:
+
+```text
+literal AWS/GCP/Azure indicators     supported
+line-local request context           supported
+arbitrary string concatenation       partial
+DNS rebinding                        runtime
+proxy routing                        runtime
+redirect-chain revalidation          runtime
+provider-specific future endpoints   versioned knowledge required
+```
+
+That is a much more honest security claim than “FULL SSRF detection.”
+
+## Design review questions
+
+A reviewer evaluating an agentic skill should ask:
+
+1. Does the skill need arbitrary outbound HTTP at all?
+2. Can the model choose a raw URL, or only a named service?
+3. Can the runtime reach link-local and workload-identity endpoints?
+4. Is cloud workload identity scoped to the minimum API permissions?
+5. Are redirects revalidated?
+6. Are DNS resolution and actual connection targets subject to the same policy?
+7. Are metadata services disabled or hardened when not needed?
+8. Are tool calls logged with destination classification?
+9. Does the scanner expose unresolved runtime dependencies rather than labeling them safe?
+10. Is a metadata-boundary finding composed with downstream identity use when evidence exists?
+
+<Warning>
+Do not treat a metadata request header, a special token mechanism, or a particular provider URL as the primary security boundary. Those mechanisms reduce attack surface, but the durable control is **least-privilege workload identity plus independently enforced network authority**.
+</Warning>
+
+## Where this property belongs in DevSecOps
+
+Cloud metadata SSRF should be checked at several lifecycle points:
+
+**Authoring.** Static analysis catches obvious endpoint references and unsafe generic fetch helpers.
+
+**Pull request.** Review diffs for new outbound capabilities, URL construction, and changes to network tooling.
+
+**Artifact publication.** Scan the exact digest that will be distributed.
+
+**Deployment.** Verify cloud metadata settings, workload identity, egress policy, and tool permissions.
+
+**Runtime.** Enforce network destination policy independently of the LLM.
+
+**Incident response.** Preserve tool-call traces, destination classifications, DNS results where available, and cloud identity activity.
+
+The property therefore connects application security, cloud IAM, network architecture, and agent governance.
+
+## References
+
+[^1]: Amazon Web Services, *Use the Instance Metadata Service to access instance metadata*, EC2 User Guide. https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html
+[^2]: Google Cloud, *View and query VM metadata*, Compute Engine documentation. https://cloud.google.com/compute/docs/metadata/querying-metadata
+[^3]: Microsoft, *Azure Instance Metadata Service for virtual machines*, Microsoft Learn. https://learn.microsoft.com/azure/virtual-machines/instance-metadata-service
+[^4]: Amazon Web Services, *Configure the Instance Metadata Service options*, EC2 User Guide. https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-options.html
+[^5]: OWASP Cheat Sheet Series, *Server-Side Request Forgery Prevention Cheat Sheet*. https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
+[^6]: domehahn/skil, *Security control matrix*. https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md
+[^7]: domehahn/skil, `internal/analyzer/boundary.go`. https://github.com/domehahn/skil/blob/main/internal/analyzer/boundary.go
+[^8]: Google Cloud, *About Workload Identity Federation for GKE*. https://cloud.google.com/kubernetes-engine/docs/concepts/workload-identity
+
+## Conclusion
+
+Cloud Metadata SSRF is best understood as an **identity-plane boundary violation expressed through a network request**. That framing is more useful than memorizing a link-local address because it remains valid across cloud providers, container platforms, agent frameworks, and future metadata implementations.
+
+For `skil`, the current `SKIL-BOUNDARY-METADATA` control provides deterministic evidence for recognized metadata-access patterns. The correct engineering posture is to preserve that strength while being explicit about its limits: static recognition is one layer; runtime destination enforcement, cloud identity design, and least privilege are the controls that determine whether the boundary can actually be crossed.

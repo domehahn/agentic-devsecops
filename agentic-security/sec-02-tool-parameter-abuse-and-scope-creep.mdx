@@ -1,0 +1,533 @@
+---
+title: "Part 2: Tool Parameter Abuse & Scope Creep – When Agents Exceed Their Authority"
+description: "Part 2 of the 'Agentic Security & Adversarial AI' series: how tool calls, confused-deputy scenarios, MCP authorization, and scope creep become real security boundaries in agentic systems."
+date: "2026-08-22"
+author: "dome"
+topics:
+  - security
+  - agentic-engineering
+  - devsecops
+tags:
+  - Tool Abuse
+  - Scope Creep
+  - MCP Security
+  - Privilege Escalation
+  - OWASP Top 10 LLM
+draft: false
+series:
+  slug: "agentic-security-adversarial-ai"
+  title: "Agentic Security & Adversarial AI: The Defense Bible"
+  order: 2
+ai:
+  assisted: true
+  humanReviewed: true
+  reviewedBy: "Dominik Hahn"
+  reviewedAt: "2026-08-22"
+---
+
+An agent does not become dangerous because it generates an incorrect sentence. It becomes dangerous where model output is translated into **authoritative actions**.
+
+Tool calling, MCP, APIs, and shell adapters therefore form the real effect boundary of an agentic system. A language model can decide *which* function it wants to call and *which* parameters seem plausible. That must not imply that the call is authorized.
+
+The second part of **“Agentic Security & Adversarial AI”** treats tool parameter abuse, confused deputies, and scope creep as classic security problems with a new decision system at the center.
+
+---
+
+## 1. From Text Generator to Principal
+
+Without tools:
+
+```text
+LLM → Text
+```
+
+With tools:
+
+```text
+LLM → Tool Call → Backend → Side Effect
+```
+
+Examples:
+
+```text
+create_issue(...)
+send_email(...)
+update_record(...)
+deploy_service(...)
+read_secret(...)
+execute_query(...)
+```
+
+The model does not thereby become a trusted principal. It is better understood as a **decision component** whose proposals must be constrained by policies and permissions.
+
+---
+
+## 2. The Confused-Deputy Problem
+
+The classic confused-deputy problem occurs when a privileged service misuses its rights on behalf of a less privileged actor because it fails to separate authorization context correctly.
+
+With agents:
+
+```text
+Unprivileged Input
+      ↓
+LLM Agent
+      ↓
+privileged credential
+      ↓
+External System
+```
+
+The attacker does not need to obtain the privilege directly. It is enough to induce the agent to misuse **its own** privileges.
+
+The MCP specification explicitly addresses confused-deputy risks in its authorization model and in particular prohibits unsafe token passthrough between resources.[^1]
+
+---
+
+## 3. Tool Parameter Abuse
+
+A tool can have a perfectly valid JSON schema and still be dangerous.
+
+Example:
+
+```json
+{
+  "name": "delete_file",
+  "arguments": {
+    "path": "/workspace/tmp/report.txt"
+  }
+}
+```
+
+The syntactic question is:
+
+> Is `path` a string?
+
+The security question is:
+
+> Is this specific user, through this agent, allowed to delete exactly this file?
+
+Schema validation answers the first question. Authorization answers the second.
+
+---
+
+## 4. Why JSON Schema Is Not Authorization
+
+Strict schemas matter:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "repository": { "type": "string" },
+    "issue_id": { "type": "integer", "minimum": 1 }
+  },
+  "required": ["repository", "issue_id"],
+  "additionalProperties": false
+}
+```
+
+They prevent:
+
+- unexpected fields,
+- type confusion,
+- certain parser errors,
+- poorly defined tool contracts.
+
+They do not prevent:
+
+```text
+repository = "secret-project"
+```
+
+when the current principal is not allowed to see that repository.
+
+The backend function must therefore **authorize server-side**, regardless of what the model believes.
+
+---
+
+## 5. Free-Form Shells Are an Especially Risky Capability Type
+
+A tool such as:
+
+```text
+run_shell(command: string)
+```
+
+is extremely broad from a security perspective. A single string can combine filesystem, network, and process operations.
+
+A narrower capability is more robust:
+
+```text
+delete_temp_file(path: WorkspaceRelativePath)
+run_test_suite(target: TestTarget)
+read_log(service: ServiceName, since: Duration)
+```
+
+The rule is:
+
+> **Capability design is security design.**
+
+The more general the tool, the larger the set of effects a manipulated model decision can trigger.
+
+---
+
+## 6. Scope Creep: Privileges Grow with Features
+
+Many agents start out harmlessly:
+
+```text
+v1:
+read_repo
+search_docs
+```
+
+Then product requirements arrive:
+
+```text
+v2:
+create_branch
+commit_code
+
+v3:
+open_pr
+merge_pr
+
+v4:
+deploy_staging
+deploy_production
+```
+
+Without explicit permission architecture, the agent's authority grows incrementally while the original security assumptions remain unchanged.
+
+Scope creep is therefore not a single exploit. It is a **governance failure**.
+
+---
+
+## 7. MCP: Current Authorization Boundaries
+
+The MCP specification revision `2025-11-25` defines an OAuth-2.1-oriented model for HTTP-based authorization.[^1]
+
+Important points include:
+
+- tokens must be intended for the relevant resource server,
+- MCP servers must validate audience/resource binding,
+- token passthrough to downstream systems is prohibited,
+- PKCE is part of the protection mechanisms,
+- access tokens should not be transmitted in URLs,
+- downstream APIs may require separate credentials.
+
+These rules directly address the problem that an MCP server must not simply become a credential proxy.
+
+---
+
+## 8. The Model Must Not Define Credential Boundaries
+
+Unsafe:
+
+```text
+LLM decides:
+"I may use the GitHub token for this tool."
+```
+
+Safer:
+
+```text
+Policy / Credential Broker:
+subject=user123
+resource=repo/acme/public-api
+action=pull_request:create
+→ issue short-lived scoped credential
+```
+
+The model can request an action. A deterministic broker issues only the minimum capability required.
+
+---
+
+## 9. Resource-Bound Tokens and Least Privilege
+
+A powerful global API key creates a large blast radius.
+
+Better:
+
+```text
+Credential:
+- audience: git-service
+- repository: acme/api
+- operations: issues:write
+- ttl: 5 min
+```
+
+Even if an agent is manipulated, that credential cannot be used to:
+
+- read other repositories,
+- delete branches,
+- modify organization roles,
+- call arbitrary APIs.
+
+Least privilege does not reduce the probability of every manipulation. It reduces **the maximum damage a manipulation can cause**.
+
+---
+
+## 10. Human Approval Is Not a Context-Free Yes/No Dialog
+
+An approval gate is useful only when the human understands what is being authorized.
+
+Bad:
+
+```text
+"Execute tool? [Yes] [No]"
+```
+
+Better:
+
+```text
+Action: deploy_service
+Target: payments-prod
+Version: 7f2a9b1
+Change: 14 files
+Policy Risk: HIGH
+Reason: User requested production rollout
+```
+
+Better still is a diff or transactional preview.
+
+MCP itself emphasizes user consent and control as security and trust principles and requires that users be able to understand what data access and tool actions are taking place.[^2]
+
+---
+
+## 11. Idempotency and Transaction Boundaries
+
+Agents can repeat calls:
+
+```text
+Timeout
+→ model believes call failed
+→ retry
+```
+
+For non-idempotent tools, this can create duplicate effects.
+
+Examples:
+
+- duplicate payment,
+- duplicate email,
+- duplicate tickets,
+- repeated permission changes.
+
+Tools should therefore support, where possible:
+
+```text
+idempotency_key
+dry_run
+transaction_id
+expected_version
+```
+
+Security and reliability meet directly here.
+
+---
+
+## 12. A Policy Enforcement Point Between Model and Effect
+
+A robust design:
+
+```text
+LLM
+ ↓ proposes
+Tool Request
+ ↓
+Policy Enforcement Point
+ ├─ schema validation
+ ├─ authorization
+ ├─ risk classification
+ ├─ quota
+ ├─ tenant boundary
+ ├─ approval requirement
+ └─ audit
+ ↓
+Tool Executor
+```
+
+This architecture prevents tool calling itself from becoming the authorization decision.
+
+---
+
+## 13. Sandboxing Limits Unknown Effects
+
+Even with narrow tools, code execution may still be required.
+
+Then the environment should be:
+
+```text
+ephemeral sandbox
+- restricted filesystem
+- controlled network egress
+- CPU/memory/time quota
+- no host credentials
+- no Docker socket
+- no implicit cloud metadata access
+```
+
+Sandboxing is especially important for:
+
+- build commands,
+- test execution,
+- user-supplied code,
+- package installation,
+- repository automation.
+
+---
+
+## 14. Tool Outputs Are Untrusted Too
+
+Security does not end after the tool call.
+
+A tool can return text:
+
+```text
+search_web(...)
+→ webpage content
+```
+
+That output can itself contain prompt injection.
+
+This creates a loop:
+
+```text
+Agent → Tool → Untrusted Output → Agent → Next Tool
+```
+
+Every observation must therefore retain its trust class.
+
+---
+
+## 15. OWASP: Excessive Agency and Agentic Risks
+
+OWASP describes **Excessive Agency** as a risk in which an LLM system has too many functions, privileges, or too much autonomy and can therefore perform harmful actions.[^3]
+
+The OWASP Top 10 for Agentic Applications 2026 broadens the view to autonomous workflows and emphasizes, among other things, identity, tools, memory, multi-agent interactions, and human oversight.[^4]
+
+This aligns with a classic security insight:
+
+> Security does not come from assuming the decision-maker is always correct. It comes from ensuring every decision-maker has bounded authority.
+
+---
+
+## 16. Test Cases for Tool Security
+
+A security regression suite should test:
+
+```text
+[ ] wrong tenant
+[ ] unauthorized resource
+[ ] oversized parameter
+[ ] unexpected enum
+[ ] stale version
+[ ] repeated transaction
+[ ] tool called without approval
+[ ] compromised tool output
+[ ] prompt injection attempts broader action
+[ ] token intended for another audience
+```
+
+Every test should pass at the **executor/policy layer**, not merely rely on the LLM refusing the call.
+
+---
+
+## 17. Authorization Must End at the Resource Server
+
+A common anti-pattern is:
+
+```text
+Agent Gateway checks authorization
+→ backend blindly trusts gateway
+```
+
+If the backend controls a security-critical resource, it should validate the relevant principal or a properly delegated token itself.
+
+This prevents a compromised orchestrator from automatically compromising every downstream resource.
+
+---
+
+## 18. Tool Contracts Should Express Semantic Constraints
+
+Not just types, but domain rules:
+
+```text
+amount: integer
+minimum: 1
+maximum: policy_limit
+
+environment:
+enum: [dev, staging]
+
+production:
+separate tool + approval
+```
+
+The schema can thereby express part of the allowed state space. Final authorization still remains server-side.
+
+---
+
+## 19. Capability Revocation
+
+Short-lived agent runs should be able to lose privileges when:
+
+```text
+user revokes approval
+incident detected
+task completed
+token expired
+```
+
+A credential broker should revoke active grants or make them very short-lived. Permanent static API keys are a poor fit for dynamic agent tasks.
+
+---
+
+## 20. Observe the Decision, Not Hidden Reasoning
+
+Auditability does not require storing private chain-of-thought.
+
+More important are structured facts:
+
+```text
+requested_action
+selected_tool
+arguments
+policy_input
+policy_decision
+approval
+result
+```
+
+This preserves traceability of effects without treating internal model thoughts as reliable justification.
+
+## Conclusion
+
+Tool parameter abuse and scope creep are not exotic LLM problems. They are modern forms of fundamental security issues:
+
+- confused deputy,
+- least privilege,
+- input validation,
+- authorization,
+- capability design,
+- credential scoping,
+- transaction safety.
+
+The LLM merely introduces a new probabilistic decision-maker into the chain.
+
+The most important rule is:
+
+> **A tool call is a proposal from the model—not an authorization.**
+
+The next part examines an even subtler trust boundary: **memory poisoning and RAG corruption**.
+
+---
+
+## 📚 Literature & Scientific Sources
+
+[^1]: Model Context Protocol (2025). *Authorization – Specification 2025-11-25.* [https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
+[^2]: Model Context Protocol (2025). *Specification 2025-11-25 – Security and Trust & Safety.* [https://modelcontextprotocol.io/specification/2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25)
+[^3]: OWASP GenAI Security Project (2025). *LLM06: Excessive Agency.* [https://genai.owasp.org/llmrisk/llm062025-excessive-agency/](https://genai.owasp.org/llmrisk/llm062025-excessive-agency/)
+[^4]: OWASP GenAI Security Project (2026). *OWASP Top 10 for Agentic Applications for 2026.* [https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)

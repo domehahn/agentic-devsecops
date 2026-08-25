@@ -1,0 +1,180 @@
+---
+title: 'Dependency Pinning for Agentic Skills: Reproducibility as a Security Boundary'
+description: A deep essay on mutable dependency references, lockfiles, artifact digests,
+  reviewed updates, SLSA provenance, and why reproducible resolution matters for agentic
+  code.
+date: '2026-07-30'
+author: dome
+topics:
+- agentic-engineering
+- devsecops
+tags:
+- Security Property
+- Dependency Pinning
+- Agentic Security
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: Security Properties for Agentic Skills
+  order: 46
+---
+
+## Review is meaningless without reproducible resolution
+
+A reviewed skill is not really reviewed if its dependencies can resolve to different code tomorrow without any change to the repository. Version ranges, floating tags and unpinned installers move part of the program outside the review boundary.
+
+Dependency pinning is therefore less about stylistic preference and more about binding an approved source state to a reproducible set of external artifacts whose identities can be inspected, attested and changed through review. The original `skil` control model expresses the same idea as `DEPENDENCY_REFERENCE is mutable_or_range_without_reviewed_resolution`. That relation is more useful than a label such as “suspicious” because it specifies what must be evidenced and what a legitimate counterexample must break.
+
+## Property at a glance
+
+| Dimension | Assessment |
+| --- | --- |
+| Security property | Dependency Pinning for Agentic Skills |
+| Relevant `skil` controls | `SKIL-DEP-001` |
+| Primary analysis mechanism | manifest/lockfile dependency constraint analysis |
+| Declared coverage character | FULL |
+| Core security relation | `DEPENDENCY_REFERENCE is mutable_or_range_without_reviewed_resolution` |
+
+<Architecture>
+Manifest → ecosystem parser → package/version constraint → exact/range/latest/wildcard classifier → lockfile/resolution evidence → Finding
+</Architecture>
+
+## Reviewed automation instead of silent drift
+
+A deliberately small positive fixture from the source property illustrates the boundary:
+
+```toml
+dependencies = ["requests>=2"]
+```
+
+The safe counterexample changes the semantics rather than merely deleting a suspicious token:
+
+```text
+requests==2.32.4 --hash=sha256:<reviewed-digest>
+```
+
+The purpose of pairing them is not to teach exploitation. It is to force the detector to explain which relation changes between the two cases. A scanner that fires on both has learned vocabulary; a scanner that can explain the difference has begun to model the security property.
+
+## Version constraints versus artifact identity
+
+An exact semantic version narrows resolution, but registries can still serve multiple artifacts under some models or dependencies can have platform-specific wheels. Stronger reproducibility combines exact versions with lockfiles and hashes or content digests. The design implication is that detection and authorization must remain separate: the scanner identifies the condition, while a policy layer decides whether the condition is permissible in this deployment context.
+
+## Transitive dependencies and lockfiles
+
+Direct dependencies are only the first layer. A lockfile records transitive resolution so security review and vulnerability analysis can reason over the actual graph. The lockfile itself must be generated deterministically and committed or otherwise attested. This also improves explainability. Reviewers can see the specific security fact rather than receiving a generic severity label, and future tooling can compose that fact with independent findings without double-counting the same evidence.
+
+## Updates should be explicit security events
+
+Automation such as Renovate or Dependabot is valuable when it opens a reviewable change containing old/new versions, changelog context, test results and vulnerability information. Automatic mutation of production dependencies without a reviewed diff defeats the purpose of pinning. A useful implementation records both the positive observation and the guard that would have made the path safe. That makes remediation testable and turns false-positive handling into explicit logic instead of a collection of suppressions.
+
+## Provenance complements pinning
+
+Pinning answers “which artifact?” Provenance helps answer “where did it come from and how was it produced?” SLSA provenance provides verifiable information linking build output to source and build process. These are orthogonal controls and strongest together. The same model supports change detection: when identity, configuration or code changes, the platform can recompute the relation and show exactly which part of the previously reviewed assumption no longer holds.
+
+## Agentic execution raises the cost of dependency drift
+
+A conventional library may process local data; an agent dependency may gain tool access, credentials or network reach through the host. That makes supply-chain drift capable of crossing more consequential boundaries, so immutable resolution is especially important in agent runtimes. In an agentic environment this distinction becomes operational because model-generated plans can select the relevant value or capability at runtime. The host therefore needs evidence that can survive from code review into execution policy.
+
+## Where pinning can overreach
+
+A useful finding is a compact proof obligation. It should answer: where did the evidence originate, what intermediate representation did manifest/lockfile dependency constraint analysis derive, why does that evidence satisfy `DEPENDENCY_REFERENCE is mutable_or_range_without_reviewed_resolution`, and what uncertainty remains? `skil` maps this property to `SKIL-DEP-001`. The declared coverage is FULL, which means any unresolved runtime identity, dynamic dispatch, provider failure, or semantic ambiguity should be represented explicitly instead of being converted into an artificial 'safe' result.
+
+A compact machine-readable evidence record can retain the essentials without pretending to encode the entire analysis:
+
+```yaml
+property_order: 46
+property: "dependency-pinning-for-agentic-skills"
+controls: "SKIL-DEP-001"
+mechanism: "manifest/lockfile dependency constraint analysis"
+security_relation: "DEPENDENCY_REFERENCE is mutable_or_range_without_reviewed_resolution"
+coverage: "FULL"
+evidence:
+  raw_location: true
+  structured_observation: true
+  context_resolved: true
+  safe_countercase_tested: true
+```
+
+## False positives, ambiguity, and safe counterexamples
+
+Some ecosystems legitimately use ranges during library development. The scanner should distinguish development manifests from deployment lockfiles and report whether the final production resolution is immutable rather than assuming every range is equally severe.
+
+No static property is a complete verdict on the artifact. The detector can establish local evidence about syntax, identity, data flow or declared authority; it cannot guarantee what an external registry, remote server or model will do later. Engineering decisions should therefore compose static findings with contract verification, supply-chain attestation and runtime policy rather than demanding impossible certainty from one layer.
+
+## Build and admission controls
+
+Admission should verify lockfile integrity, hashes or digests, expected provenance and registry policy before a skill runs. Network policy should prevent runtime package installation except through an explicitly controlled update path.
+
+Defense in depth is intentionally redundant. Authoring lint, static analysis, contract verification, supply-chain verification, runtime policy and audit telemetry answer different questions. A strong result from one layer should never be used as a reason to remove the others.
+
+## Testing supply-chain invariants
+
+Evaluation should measure more than raw detection count. Precision matters because noisy controls are disabled; recall matters because adversarial variants are the point of the exercise. For structural properties, report supported syntax classes and unresolved constructs. For provider-backed checks, include provider-availability and freshness tests. Differential comparisons are useful, but property equivalence is more meaningful than finding-count parity. For **Dependency Pinning for Agentic Skills**, the most valuable tests are those that preserve the surface appearance while changing the underlying security relation; that is how the suite verifies semantics instead of vocabulary.
+
+For `skil`, implementation claims should be checked against the repository’s control matrix, external-control crosswalk, analyzer tests and any provider-specific tests. Provider-backed coverage—such as OSV or external rule packs—must state whether the provider actually ran.
+
+## Architecture drill-down: from finding to enforceable boundary
+
+The architectural question behind **Dependency Pinning for Agentic Skills** is where interpretation and authority meet. Start with the reviewed artifact and follow the relevant identity, value, or capability through every transformation until the policy decision or side effect occurs. `DEPENDENCY_REFERENCE is mutable_or_range_without_reviewed_resolution` is the compact invariant that should remain stable even when implementation syntax changes. manifest/lockfile dependency constraint analysis supplies static evidence, but the design should also specify what happens when analysis cannot resolve a value. High-assurance systems fail closed for high-impact operations, expose a bounded approval path for exceptional cases, and log the final resolved identity or target. The review is incomplete if it only proves that today's fixture is detected; it should also show how a future variant is constrained by architecture rather than by the exact spelling in the test corpus.
+
+The paired fixtures also serve as an architectural regression test. The unsafe example begins with `dependencies = ["requests>=2"]` while the safe example begins with `requests==2.32.4 --hash=sha256:<reviewed-digest>`. The important difference is the security relation, not the cosmetic text. If a refactor causes both to produce the same result, the detector or policy has lost a meaningful distinction.
+
+## Common implementation traps
+
+Several implementation mistakes recur around **Dependency Pinning for Agentic Skills**, even when the high-level policy is correct:
+
+**1. Assuming a name or version string uniquely identifies an artifact.** Registry, digest, publisher, platform variant and provenance may all be relevant to the reviewed identity. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
+
+**2. Running provider-backed checks without surfacing provider failure or staleness.** An unavailable advisory or reputation service must not be reported as a clean scan. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
+
+**3. Treating a supply-chain finding as timeless.** Reputation, tags, signatures and external artifacts change, so admission-time revalidation is part of the control. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
+
+A useful review discipline is to turn every exception into a scoped, expiring artifact with an owner and rationale. Permanent blanket suppressions hide whether the architecture improved; narrow exceptions preserve the signal and make technical debt measurable.
+
+## How this property composes with adjacent findings
+
+**Mutable dependency plus privileged install context.** An unpinned dependency is more consequential when installation occurs at runtime, with network access, build hooks, or elevated filesystem permissions. Pinning findings should compose with package-manager execution, container privilege, and provenance evidence rather than assuming every range has identical impact.
+
+This composition model is deliberately graph-like: each detector contributes a typed fact and shared evidence identifiers allow a higher-level policy engine to connect them. That prevents one rule from becoming an overloaded catch-all and makes severity escalation explainable.
+
+## Operational signals and measurable assurance
+
+Measure mutable references entering release branches, percentage of dependencies resolved with lockfiles and hashes, unreviewed runtime installation attempts, and mean time from automated update proposal to reviewed merge.
+
+Metrics should be tied to an explicit denominator and deployment profile. A low finding count may mean strong controls, weak coverage, or simply little exposure; telemetry and coverage state are needed to tell those cases apart. Trend the data over time and review unexpected changes in both positive findings and scanner-negative regression behavior.
+
+## Engineering implications beyond the scanner
+
+Supply-chain properties are time-sensitive. Package reputation, advisory state, tags, signatures and provenance can change independently of source code. Production systems should therefore store the identity and evidence that was reviewed, re-resolve it at admission, and surface any delta. A clean repository scan from last week is not sufficient evidence for an artifact resolved from a mutable external namespace today.
+
+The broader lesson is that an agentic skill is simultaneously text, code, configuration, a tool contract and a supply-chain artifact. Security review should follow the boundary that is actually crossed—data, authority, identity, execution, or control-plane visibility—rather than forcing every risk into the same detection template.
+
+## What reviewers should ask
+
+A reviewer should be able to answer four questions before accepting this property as controlled:
+
+1. **What exact security relation is being asserted?** Here it is `DEPENDENCY_REFERENCE is mutable_or_range_without_reviewed_resolution`.
+2. **What concrete evidence supports the relation?** The evidence must come from manifest/lockfile dependency constraint analysis, not from a keyword alone.
+3. **What near-neighbor safe case has been tested?** The paired negative fixture should differ in the property, not merely in spelling.
+4. **What remains outside static visibility?** Runtime identity, dynamic values, provider state and policy decisions must be named explicitly.
+
+## Implementation evidence in `skil`
+
+- [Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – native control identifiers and scanner-positive/scanner-negative coverage.
+- [External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – property-level equivalence and coverage states.
+- [External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – implementation differences, mechanisms, and documented gaps.
+
+## Standards, research, and references
+
+1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
+4. [SLSA – Specification v1.2](https://slsa.dev/spec/v1.2/)
+5. [SLSA – Provenance v1.2](https://slsa.dev/spec/v1.2/provenance)
+6. [OpenSSF Scorecard – Machine-checkable software supply-chain security checks](https://www.scorecard.dev/)
+7. [OWASP GenAI – LLM03:2025 Supply Chain](https://genai.owasp.org/llmrisk/llm032025-supply-chain/)
+
+## Conclusion
+
+**Dependency Pinning for Agentic Skills** is valuable only when it is treated as a falsifiable security property rather than a checklist term. The goal is not to declare an entire skill “malicious” or “safe.” The goal is to state what boundary may be crossed, show the evidence that supports that statement, preserve the coverage limits, and make the safe countercondition explicit. That produces findings engineers can test, reviewers can reproduce, and runtime policy can enforce.

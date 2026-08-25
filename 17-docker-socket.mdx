@@ -1,0 +1,331 @@
+---
+title: "Docker Socket Access in Agentic Skills: Why a Local Control-Plane Handle Can Collapse Host Isolation"
+description: "A deep technical essay on Docker and container-runtime socket exposure in agentic systems: control-plane authority, rootful versus rootless nuance, detection, capability contracts, runtime containment, and audit evidence."
+date: "2026-07-30"
+author: "dome"
+topics:
+  - agentic-engineering
+  - devsecops
+tags:
+  - Security Property
+  - Docker Socket
+  - Agentic Security
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: "Security Properties for Agentic Skills"
+  order: 17
+---
+
+The Unix socket used by a container engine looks like a filesystem object, but semantically it is a **control-plane endpoint**. Giving an agent access to that endpoint can allow it to ask the container daemon to create, reconfigure, inspect, or destroy workloads with privileges that are very different from those of the agent process itself. This is why Docker-socket exposure is not adequately described as “filesystem access.” It is a question of **delegated orchestration authority**.
+
+For a traditional CI worker, mounting a runtime socket has long been recognized as a high-risk convenience. In an agentic system the risk is amplified: the caller is a probabilistic planner that may receive untrusted instructions, dynamically select tools, and execute multi-step workflows. A capability that was originally added to “build a container” can become a path to a much wider control plane if the surrounding policy does not constrain what the daemon will accept.
+
+The property can be summarized as:
+
+```text
+ACCESS(CONTAINER_CONTROL_PLANE_SOCKET) -> HOST_EQUIVALENT_OR_ELEVATED_AUTHORITY
+```
+
+The arrow is intentionally qualified rather than absolute. A conventional rootful Docker daemon commonly represents very high host authority; a rootless daemon changes the effective privilege boundary because the daemon and containers operate inside an unprivileged user context. The correct finding should preserve that runtime distinction rather than asserting identical impact in every deployment.[^docker-security][^docker-rootless]
+
+## The conceptual mistake: treating the socket as just another file
+
+Unix permission checks happen at the socket boundary, but successful connection hands the caller a protocol capable of requesting container-management operations. In a simplified model:
+
+```text
+Agent process
+   │
+   │ local socket access
+   ▼
+Container runtime API
+   │
+   ├─ workload lifecycle
+   ├─ image operations
+   ├─ mounts / namespaces / capabilities
+   ├─ networking
+   └─ runtime inspection
+```
+
+The security-relevant object is therefore not the path `/var/run/docker.sock` by itself. It is the **authority reachable through the endpoint**.
+
+This distinction is important for static analysis. A documentation string containing a socket path is weak evidence. A manifest that mounts the runtime socket into an agent container, or code that connects a Docker client to it, is much stronger evidence because it establishes a control-plane relation.
+
+## Scanner-positive evidence without turning the article into an escape recipe
+
+A safe regression fixture can model the dangerous configuration at the capability level:
+
+```yaml
+agent_runtime:
+  mounts:
+    - source: /var/run/docker.sock
+      target: /var/run/docker.sock
+  purpose: "repository analysis"
+```
+
+The problem is the mismatch between the declared purpose and the exposed runtime authority. A scanner does not need to demonstrate a host takeover to justify the finding.
+
+A scanner-negative counterpart might explicitly isolate the agent from the host daemon:
+
+```yaml
+agent_runtime:
+  container_socket: disabled
+  build_service: "restricted-remote-builder"
+  allowed_operations:
+    - build_image
+```
+
+The second design moves the privileged operation behind a narrower service contract.
+
+## Rootful and rootless Docker are not the same threat model
+
+Docker's security documentation has historically emphasized that the daemon is a sensitive boundary because it normally runs with substantial host privileges.[^docker-security] Rootless mode changes that architecture: the daemon and containers run without root privileges in a user namespace, reducing the authority associated with daemon compromise or misuse.[^docker-rootless]
+
+That does **not** mean a rootless socket is harmless. It can still expose:
+
+- workloads owned by the same user,
+- images and build artifacts,
+- credentials or configuration attached to those workloads,
+- network reachability available to that user context,
+- persistent state controlled by the runtime.
+
+The finding should therefore distinguish:
+
+```yaml
+runtime:
+  daemon_mode: rootful | rootless | unknown
+socket_access: true
+impact:
+  host_equivalent: true | reduced | unresolved
+```
+
+This is a useful example of why severity and confidence must be calculated from architecture, not hard-coded from a filename.
+
+## `skil` and the `SKIL-BOUNDARY-CONTAINER` control
+
+The current `skil` control matrix maps Docker/container-socket access to `SKIL-BOUNDARY-CONTAINER`.[^skil-matrix] The property belongs naturally in a boundary analyzer because the decisive fact is that a workload which should remain inside one execution boundary can reach a broader container-management plane.
+
+A practical evidence pipeline looks like:
+
+```text
+artifact
+  ↓
+socket / runtime-client candidate
+  ↓
+endpoint classification
+  ↓
+mount or connection evidence
+  ↓
+declared capability comparison
+  ↓
+runtime-mode context
+  ↓
+finding + bounded impact
+```
+
+Structured manifest parsing is preferable to regex when possible. A path under a `volumes`, `mounts`, or container-runtime field has different meaning from the same string in prose. Language-aware code analysis can likewise distinguish a runtime-client constructor from a comment.
+
+## Capability contracts make the mismatch explicit
+
+An agent that only needs to build an image does not need generic daemon authority. A capability contract can encode the difference:
+
+```yaml
+container_capabilities:
+  allowed:
+    - build_image
+  denied:
+    - manage_host_workloads
+    - arbitrary_mounts
+    - privileged_runtime_configuration
+```
+
+The platform can then compare **declared intent** with **reachable authority**. If the actual deployment injects a raw Docker socket, the contract is structurally violated even if the skill text never asks for dangerous operations.
+
+This is stronger than a prompt instruction saying “only use Docker for builds.” The latter is guidance to the model; the former is a policy the runtime can enforce independently.
+
+## The safer architectural pattern: broker operations, not control planes
+
+A useful design principle for agentic platforms is:
+
+> Never expose a broad control plane when a narrow operation can be brokered.
+
+Instead of a raw runtime socket, provide an operation such as:
+
+```text
+build(source_digest, build_definition, approved_options) -> artifact_digest
+```
+
+The broker can enforce:
+
+- allowed source roots,
+- pinned base images or policy checks,
+- resource limits,
+- network restrictions,
+- non-privileged execution,
+- output signing,
+- audit logging,
+- tenant isolation.
+
+The model sees a task-oriented capability rather than an administrative API.
+
+<Architecture>
+Agent → narrow build/deploy tool → policy decision → isolated worker → signed result
+
+Avoid:
+
+Agent → raw container daemon socket → unrestricted runtime control plane
+</Architecture>
+
+## Detection should compose with privileged-workload analysis
+
+Socket exposure and privileged container configuration are related but distinct properties. The first grants access to a runtime control plane; the second weakens a workload's isolation directly.
+
+Keeping them separate allows useful composition:
+
+```text
+Docker socket access
+        +
+Unrestricted tool permission
+        +
+Instruction override / approval bypass
+        ↓
+materially higher agentic risk
+```
+
+or:
+
+```text
+Docker socket access
+        +
+rootless daemon
+        +
+restricted broker policy
+        ↓
+reduced but non-zero risk
+```
+
+A risk engine should only compose findings when they share a credible control or data path. Merely counting findings is not a substitute for architecture reasoning.
+
+## False positives and context
+
+Several benign artifacts mention the Docker socket:
+
+- security documentation that warns against mounting it,
+- policy-as-code that explicitly denies it,
+- test fixtures for the detector,
+- examples of hardened CI architecture.
+
+The scanner should therefore distinguish:
+
+```text
+mention(socket)                  ≠ access(socket)
+deny_mount(socket)              ≠ expose(socket)
+test_fixture(socket)            ≠ deployed_configuration(socket)
+connect(runtime_client, socket) = strong access evidence
+```
+
+This is especially important in security repositories, where the exact risky path naturally appears in defensive prose.
+
+## Runtime enforcement layers
+
+A robust agent platform should assume static analysis can miss dynamically created configurations. Independent controls can include:
+
+### Deployment admission
+
+Reject agent workloads that mount host runtime sockets unless an exceptional, reviewed policy explicitly permits it.
+
+### Namespace and identity isolation
+
+Prefer non-root workloads, user namespaces, rootless runtimes where appropriate, and distinct service identities.
+
+### Remote builders
+
+Move image building into dedicated services whose API exposes only required build semantics.
+
+### Network segmentation
+
+Do not assume a local socket is the only runtime endpoint. Remote Docker or Kubernetes control-plane endpoints require equivalent access restrictions.
+
+### Auditability
+
+Record which workload requested which container-management operation and which policy authorized it. A generic “Docker was used” event is insufficient for forensic review.
+
+## Evidence should describe authority, not dramatize impact
+
+A high-quality finding might look like:
+
+```yaml
+property: docker-socket-access
+controls:
+  - SKIL-BOUNDARY-CONTAINER
+endpoint:
+  kind: docker_unix_socket
+  exposure: mounted_into_agent
+runtime:
+  daemon_privilege: unknown
+contract:
+  generic_container_admin: false
+  build_only: true
+assessment:
+  authority_exceeds_declared_need: true
+  host_impact: runtime_dependent
+```
+
+This is more defensible than claiming that the presence of the socket automatically proves a container escape.
+
+## Relationship to least privilege and excessive agency
+
+The property sits at the intersection of classic privilege management and agentic autonomy. CWE-269 captures the general failure to constrain privileges, while OWASP's Excessive Agency category describes how excessive functionality, permissions, or autonomy can turn an LLM mistake or injection into a damaging action.[^cwe269][^owasp-agency]
+
+The container socket is a concrete example: the agent may require a container-related function, but granting an entire orchestration control plane creates a much larger action set than the task needs.
+
+## Validation matrix
+
+Regression tests should vary more than the literal socket path:
+
+- socket mounted into an agent container,
+- socket mentioned only in defensive text,
+- explicit policy denying the mount,
+- rootful and rootless runtime annotations,
+- remote runtime endpoints,
+- narrow remote-build service instead of a socket,
+- aliases or environment-derived endpoint paths,
+- configuration generated from templates,
+- combined cases with privileged workload requests.
+
+The test oracle should assert both the finding and the evidence classification.
+
+## What static analysis cannot prove
+
+A static scanner may not know:
+
+- whether the socket exists at runtime,
+- whether the daemon is rootful or rootless,
+- which authorization proxy sits in front of it,
+- what seccomp, namespace, or LSM restrictions apply,
+- what host resources a daemon can actually expose,
+- whether a dynamic deployment mutates the configuration later.
+
+These uncertainties should appear as coverage metadata rather than be silently converted into certainty.
+
+<KeyTakeaway>
+A Docker socket is best understood as a local handle to a container control plane. In agentic infrastructure, the safe default is not to teach the model to “use it carefully,” but to remove the broad handle and replace it with a narrow, auditable operation whose authority matches the task.
+</KeyTakeaway>
+
+## Implementation references
+
+- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+
+## References
+
+[^skil-matrix]: [domehahn/skil — Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+[^docker-security]: [Docker Docs — Docker daemon attack surface and security](https://docs.docker.com/engine/security/)
+[^docker-rootless]: [Docker Docs — Rootless mode](https://docs.docker.com/engine/security/rootless/)
+[^owasp-agency]: [OWASP GenAI — LLM06:2025 Excessive Agency](https://genai.owasp.org/llmrisk/llm062025-excessive-agency/)
+[^cwe269]: [MITRE CWE-269 — Improper Privilege Management](https://cwe.mitre.org/data/definitions/269.html)
+
+## Conclusion
+
+Docker-socket access is a privilege-boundary problem disguised as a local IPC detail. A defensible analysis establishes actual access to the runtime endpoint, distinguishes rootful from rootless context, compares reachable authority with the declared task, and avoids claiming impact that cannot be observed statically. The more robust platform design removes the raw control-plane capability altogether and replaces it with purpose-built, policy-enforced container operations.

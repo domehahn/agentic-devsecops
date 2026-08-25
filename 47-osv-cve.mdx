@@ -1,0 +1,185 @@
+---
+title: 'OSV and CVE Intelligence for Agentic Skills: From Package Inventory to Actionable
+  Vulnerability Evidence'
+description: A detailed essay on resolved dependency inventory, OSV range semantics,
+  aliases, fix versions, reachability, VEX, caching, and coverage reporting for agentic
+  packages.
+date: '2026-07-30'
+author: dome
+topics:
+- agentic-engineering
+- devsecops
+tags:
+- Security Property
+- OSV/CVE
+- Agentic Security
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: Security Properties for Agentic Skills
+  order: 47
+---
+
+## A vulnerability finding is an identity-and-range claim
+
+Vulnerability scanning is easy to describe and difficult to implement correctly. Package names must be normalized to an ecosystem, versions must be resolved rather than guessed from ranges, advisories may use event-based affected ranges, and the same flaw can appear under multiple aliases.
+
+The defensible security relation is not “the package name appears in a CVE database.” It is that a specific resolved package version is covered by an advisory’s affected range under the correct ecosystem identity. The original `skil` control model expresses the same idea as `RESOLVED_PACKAGE_VERSION ∈ AFFECTED_RANGE(vulnerability_record)`. That relation is more useful than a label such as “suspicious” because it specifies what must be evidenced and what a legitimate counterexample must break.
+
+## Property at a glance
+
+| Dimension | Assessment |
+| --- | --- |
+| Security property | OSV and CVE Intelligence for Agentic Skills |
+| Relevant `skil` controls | `SKIL-DEP-VULN` |
+| Primary analysis mechanism | dependency inventory + OSV provider query |
+| Declared coverage character | PROVIDER_BACKED (`--osv`/`--full`) |
+| Core security relation | `RESOLVED_PACKAGE_VERSION ∈ AFFECTED_RANGE(vulnerability_record)` |
+
+<Architecture>
+Manifest/lockfile → ecosystem/name/version inventory → OSV query → range/event evaluation → aliases/severity → Finding
+</Architecture>
+
+## Building a trustworthy dependency inventory
+
+An advisory engine cannot compensate for a weak software inventory. The scanner needs ecosystem, package name, exact version, source and preferably dependency path. Lockfiles and SBOMs are stronger inputs than free-form manifest strings because they reflect actual resolution. This also improves explainability. Reviewers can see the specific security fact rather than receiving a generic severity label, and future tooling can compose that fact with independent findings without double-counting the same evidence.
+
+## OSV range semantics
+
+OSV models introduced/fixed events and ecosystem-specific version semantics. Comparing versions as strings is wrong for many ecosystems. A scanner should use the provider’s range model or an ecosystem-aware evaluator and retain the advisory evidence that explains why the version is considered affected. A useful implementation records both the positive observation and the guard that would have made the path safe. That makes remediation testable and turns false-positive handling into explicit logic instead of a collection of suppressions.
+
+## Aliases prevent duplicate confusion
+
+CVE, GHSA and ecosystem identifiers may refer to the same underlying vulnerability. Deduplication should preserve aliases while presenting a coherent finding. Losing aliases makes downstream correlation and exception management harder. The same model supports change detection: when identity, configuration or code changes, the platform can recompute the relation and show exactly which part of the previously reviewed assumption no longer holds.
+
+## Reachability changes prioritization, not truth
+
+A dependency can be affected even when vulnerable code is unreachable in one application. Reachability and VEX are valuable prioritization signals, but they should be modeled separately from the base advisory match so organizations do not accidentally convert “not known reachable” into “not vulnerable.” In an agentic environment this distinction becomes operational because model-generated plans can select the relevant value or capability at runtime. The host therefore needs evidence that can survive from code review into execution policy.
+
+## Provider failure is a coverage result
+
+Network outages, rate limits, stale mirrors or unsupported ecosystems can prevent advisory lookup. A mature scanner reports provider-backed coverage explicitly. “No vulnerabilities found” must mean a successful query over a known inventory, not “the provider was unavailable.” The design implication is that detection and authorization must remain separate: the scanner identifies the condition, while a policy layer decides whether the condition is permissible in this deployment context.
+
+## Aliases, fixes, and deduplication
+
+A deliberately small positive fixture from the source property illustrates the boundary:
+
+```text
+Resolved dependency: example-package@1.2.3
+OSV record: affected range includes 1.2.3
+=> vulnerability finding
+```
+
+The safe counterexample changes the semantics rather than merely deleting a suspicious token:
+
+```text
+Resolved dependency: example-package@1.2.4
+OSV record: fixed at 1.2.4
+=> no matching affected range
+```
+
+The purpose of pairing them is not to teach exploitation. It is to force the detector to explain which relation changes between the two cases. A scanner that fires on both has learned vocabulary; a scanner that can explain the difference has begun to model the security property.
+
+## Provider coverage and freshness
+
+Detection quality depends on traceability. The scanner should preserve the raw location, the property-specific observation produced by dependency inventory + OSV provider query, and the reasoning that turns it into `RESOLVED_PACKAGE_VERSION ∈ AFFECTED_RANGE(vulnerability_record)`. The native control surface is `SKIL-DEP-VULN`. Because the stated coverage is PROVIDER_BACKED (`--osv`/`--full`), confidence must follow evidence completeness—not severity labels or lexical suspicion.
+
+A compact machine-readable evidence record can retain the essentials without pretending to encode the entire analysis:
+
+```yaml
+property_order: 47
+property: "osv-and-cve-intelligence-for-agentic-skills"
+controls: "SKIL-DEP-VULN"
+mechanism: "dependency inventory + OSV provider query"
+security_relation: "RESOLVED_PACKAGE_VERSION ∈ AFFECTED_RANGE(vulnerability_record)"
+coverage: "PROVIDER_BACKED (`--osv`/`--full`)"
+evidence:
+  raw_location: true
+  structured_observation: true
+  context_resolved: true
+  safe_countercase_tested: true
+```
+
+## False positives, ambiguity, and safe counterexamples
+
+Most vulnerability false positives are identity or range mistakes rather than noisy heuristics. Evidence should therefore show the resolved version, ecosystem, advisory range and fix boundary so reviewers can validate the match independently.
+
+Static analysis has an epistemic boundary: it can only reason about the representation it sees. Dynamic DNS, runtime-generated code, reflection, remote configuration, credential brokers and policy decisions may exist outside that view. The correct result vocabulary therefore includes states such as `verified`, `partially_resolved`, `provider_backed`, `runtime_dependent`, and `not_observable`. This is not bureaucratic metadata; it prevents a consumer from interpreting an absent finding as proof that no risk exists.
+
+## Evidence that developers can verify
+
+Cache signed or integrity-checked advisory data for reproducibility, define freshness SLOs, and gate critical deployment paths on successful vulnerability-provider coverage rather than silently skipping the check.
+
+Defense in depth is intentionally redundant. Authoring lint, static analysis, contract verification, supply-chain verification, runtime policy and audit telemetry answer different questions. A strong result from one layer should never be used as a reason to remove the others.
+
+## Operational prioritization
+
+A serious regression suite needs paired examples. Each positive fixture should have a near-neighbor negative case, and each new false positive should become a permanent test. Where the property depends on identity or time, tests should also change the resolved artifact or metadata between review and execution. Where it depends on data flow, fixtures should exercise aliases, wrappers and valid sanitizers. For **OSV and CVE Intelligence for Agentic Skills**, the most valuable tests are those that preserve the surface appearance while changing the underlying security relation; that is how the suite verifies semantics instead of vocabulary.
+
+For `skil`, implementation claims should be checked against the repository’s control matrix, external-control crosswalk, analyzer tests and any provider-specific tests. Provider-backed coverage—such as OSV or external rule packs—must state whether the provider actually ran.
+
+## Architecture drill-down: from finding to enforceable boundary
+
+For **OSV and CVE Intelligence for Agentic Skills**, think in terms of a chain of custody for security meaning. The artifact creates an observation, dependency inventory + OSV provider query converts that observation into a structured fact, contract or policy logic interprets the fact, and runtime enforcement decides whether the operation can proceed. Each handoff can lose context. The relation `RESOLVED_PACKAGE_VERSION ∈ AFFECTED_RANGE(vulnerability_record)` should therefore be represented explicitly in evidence rather than reconstructed from a human-readable message after the fact. Reviewers should inspect whether normalization is reversible for forensics, whether identity is immutable between review and use, whether policy is scoped to the task, and whether provider failures are visible. This turns a static finding into an assurance argument that can survive deployment changes.
+
+The paired fixtures also serve as an architectural regression test. The unsafe example begins with `Resolved dependency: example-package@1.2.3` while the safe example begins with `Resolved dependency: example-package@1.2.4`. The important difference is the security relation, not the cosmetic text. If a refactor causes both to produce the same result, the detector or policy has lost a meaningful distinction.
+
+## Common implementation traps
+
+Several implementation mistakes recur around **OSV and CVE Intelligence for Agentic Skills**, even when the high-level policy is correct:
+
+**1. Assuming a name or version string uniquely identifies an artifact.** Registry, digest, publisher, platform variant and provenance may all be relevant to the reviewed identity. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
+
+**2. Running provider-backed checks without surfacing provider failure or staleness.** An unavailable advisory or reputation service must not be reported as a clean scan. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
+
+**3. Treating a supply-chain finding as timeless.** Reputation, tags, signatures and external artifacts change, so admission-time revalidation is part of the control. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
+
+A useful review discipline is to turn every exception into a scoped, expiring artifact with an owner and rationale. Permanent blanket suppressions hide whether the architecture improved; narrow exceptions preserve the signal and make technical debt measurable.
+
+## How this property composes with adjacent findings
+
+**Affected version plus reachable capability.** A vulnerability record establishes affected software; exploitability depends on how that software is used. Reachability, exposed interfaces, runtime privilege and available mitigations can prioritize the finding without rewriting the underlying advisory truth. This separation makes exception decisions more auditable.
+
+This composition model is deliberately graph-like: each detector contributes a typed fact and shared evidence identifiers allow a higher-level policy engine to connect them. That prevents one rule from becoming an overloaded catch-all and makes severity escalation explainable.
+
+## Operational signals and measurable assurance
+
+Track inventory completeness, provider success/freshness, affected-version matches, time to fixed version, alias deduplication rate, and the percentage of findings supplemented by reachability or VEX evidence without suppressing the base advisory.
+
+Metrics should be tied to an explicit denominator and deployment profile. A low finding count may mean strong controls, weak coverage, or simply little exposure; telemetry and coverage state are needed to tell those cases apart. Trend the data over time and review unexpected changes in both positive findings and scanner-negative regression behavior.
+
+## Engineering implications beyond the scanner
+
+Supply-chain properties are time-sensitive. Package reputation, advisory state, tags, signatures and provenance can change independently of source code. Production systems should therefore store the identity and evidence that was reviewed, re-resolve it at admission, and surface any delta. A clean repository scan from last week is not sufficient evidence for an artifact resolved from a mutable external namespace today.
+
+The broader lesson is that an agentic skill is simultaneously text, code, configuration, a tool contract and a supply-chain artifact. Security review should follow the boundary that is actually crossed—data, authority, identity, execution, or control-plane visibility—rather than forcing every risk into the same detection template.
+
+## Quality tests for advisory matching
+
+A reviewer should be able to answer four questions before accepting this property as controlled:
+
+1. **What exact security relation is being asserted?** Here it is `RESOLVED_PACKAGE_VERSION ∈ AFFECTED_RANGE(vulnerability_record)`.
+2. **What concrete evidence supports the relation?** The evidence must come from dependency inventory + OSV provider query, not from a keyword alone.
+3. **What near-neighbor safe case has been tested?** The paired negative fixture should differ in the property, not merely in spelling.
+4. **What remains outside static visibility?** Runtime identity, dynamic values, provider state and policy decisions must be named explicitly.
+
+## Implementation evidence in `skil`
+
+- [Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – native control identifiers and scanner-positive/scanner-negative coverage.
+- [External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – property-level equivalence and coverage states.
+- [External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – implementation differences, mechanisms, and documented gaps.
+
+## Standards, research, and references
+
+1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
+4. [OpenSSF – Open Source Vulnerability (OSV) Schema](https://ossf.github.io/osv-schema/)
+5. [OWASP GenAI – LLM03:2025 Supply Chain](https://genai.owasp.org/llmrisk/llm032025-supply-chain/)
+6. [SLSA – Specification v1.2](https://slsa.dev/spec/v1.2/)
+7. [NIST AI 100-1 – Artificial Intelligence Risk Management Framework (AI RMF 1.0), 2023](https://doi.org/10.6028/NIST.AI.100-1)
+
+## Conclusion
+
+**OSV and CVE Intelligence for Agentic Skills** is valuable only when it is treated as a falsifiable security property rather than a checklist term. The goal is not to declare an entire skill “malicious” or “safe.” The goal is to state what boundary may be crossed, show the evidence that supports that statement, preserve the coverage limits, and make the safe countercondition explicit. That produces findings engineers can test, reviewers can reproduce, and runtime policy can enforce.

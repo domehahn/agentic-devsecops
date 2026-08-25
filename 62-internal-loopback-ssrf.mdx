@@ -1,0 +1,490 @@
+---
+title: "Internal and Loopback SSRF in Agentic Skills: The Collapse of Network Trust Boundaries"
+description: "A deep technical essay on internal and loopback SSRF in agentic systems: implicit network trust, private address spaces, sidecars and control planes, skil detection, canonicalization, egress architecture, and verification."
+date: "2026-08-25"
+author: "dome"
+topics:
+  - agentic-engineering
+  - devsecops
+tags:
+  - Security Property
+  - Internal SSRF
+  - Loopback SSRF
+  - Agentic Security
+  - Network Boundary
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: "Security Properties for Agentic Skills"
+  order: 62
+---
+
+A loopback interface is not “the internet in miniature.” It is a trust boundary.
+
+That fact is easy to forget because `localhost`, private RFC 1918 addresses, service-mesh listeners, sidecars, node-local APIs, development servers, and internal control planes often exist precisely so that software can communicate without exposing an interface publicly. Their security posture therefore tends to assume something about *where the caller is located*.
+
+Server-Side Request Forgery breaks that assumption.
+
+If an external actor can influence a server-side request, the server becomes a deputy with network reachability the actor does not possess. MITRE classifies SSRF as CWE-918: an application receives a URL or similar remote resource reference and retrieves it without sufficiently ensuring that the destination is expected.[^1] OWASP similarly frames SSRF as abuse of server-side network access and recommends strict destination validation and allowlisting where possible.[^2]
+
+In an agentic system, “external actor” is too narrow. The influence may come from a prompt, retrieved content, tool metadata, model output, another agent, or a persisted memory entry. That means internal SSRF is not only a web-security bug. It is a **network authority problem in a probabilistic control system**.
+
+## The hidden assumption: “internal means trusted”
+
+Consider a service graph:
+
+```text
+Internet
+   │
+   ▼
+[Agent API]
+   │
+   ├── outbound HTTPS → public services
+   │
+   ├── loopback → local admin helper
+   │
+   ├── private subnet → database proxy
+   │
+   └── node-local → platform control service
+```
+
+The external user may be allowed to reach only the Agent API. The process behind that API, however, may reach every destination shown.
+
+If the model can influence a generic request tool, the effective network graph changes:
+
+```text
+User-controlled influence
+        ↓
+Agent decision
+        ↓
+Server-side HTTP capability
+        ↓
+Previously unreachable internal service
+```
+
+The central security invariant is therefore:
+
+> **The agent must not turn untrusted semantic input into implicit authorization to address internal or loopback services.**
+
+This is distinct from Cloud Metadata SSRF. Property 61 focuses on a privileged *identity-plane destination*. Property 62 focuses on **network zones whose reachability should not itself imply authorization**.
+
+<KeyTakeaway>
+An internal address is not evidence of malicious intent, and a public address is not evidence of safety. The security property concerns **whether a request crosses a network boundary that the initiating principal was not authorized to cross**.
+</KeyTakeaway>
+
+## What counts as “internal”?
+
+The answer is broader than `127.0.0.1`.
+
+A defensive classifier may need to reason about:
+
+- IPv4 loopback;
+- IPv6 loopback;
+- RFC 1918 private ranges;
+- link-local ranges;
+- IPv6 Unique Local Addresses;
+- node-local service ranges;
+- container bridge networks;
+- service-mesh listeners;
+- organization-specific private DNS zones;
+- Unix-socket-to-HTTP proxies exposed through local helpers;
+- internal hostnames that resolve to private addresses.
+
+OWASP's SSRF guidance explicitly includes localhost and RFC 1918 networks in its discussion of destinations that commonly require blocking when an application is meant to access arbitrary external resources.[^2]
+
+The practical consequence is that **textual hostname classification is only the first layer**.
+
+A hostname such as:
+
+```text
+payments.internal.example
+```
+
+may be semantically internal even though it contains no private IP literal.
+
+Conversely:
+
+```text
+api.example.com
+```
+
+could resolve differently across environments. The security decision therefore belongs after canonical parsing and resolution, not only before it.
+
+## Why localhost is often more privileged than a remote host
+
+Local services are frequently designed under assumptions that are unsafe once a generic agent can call them.
+
+Examples include:
+
+- diagnostic endpoints;
+- metrics servers;
+- local development APIs;
+- sidecars;
+- service-mesh administration ports;
+- container-management helpers;
+- credential brokers;
+- browser automation services;
+- local databases;
+- internal model servers;
+- build daemons.
+
+The issue is not that these categories are inherently unsafe. It is that they may rely on network locality as one part of their trust model.
+
+Agentic software invalidates locality assumptions when it exposes a general request primitive to model-controlled arguments.
+
+This yields an important architectural principle:
+
+```text
+Network reachability ≠ authorization
+```
+
+An internal service should authenticate and authorize requests where feasible, and an agent runtime should not expose arbitrary internal routing merely because the process happens to share the same network namespace.
+
+## The current `skil` property: literal high-signal boundary evidence
+
+The current `skil` security control matrix maps internal/loopback SSRF to `SKIL-BOUNDARY-SSRF-INTERNAL`.[^3]
+
+The implementation in `internal/analyzer/boundary.go` is deliberately deterministic. It looks for recognized server-side request primitives near literal loopback or private IPv4 targets. The pattern covers common forms such as loopback, `localhost`, `0.0.0.0`, and RFC 1918 address ranges when they appear with request mechanisms such as Python `requests`, `urllib`, JavaScript `fetch`/Axios, Node HTTP, or `curl`.[^4]
+
+That implementation is valuable precisely because it is narrow.
+
+It can provide strong evidence for this relation:
+
+```text
+REQUEST_PRIMITIVE
+    +
+STATIC_INTERNAL_TARGET
+    →
+INTERNAL_BOUNDARY_FINDING
+```
+
+It should not be described as a complete internal-SSRF solver.
+
+At the time of writing, important runtime or representation classes remain outside the meaning of a simple line-oriented literal match, including:
+
+- internal DNS names;
+- arbitrary string concatenation;
+- every IPv6 private/internal form;
+- DNS rebinding;
+- redirects from an allowed host to an internal target;
+- proxy rewrites;
+- runtime service discovery;
+- application-specific private zones.
+
+This is not a defect in the concept of the property. It is why **coverage must be reported as a dimension of evidence**.
+
+<Architecture>
+**Static evidence model**
+
+`request primitive` → `literal destination` → `address-class match` → `SKIL-BOUNDARY-SSRF-INTERNAL`
+
+**Runtime authorization model**
+
+`parsed URL` → `resolved address` → `network-zone policy` → `redirect revalidation` → `connection`
+</Architecture>
+
+## A scanner-positive fixture should prove the relation, not teach an attack
+
+A test fixture can remain intentionally non-operational:
+
+```python
+# Static regression fixture only.
+INTERNAL_TEST_TARGET = "http://127.0.0.1:9000/example"
+result = client.get(INTERNAL_TEST_TARGET)
+```
+
+The relevant evidence is the combination of:
+
+1. a request primitive;
+2. an internal/loopback destination;
+3. executable request context rather than documentation prose.
+
+A safe counterpart can use the same request primitive but an approved public destination:
+
+```python
+STATUS_ENDPOINT = "https://status.example.com/api/health"
+result = client.get(STATUS_ENDPOINT, timeout=2)
+```
+
+This negative fixture prevents the rule from degrading into “HTTP client use is suspicious.”
+
+A second negative fixture should cover documentation:
+
+```markdown
+Do not allow arbitrary requests to localhost or private network ranges.
+```
+
+The phrase is security guidance, not executable behavior. Whether `skil` suppresses every such documentation case depends on the exact analyzer and context available; the important design requirement is that regression tests make the intended distinction explicit.
+
+## Address parsing is a security primitive
+
+SSRF defenses routinely fail when validation is applied to strings rather than to parsed network identities.
+
+A robust destination policy needs to define:
+
+- accepted schemes;
+- accepted host syntax;
+- allowed ports;
+- IP-literal handling;
+- DNS resolution behavior;
+- address-class rules;
+- redirect behavior;
+- proxy behavior.
+
+The safest design for a small, known set of dependencies is an allowlist:
+
+```text
+service_id: "customer-records"
+        ↓
+trusted runtime mapping
+        ↓
+https://customer-records.internal.example:443
+```
+
+The agent chooses the **service abstraction**, not the destination.
+
+If arbitrary external URLs are a real product requirement, the control becomes more complex. OWASP recommends parsing and validating destinations, considering both domain names and IPs, and avoiding redirect behavior that can bypass the original decision.[^2]
+
+A runtime decision can be expressed as:
+
+```text
+permit =
+    scheme ∈ allowed_schemes
+    ∧ port ∈ allowed_ports
+    ∧ resolved_addresses ⊆ allowed_network_classes
+    ∧ redirect_policy_preserves_invariant
+```
+
+The point of using a set relation for `resolved_addresses` is deliberate: a hostname can resolve to multiple addresses. Security policy should not validate one address and then permit connection to an unrelated one.
+
+## DNS makes static classification incomplete by design
+
+DNS introduces time and environment into the decision.
+
+Static analysis sees:
+
+```text
+client.get("https://service.example")
+```
+
+Runtime sees:
+
+```text
+service.example
+    ↓ DNS
+address set
+    ↓ routing
+actual peer
+```
+
+The security boundary may depend on:
+
+- which resolver is used;
+- split-horizon DNS;
+- search suffixes;
+- service discovery;
+- resolver caching;
+- changes between validation and connection.
+
+A scanner should therefore not attempt to “solve DNS” by guessing. It should identify whether the destination is statically known, dynamically resolved, or agent-controlled, and emit the appropriate coverage state.
+
+That is a recurring theme across these security properties: **uncertainty is information**.
+
+## Internal SSRF and microservice architectures
+
+Microservices make the property more subtle because internal traffic is often legitimate.
+
+A service may need to call:
+
+```text
+orders → inventory
+orders → pricing
+orders → fraud
+```
+
+A simplistic “block all RFC1918” rule would break the architecture.
+
+The correct question is not whether the destination is private. It is whether the **caller is authorized for that exact service relationship**.
+
+That suggests a service-to-service policy graph:
+
+```text
+agent-runtime
+    ├─ allowed → search-service
+    ├─ allowed → issue-tracker-broker
+    └─ denied  → cluster-admin
+```
+
+Identity-aware service meshes, workload identities, authenticated internal APIs, and explicit egress brokers can implement this graph more reliably than a generic model-facing HTTP tool.
+
+The agent does not need to know network topology to perform its task.
+
+## Composition with other `skil` properties
+
+Internal SSRF becomes materially more serious when combined with evidence from adjacent properties.
+
+### Dynamic-target SSRF
+
+If `SKIL-BOUNDARY-SSRF` or `SKIL-TAINT-NETWORK` shows that untrusted input selects the target, the static internal destination is no longer merely a suspicious hardcoded dependency. It may form an attacker-influenced request path.
+
+### Container control-plane access
+
+An internal request that reaches a container or orchestration control surface may overlap conceptually with `SKIL-BOUNDARY-CONTAINER`. The two properties should not be merged blindly; one describes network targeting, the other a privileged infrastructure capability.
+
+### Approval bypass
+
+If an agent can make internal administrative requests without human review, agency findings may raise the practical impact.
+
+### Prompt injection
+
+A prompt-injection finding is not proof of SSRF. It becomes relevant only if there is a demonstrated control path from untrusted instruction to destination selection.
+
+This evidence-first composition prevents severity inflation.
+
+## Runtime architecture: deny arbitrary internal addressing by default
+
+A strong agent platform usually separates three capabilities:
+
+```text
+1. public HTTP retrieval
+2. approved internal service invocation
+3. privileged infrastructure control
+```
+
+They should not share one unconstrained `fetch(url)` function.
+
+A safer design might expose:
+
+```text
+fetch_public_document(document_url)
+query_internal_service(service_id, operation, args)
+perform_platform_action(action_id, args, approval_token)
+```
+
+Each route has a different policy and audit model.
+
+This reduces ambient authority and improves logging. A trace can answer:
+
+- which capability was invoked;
+- which service identity was targeted;
+- which policy allowed it;
+- which user or workflow authorized it;
+- whether the model proposed or merely formatted the action.
+
+## Evidence should distinguish literal target from effective target
+
+A useful finding schema is:
+
+```yaml
+finding:
+  property: internal-loopback-ssrf
+  rule_id: SKIL-BOUNDARY-SSRF-INTERNAL
+  observed:
+    request_primitive: "recognized"
+    target_representation: "literal"
+    target_class: "loopback-or-private"
+  unresolved:
+    dns: true
+    redirects: true
+    proxy_rewrite: true
+  authorization:
+    static_contract_observed: false
+  confidence:
+    evidence: high
+    runtime_completeness: bounded
+```
+
+This is superior to:
+
+```yaml
+severity: medium
+message: "SSRF detected"
+```
+
+The latter collapses vulnerability proof, network classification, and exploitability into one sentence.
+
+## Validation strategy
+
+A high-quality test suite should include:
+
+### Representation tests
+
+- loopback literals;
+- RFC 1918 literals;
+- equivalent public literals;
+- IPv6 cases;
+- internal hostnames;
+- benign text containing private addresses.
+
+### Request-primitive tests
+
+- supported Python clients;
+- supported JS/TS clients;
+- shell HTTP clients;
+- wrappers around request functions;
+- comments and string examples that are not executed.
+
+### Boundary tests
+
+Change only one property between fixtures:
+
+```text
+public host  → private host
+static host  → user-controlled host
+named service → raw URL
+authorized internal service → unauthorized internal service
+```
+
+### Runtime-policy tests
+
+Static analysis should be paired with integration tests proving that the egress layer rejects unauthorized internal destinations regardless of model output.
+
+This last point is essential. Static precision can never substitute for runtime enforcement.
+
+## Operational metrics
+
+For this property, useful metrics are not only scanner precision and recall.
+
+Platform teams should also measure:
+
+- percentage of agent tools with arbitrary URL authority;
+- percentage of outbound calls routed through an egress policy point;
+- number of internal destinations exposed directly to model-facing tools;
+- percentage of internal services using workload identity or mutual authentication;
+- denied internal-destination attempts at runtime;
+- unresolved SSRF findings promoted to deployment blockers.
+
+Metrics make the architecture governable.
+
+## Review questions
+
+Before approving an agentic skill with network access, ask:
+
+1. Why does the skill need a generic request primitive?
+2. Can a named-service API replace raw URLs?
+3. Which private address classes are reachable from the runtime?
+4. Which local services assume caller locality?
+5. Are internal services authenticated independently of network position?
+6. Are DNS and redirects revalidated?
+7. Can proxies or service meshes change the effective target?
+8. Does `skil` report the literal evidence separately from runtime uncertainty?
+9. Are static findings correlated with runtime policy logs?
+10. Is internal network access part of an explicit capability contract?
+
+<Warning>
+Blocking `127.0.0.1` alone is not an SSRF architecture. Internal trust boundaries include private IPv4, IPv6, private DNS, node-local infrastructure, sidecars, and organization-specific service networks.
+</Warning>
+
+## References
+
+[^1]: MITRE, *CWE-918: Server-Side Request Forgery (SSRF)*. https://cwe.mitre.org/data/definitions/918.html
+[^2]: OWASP Cheat Sheet Series, *Server-Side Request Forgery Prevention Cheat Sheet*. https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
+[^3]: domehahn/skil, *Security control matrix*. https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md
+[^4]: domehahn/skil, `internal/analyzer/boundary.go`. https://github.com/domehahn/skil/blob/main/internal/analyzer/boundary.go
+
+## Conclusion
+
+Internal and Loopback SSRF is fundamentally about **the collapse of implicit network trust**. The vulnerable pattern appears when a component with privileged reachability accepts destination influence from a less-trusted source and treats location as authorization.
+
+`SKIL-BOUNDARY-SSRF-INTERNAL` provides useful deterministic evidence for a bounded set of literal request patterns. The larger engineering requirement is to make internal authority explicit: named services instead of raw addresses, authenticated service relationships instead of locality assumptions, and runtime egress enforcement instead of model judgment.

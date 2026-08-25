@@ -1,0 +1,639 @@
+---
+title: "Python AST Security Analysis: From Dangerous Syntax to Proven Source-to-Sink Evidence"
+description: "A deep technical essay on Python AST-based security analysis in agentic skills: call-shape detection, alias resolution, dynamic execution, deserialization, reflection, bounded interprocedural taint, false positives, and coverage."
+date: "2026-07-30"
+author: "dome"
+topics:
+  - agentic-engineering
+  - devsecops
+tags:
+  - Security Property
+  - Python AST
+  - Static Analysis
+  - Agentic Security
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: "Security Properties for Agentic Skills"
+  order: 39
+---
+
+Text search is a poor abstraction for executable semantics.
+
+The string `eval(` can appear in a comment, a documentation example, a test fixture, a variable, or an actual call expression. A scanner that treats those cases as equivalent generates noise. A scanner that parses Python can ask much stronger questions:
+
+- Is this node executable?
+- Which function is being called?
+- Is the name an alias?
+- What arguments flow into the call?
+- Are those arguments constants, validated values, or untrusted data?
+- Does the call create code execution, process execution, unsafe deserialization, or reflective dispatch?
+
+The **Python AST AST1–AST9** property family in the source article represents this structural approach.
+
+The documented `skil` controls are:
+
+```text
+SKIL-PY-001
+SKIL-PY-002
+SKIL-PY-003
+SKIL-PY-004
+SKIL-PY-REFLECT-EXEC
+SKIL-TAINT-EXECUTION
+```
+
+The conceptual relation is:
+
+```text
+PYTHON_SYNTAX_NODE matches dangerous execution/deserialization/reflection shape
+```
+
+The source describes coverage as `FULL` for the implemented family. That statement should be read as **full against the documented property fixtures**, not as a claim that static AST analysis proves arbitrary Python programs safe.
+
+<KeyTakeaway>
+AST analysis does not search for “dangerous words.” It reconstructs syntactic roles and, when combined with taint, asks whether untrusted provenance reaches a security-sensitive operation.
+</KeyTakeaway>
+
+## Why Python needs structural analysis
+
+Python makes dynamic behavior easy:
+
+- first-class functions;
+- dynamic imports;
+- reflection;
+- decorators;
+- monkey patching;
+- metaprogramming;
+- subprocess execution;
+- dynamic evaluation;
+- serialization libraries with code-bearing semantics.
+
+This flexibility means both false positives and false negatives are easy if analysis stays lexical.
+
+An AST provides a much better baseline.
+
+## The source-positive example
+
+```python
+fn = getattr(module, user_selected_name)
+fn(payload)
+# or: eval(user_input)
+```
+
+These two forms illustrate different classes.
+
+The `eval` call is an explicit dynamic-code sink.
+
+The `getattr` form is reflective dispatch. It is not automatically dangerous; the concern depends on:
+
+```text
+which object is reflected over?
+who controls the attribute name?
+what callable set is reachable?
+what payload reaches the callable?
+```
+
+That is why a property family is more useful than one regex.
+
+## The negative process example
+
+```python
+subprocess.run(["git", "status", "--short"], shell=False, check=True)
+```
+
+This is executable code, but it uses:
+
+- a fixed program;
+- fixed arguments;
+- no shell parsing;
+- explicit failure checking.
+
+A scanner that flags all `subprocess.run` calls equally would lose important semantic precision.
+
+## Parsing without execution
+
+A static analyzer should parse source code **without importing or running it**.
+
+Importing arbitrary project modules during scanning can itself execute code through module top-level statements or import hooks.
+
+The analysis pipeline should look like:
+
+```text
+source bytes
+  ↓
+parser
+  ↓
+AST
+  ↓
+name / alias resolution
+  ↓
+call-shape classification
+  ↓
+argument analysis
+  ↓
+taint / summaries
+  ↓
+finding
+```
+
+This keeps the scanner’s own attack surface smaller.
+
+## Name and alias resolution
+
+Dangerous functions may be imported under aliases:
+
+```python
+from subprocess import run as execute_process
+```
+
+A lexical check for `subprocess.run` would miss the call.
+
+AST analysis can build a local binding map:
+
+```text
+execute_process -> subprocess.run
+```
+
+Similarly:
+
+```python
+import subprocess as sp
+sp.run(...)
+```
+
+can be normalized.
+
+Resolution does not need to become a full Python interpreter to cover useful common patterns.
+
+## Constants versus dynamic arguments
+
+Call shape alone is insufficient.
+
+Compare:
+
+```python
+subprocess.run(["git", "status"], shell=False)
+```
+
+with:
+
+```python
+subprocess.run(user_args)
+```
+
+and:
+
+```python
+subprocess.run(user_cmd, shell=True)
+```
+
+The latter forms have increasingly broad semantic input.
+
+The analyzer should therefore classify arguments:
+
+```text
+literal
+constant-propagated
+validated
+derived from trusted config
+derived from user/model/tool input
+unknown
+```
+
+Unknown should not be treated identically to known-untrusted, but it may lower confidence or require review.
+
+## Taint analysis adds provenance
+
+AST structure tells us **what** operation occurs. Taint tells us **where the input came from**.
+
+A bounded interprocedural model can support:
+
+```python
+def get_command(req):
+    return req["command"]
+
+cmd = get_command(request)
+subprocess.run(cmd, shell=True)
+```
+
+The source label propagates through a function summary.
+
+The word “bounded” is important. Whole-program Python analysis is difficult because of dynamic features. A practical scanner deliberately limits call depth, supported constructs, or summary generation and reports the coverage.
+
+## Unsafe deserialization is not the same as `eval`
+
+Some Python APIs can instantiate objects or invoke constructors during deserialization.
+
+The security model should classify these separately from dynamic code evaluation even if the consequence may include code execution.
+
+Separate rule IDs improve remediation:
+
+```text
+dynamic code -> remove eval/exec
+unsafe deserialization -> use safe format/loader
+process execution -> constrain executable and args
+reflection -> constrain reachable callable set
+```
+
+## Reflection requires reachability reasoning
+
+This pattern:
+
+```python
+handler = getattr(handlers, requested_action)
+handler(data)
+```
+
+may be safe if `handlers` contains only a fixed set of benign functions and `requested_action` is validated against an enum.
+
+It is more dangerous if reflection occurs over a broad module or object graph.
+
+A high-quality rule should therefore consider:
+
+- target object;
+- attribute-name provenance;
+- callable validation;
+- and whether private/dunder attributes are reachable.
+
+## `eval` and `exec` are high-signal sinks
+
+Dynamic Python execution APIs accept code semantics directly.
+
+If untrusted input reaches them, the evidence is strong.
+
+But even here, context matters for false positives:
+
+```python
+dangerous_example = "eval(user_input)"
+```
+
+is not a call node.
+
+An AST immediately distinguishes that from:
+
+```python
+eval(user_input)
+```
+
+This is precisely why parser-backed analysis produces better developer experience.
+
+## Dynamic imports
+
+Import targets can become attacker-controlled:
+
+```text
+untrusted module name
+→ dynamic import
+→ module initialization
+```
+
+A safe design uses an allowlist of known plugin identifiers mapped to fixed modules rather than importing arbitrary names.
+
+Static analysis can classify the import API and provenance of the module name.
+
+## Taint declassification
+
+Taint should not disappear because data passes through arbitrary helpers.
+
+Recognized declassifiers should be narrow.
+
+For example:
+
+```python
+sha = validate_git_sha(user_value)
+```
+
+may downgrade risk for a Git revision parameter if the validator is known and sufficient.
+
+But:
+
+```python
+clean = str(user_value)
+```
+
+does not change trust.
+
+The scanner should be conservative about declaring values safe.
+
+## Interprocedural boundaries
+
+A practical analyzer faces trade-offs:
+
+- call depth;
+- recursion;
+- library summaries;
+- dynamic dispatch;
+- closures;
+- decorators;
+- higher-order functions.
+
+Rather than pretending these are solved, coverage can be explicit:
+
+```text
+local AST: verified
+known alias resolution: verified
+bounded function summaries: verified to depth N
+dynamic runtime dispatch: partially resolved
+external package behavior: not observed
+```
+
+This makes findings scientifically interpretable.
+
+## Performance
+
+AST scanning must remain fast enough for CI.
+
+Useful engineering techniques include:
+
+- parse once per file;
+- index imports and symbols;
+- reuse summaries;
+- stop deep propagation when no relevant taint exists;
+- cache dependency summaries;
+- and run expensive semantic analysis only on unresolved candidates.
+
+This layered design preserves deterministic speed for common cases.
+
+## False-positive engineering
+
+A rule suite needs scanner-negative fixtures for:
+
+- comments;
+- string literals;
+- fixed subprocess commands;
+- safe loaders;
+- allowlisted reflection;
+- test fixtures;
+- security documentation;
+- code that validates input before a sink.
+
+The negative corpus should be treated as a product requirement, not an afterthought.
+
+## Evidence chain
+
+A strong structural finding can include:
+
+```yaml
+property: python-ast
+controls:
+  - SKIL-PY-002
+  - SKIL-TAINT-EXECUTION
+source:
+  symbol: request.command
+  trust: untrusted
+propagation:
+  - cmd
+sink:
+  node_type: Call
+  resolved_callee: subprocess.run
+  shell: true
+location:
+  file: agent.py
+  line: 42
+coverage:
+  alias_resolution: verified
+  interprocedural_path: verified
+confidence: high
+```
+
+This is much more actionable than a severity label alone.
+
+## Static analysis is evidence, not proof of absence
+
+A scanner-negative result means:
+
+> Under the implemented analysis model, no sufficient evidence for this property was found.
+
+It does not mean:
+
+> The Python program cannot execute attacker-controlled code under any runtime condition.
+
+Dynamic imports, generated code, native extensions, environment-specific behavior, and external packages can exceed static visibility.
+
+That epistemic discipline is important in security tooling.
+
+## Relationship to agentic risk
+
+Why include Python AST analysis in a series about agentic skills?
+
+Because agentic skills often package:
+
+```text
+natural-language instruction
++
+code
++
+tool contract
++
+dependency graph
+```
+
+Prompt analysis without code analysis leaves a major blind spot. A benign-looking instruction can call dangerous code; dangerous-looking documentation can be harmless.
+
+The scanner needs both semantic and structural evidence.
+
+## Deep dive: an analyzer should preserve uncertainty explicitly
+
+Static analysis often faces ambiguous resolution.
+
+Consider:
+
+```python
+fn = registry[name]
+fn(data)
+```
+
+If the analyzer cannot prove what functions `registry` contains, it has several choices:
+
+1. ignore the path;
+2. flag everything;
+3. represent uncertainty.
+
+The third is usually most honest.
+
+An IR can use:
+
+```text
+callee_set = {known_a, known_b, unknown}
+```
+
+and confidence can reflect the unresolved branch.
+
+### Function summaries
+
+Instead of re-analyzing every function at every call site, the scanner can compute summaries:
+
+```text
+function normalize_path(x):
+  input taint -> output taint preserved
+  filesystem side effect -> none
+```
+
+or:
+
+```text
+function execute(x):
+  input taint -> process sink
+```
+
+Summaries improve both speed and interprocedural reasoning.
+
+### Data structures and taint
+
+Taint may flow through:
+
+```python
+payload = {"command": request["command"]}
+queue.append(payload)
+cmd = queue[0]["command"]
+```
+
+A practical engine needs at least partial support for container literals and field/index propagation to avoid trivial blind spots.
+
+At the same time, over-approximating every container element as tainted can create noise. Field-sensitive analysis is more precise but more expensive.
+
+### Sanitizer verification
+
+For high-value validators, the scanner can model implementation rather than trust names.
+
+Example:
+
+```python
+def validate_sha(v):
+    if not re.fullmatch(r"[0-9a-f]{40}", v):
+        raise ValueError
+    return v
+```
+
+A local semantic pass can infer that the output belongs to a narrow grammar.
+
+This is significantly stronger than recognizing a function called `validate_sha`.
+
+### Differential tests
+
+A static analyzer should be tested with pairs:
+
+```text
+positive fixture
+negative fixture differing by one guard
+```
+
+For example:
+
+```text
+shell=True  vs shell=False
+dynamic eval vs safe parser
+unsafe loader vs safe loader
+unvalidated reflection vs enum allowlist
+```
+
+Differential fixtures demonstrate that the rule responds to the security-relevant feature rather than incidental syntax.
+
+## Research boundary: Python is deliberately dynamic
+
+No bounded static analyzer will fully resolve:
+
+- monkey patching;
+- native extension behavior;
+- arbitrary metaclasses;
+- runtime code generation;
+- environment-specific imports;
+- reflection over opaque external objects.
+
+This is not a reason to avoid static analysis. It is a reason to make coverage visible and combine static evidence with sandboxing, runtime policy, and tests.
+
+## Designing the AST property family
+
+Even when a project labels checks AST1–AST9 internally, reviewers should focus on the underlying semantic families rather than the numbering.
+
+A maintainable taxonomy can distinguish:
+
+```text
+dynamic code execution
+process/shell execution
+unsafe deserialization
+dynamic import
+reflection / callable selection
+dangerous file/network sinks
+source-to-execution taint
+```
+
+This makes remediation stable even if internal rule numbering changes.
+
+### Parsing errors and partial trees
+
+Security scanners must handle incomplete repositories and syntax errors.
+
+A resilient parser can:
+
+- report parse coverage;
+- analyze valid subtrees;
+- avoid executing fallback parsers;
+- and mark findings as partial when the relevant region could not be parsed.
+
+Silently skipping a file on parse error creates a predictable blind spot.
+
+### Generated Python
+
+Agentic repositories may generate Python at build time.
+
+Static scanning should identify generated-source inputs or scan post-generation artifacts in CI.
+
+Otherwise the security-relevant program may not exist in the repository form that was analyzed.
+
+### Dependency boundaries
+
+A local AST can prove that code calls `library.run(user_input)` but may not know what `library.run` does.
+
+Curated dependency summaries can improve coverage, but they should be version-specific and explicit.
+
+Unknown external behavior should remain unknown rather than being inferred from function names.
+
+### Explainability as a scanner requirement
+
+For AST findings, a developer should be able to inspect:
+
+```text
+resolved callee
+source symbol
+propagation path
+sink argument
+recognized guard
+coverage boundary
+```
+
+This level of explanation is not only UX. It is necessary to evaluate whether the static analysis actually supports the security claim.
+
+## Final perspective
+
+Python AST analysis is valuable because it moves security reasoning from **text resemblance** toward **program structure**.
+
+The best implementation layers:
+
+```text
+parser
++ name resolution
++ call-shape semantics
++ source/sink classification
++ bounded taint
++ context-aware negatives
++ explicit coverage
+```
+
+The review question is:
+
+> **Which executable syntax node creates the security-relevant effect, what data reaches it, and how confidently can that path be reconstructed without running the code?**
+
+That is a far stronger foundation than keyword matching.
+
+## References
+
+1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
+4. [MITRE CWE-94 – Improper Control of Generation of Code](https://cwe.mitre.org/data/definitions/94.html)
+5. [MITRE CWE-78 – Improper Neutralization of Special Elements used in an OS Command](https://cwe.mitre.org/data/definitions/78.html)
+6. [Denning – A Lattice Model of Secure Information Flow, Communications of the ACM 19(5), 1976](https://doi.org/10.1145/360051.360056)
+7. [NIST AI 100-1 – Artificial Intelligence Risk Management Framework (AI RMF 1.0), 2023](https://doi.org/10.6028/NIST.AI.100-1)
+8. [OWASP – Top 10 for Agentic Applications for 2026](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)

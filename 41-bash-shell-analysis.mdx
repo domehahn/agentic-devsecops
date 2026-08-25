@@ -1,0 +1,181 @@
+---
+title: 'Bash and Shell Analysis in Agentic Skills: From Text to Executable Semantics'
+description: 'A deep technical essay on shell security in agentic skills: AST-based
+  reasoning, expansion semantics, command boundaries, evidence construction, false-positive
+  control, and runtime containment.'
+date: '2026-07-30'
+author: dome
+topics:
+- agentic-engineering
+- devsecops
+tags:
+- Security Property
+- Bash/Shell Analysis
+- Agentic Security
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: Security Properties for Agentic Skills
+  order: 41
+---
+
+## Why shell changes the trust model
+
+Shell fragments are deceptively compact. A line that looks like ordinary glue code can expand environment variables, execute command substitutions, redirect sensitive output, alter privilege boundaries, or reinterpret data as syntax. In an agentic system that distinction matters even more because shell code may be selected or parameterized by a model rather than a human operator.
+
+The security question is therefore not whether a script contains a suspicious word. It is whether the parsed shell program creates a path from untrusted or privileged data to an execution primitive whose semantics can change authority, integrity, or confidentiality. The original `skil` control model expresses the same idea as `SHELL_AST contains dangerous pipeline, privilege, destructive, or dynamic-eval primitive`. That relation is more useful than a label such as “suspicious” because it specifies what must be evidenced and what a legitimate counterexample must break.
+
+## Property at a glance
+
+| Dimension | Assessment |
+| --- | --- |
+| Security property | Bash and Shell Analysis in Agentic Skills |
+| Relevant `skil` controls | `SKIL-SH-001`, `SKIL-SH-002`, `SKIL-SH-003`, `SKIL-SH-004` |
+| Primary analysis mechanism | Tree-sitter Bash AST |
+| Declared coverage character | skil-native |
+| Core security relation | `SHELL_AST contains dangerous pipeline, privilege, destructive, or dynamic-eval primitive` |
+
+<Architecture>
+Shell → parser AST → command/pipeline/redirection/substitution nodes → operation classifier → path/privilege context → Finding
+</Architecture>
+
+## Reading executable structure instead of suspicious words
+
+A shell parser sees pipelines, command substitutions, redirections, assignments, control operators and function bodies. Regex sees characters. The difference is decisive when a detector must distinguish an `eval` call from the word “eval” in documentation, or a harmless `printf` from a pipeline that downloads content and immediately hands it to an interpreter. Tree-based analysis creates stable structural evidence and makes negative fixtures meaningful. The design implication is that detection and authorization must remain separate: the scanner identifies the condition, while a policy layer decides whether the condition is permissible in this deployment context.
+
+## Expansion, interpolation, and second-stage interpretation
+
+Shell behavior emerges after several expansion stages: parameter expansion, command substitution, pathname expansion, word splitting and redirection. Quoting changes some of these stages but does not magically make every operation safe. A robust analysis should track whether data is merely printed, used as an argument, interpolated into a command language, or evaluated again by `eval`, `bash -c`, `sh -c` or an equivalent dynamic interpreter boundary. This also improves explainability. Reviewers can see the specific security fact rather than receiving a generic severity label, and future tooling can compose that fact with independent findings without double-counting the same evidence.
+
+## Pipelines collapse trust boundaries
+
+The most dangerous shell idioms are often compositions rather than individual commands. A network client, decoder and shell may each be legitimate in isolation; a direct download-to-execution chain removes the inspection boundary between retrieval and execution. Agentic runtimes should preserve a download → verify → execute separation so that policy engines can examine content hashes, provenance and expected type before execution. A useful implementation records both the positive observation and the guard that would have made the path safe. That makes remediation testable and turns false-positive handling into explicit logic instead of a collection of suppressions.
+
+## Privilege is contextual, not lexical
+
+`sudo`, setuid helpers, container entrypoints and package-manager hooks are not equally dangerous in every environment. The relevant question is the effective runtime authority. Static evidence should therefore record the privileged primitive, while deployment policy decides whether the workload can actually elevate. This prevents a scanner from overstating certainty while still surfacing the risky design. The same model supports change detection: when identity, configuration or code changes, the platform can recompute the relation and show exactly which part of the previously reviewed assumption no longer holds.
+
+## Execution brokers are stronger than prompt rules
+
+Even perfect static detection cannot predict every runtime value. High-assurance agents should invoke shell commands through a broker that constrains executable paths, argv shape, working directory, environment, network access and filesystem mounts. A model may propose a command, but the broker should decide whether the command is admissible. In an agentic environment this distinction becomes operational because model-generated plans can select the relevant value or capability at runtime. The host therefore needs evidence that can survive from code review into execution policy.
+
+## A pair of examples that look similar but are not
+
+A deliberately small positive fixture from the source property illustrates the boundary:
+
+```bash
+payload="$(cat untrusted.txt)"
+eval "$payload"
+```
+
+The safe counterexample changes the semantics rather than merely deleting a suspicious token:
+
+```bash
+printf '%s
+' "$payload" > output.txt
+```
+
+The purpose of pairing them is not to teach exploitation. It is to force the detector to explain which relation changes between the two cases. A scanner that fires on both has learned vocabulary; a scanner that can explain the difference has begun to model the security property.
+
+## Where static analysis stops
+
+Detection quality depends on traceability. The scanner should preserve the raw location, the property-specific observation produced by Tree-sitter Bash AST, and the reasoning that turns it into `SHELL_AST contains dangerous pipeline, privilege, destructive, or dynamic-eval primitive`. The native control surface is `SKIL-SH-001`, `SKIL-SH-002`, `SKIL-SH-003`, `SKIL-SH-004`. Because the stated coverage is skil-native, confidence must follow evidence completeness—not severity labels or lexical suspicion.
+
+A compact machine-readable evidence record can retain the essentials without pretending to encode the entire analysis:
+
+```yaml
+property_order: 41
+property: "bash-and-shell-analysis-in-agentic-skills"
+controls: "SKIL-SH-001, SKIL-SH-002, SKIL-SH-003, SKIL-SH-004"
+mechanism: "Tree-sitter Bash AST"
+security_relation: "SHELL_AST contains dangerous pipeline, privilege, destructive, or dynamic-eval primitive"
+coverage: "skil-native"
+evidence:
+  raw_location: true
+  structured_observation: true
+  context_resolved: true
+  safe_countercase_tested: true
+```
+
+## False positives, ambiguity, and safe counterexamples
+
+Documentation, regression fixtures, quoted data handling and defensive code frequently contain shell metacharacters. False-positive suppression should rely on AST context and data role, not on global file ignores. A scanner that cannot explain why a nearly identical safe case is different will eventually be disabled by its users.
+
+Static analysis has an epistemic boundary: it can only reason about the representation it sees. Dynamic DNS, runtime-generated code, reflection, remote configuration, credential brokers and policy decisions may exist outside that view. The correct result vocabulary therefore includes states such as `verified`, `partially_resolved`, `provider_backed`, `runtime_dependent`, and `not_observable`. This is not bureaucratic metadata; it prevents a consumer from interpreting an absent finding as proof that no risk exists.
+
+## Containment at execution time
+
+Run agent-generated shell in a non-privileged sandbox, provide a minimal PATH, remove ambient credentials, mount the workspace narrowly, deny outbound network by default, and require explicit approval for destructive or privilege-changing operations. Static analysis and runtime enforcement should produce linked evidence rather than two unrelated logs.
+
+Defense in depth is intentionally redundant. Authoring lint, static analysis, contract verification, supply-chain verification, runtime policy and audit telemetry answer different questions. A strong result from one layer should never be used as a reason to remove the others.
+
+## How to validate the detector
+
+A serious regression suite needs paired examples. Each positive fixture should have a near-neighbor negative case, and each new false positive should become a permanent test. Where the property depends on identity or time, tests should also change the resolved artifact or metadata between review and execution. Where it depends on data flow, fixtures should exercise aliases, wrappers and valid sanitizers. For **Bash and Shell Analysis in Agentic Skills**, the most valuable tests are those that preserve the surface appearance while changing the underlying security relation; that is how the suite verifies semantics instead of vocabulary.
+
+For `skil`, implementation claims should be checked against the repository’s control matrix, external-control crosswalk, analyzer tests and any provider-specific tests. Provider-backed coverage—such as OSV or external rule packs—must state whether the provider actually ran.
+
+## Architecture drill-down: from finding to enforceable boundary
+
+For **Bash and Shell Analysis in Agentic Skills**, think in terms of a chain of custody for security meaning. The artifact creates an observation, Tree-sitter Bash AST converts that observation into a structured fact, contract or policy logic interprets the fact, and runtime enforcement decides whether the operation can proceed. Each handoff can lose context. The relation `SHELL_AST contains dangerous pipeline, privilege, destructive, or dynamic-eval primitive` should therefore be represented explicitly in evidence rather than reconstructed from a human-readable message after the fact. Reviewers should inspect whether normalization is reversible for forensics, whether identity is immutable between review and use, whether policy is scoped to the task, and whether provider failures are visible. This turns a static finding into an assurance argument that can survive deployment changes.
+
+The paired fixtures also serve as an architectural regression test. The unsafe example begins with `payload="$(cat untrusted.txt)"` while the safe example begins with `printf '%s`. The important difference is the security relation, not the cosmetic text. If a refactor causes both to produce the same result, the detector or policy has lost a meaningful distinction.
+
+## Common implementation traps
+
+Several implementation mistakes recur around **Bash and Shell Analysis in Agentic Skills**, even when the high-level policy is correct:
+
+**1. Treating strings as equivalent to syntax.** Comments, literals and generated text can contain dangerous-looking tokens without being executable, while benign-looking wrappers can hide a real interpreter boundary. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
+
+**2. Conflating detection with remediation.** Quoting, normalization or encoding changes are not universally valid sanitizers; the guard must be proven appropriate for the specific sink and language semantics. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
+
+**3. Dropping derived-artifact provenance.** If a decoder, parser or data-flow pass produces a second representation, reviewers need to know exactly which original bytes and transformation produced it. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
+
+A useful review discipline is to turn every exception into a scoped, expiring artifact with an owner and rationale. Permanent blanket suppressions hide whether the architecture improved; narrow exceptions preserve the signal and make technical debt measurable.
+
+## How this property composes with adjacent findings
+
+**Taint-to-shell execution.** A shell finding becomes materially more severe when taint analysis shows that user, retrieved, or model-generated data reaches a dynamic interpreter boundary. Conversely, a privileged shell primitive with constant, reviewed arguments is a different risk than untrusted data reaching an otherwise ordinary command. Keeping these facts separate lets the risk engine compose evidence instead of inflating every shell call.
+
+This composition model is deliberately graph-like: each detector contributes a typed fact and shared evidence identifiers allow a higher-level policy engine to connect them. That prevents one rule from becoming an overloaded catch-all and makes severity escalation explainable.
+
+## Operational signals and measurable assurance
+
+Track the ratio of shell findings with resolved AST call sites, the fraction involving dynamic interpretation, and the number of runtime broker denials by command class. A rising false-positive rate on documentation or fixtures indicates the analyzer is losing syntax context.
+
+Metrics should be tied to an explicit denominator and deployment profile. A low finding count may mean strong controls, weak coverage, or simply little exposure; telemetry and coverage state are needed to tell those cases apart. Trend the data over time and review unexpected changes in both positive findings and scanner-negative regression behavior.
+
+## Engineering implications beyond the scanner
+
+Code-oriented properties benefit from a two-stage architecture: parser or byte-level analyzers first produce deterministic facts, then a composition layer connects those facts to data flow, execution or supply-chain context. This keeps the core detector reproducible and makes semantic enrichment optional rather than authoritative. When code is generated or fetched dynamically, the runtime should rescan the materialized artifact before execution instead of assuming the build-time scan still describes it.
+
+The broader lesson is that an agentic skill is simultaneously text, code, configuration, a tool contract and a supply-chain artifact. Security review should follow the boundary that is actually crossed—data, authority, identity, execution, or control-plane visibility—rather than forcing every risk into the same detection template.
+
+## Operational review checklist
+
+A reviewer should be able to answer four questions before accepting this property as controlled:
+
+1. **What exact security relation is being asserted?** Here it is `SHELL_AST contains dangerous pipeline, privilege, destructive, or dynamic-eval primitive`.
+2. **What concrete evidence supports the relation?** The evidence must come from Tree-sitter Bash AST, not from a keyword alone.
+3. **What near-neighbor safe case has been tested?** The paired negative fixture should differ in the property, not merely in spelling.
+4. **What remains outside static visibility?** Runtime identity, dynamic values, provider state and policy decisions must be named explicitly.
+
+## Implementation evidence in `skil`
+
+- [Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – native control identifiers and scanner-positive/scanner-negative coverage.
+- [External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – property-level equivalence and coverage states.
+- [External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – implementation differences, mechanisms, and documented gaps.
+
+## Standards, research, and references
+
+1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
+4. [MITRE CWE-78 – Improper Neutralization of Special Elements used in an OS Command](https://cwe.mitre.org/data/definitions/78.html)
+5. [SLSA – Specification v1.2](https://slsa.dev/spec/v1.2/)
+6. [NIST AI 100-1 – Artificial Intelligence Risk Management Framework (AI RMF 1.0), 2023](https://doi.org/10.6028/NIST.AI.100-1)
+
+## Conclusion
+
+**Bash and Shell Analysis in Agentic Skills** is valuable only when it is treated as a falsifiable security property rather than a checklist term. The goal is not to declare an entire skill “malicious” or “safe.” The goal is to state what boundary may be crossed, show the evidence that supports that statement, preserve the coverage limits, and make the safe countercondition explicit. That produces findings engineers can test, reviewers can reproduce, and runtime policy can enforce.

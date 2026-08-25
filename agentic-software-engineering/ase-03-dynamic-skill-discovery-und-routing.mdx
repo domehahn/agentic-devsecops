@@ -1,0 +1,407 @@
+---
+title: "Part 3: Dynamic Skill Discovery & Routing – Progressive Disclosure Instead of Prompt Overflow"
+description: "A technical essay on AGENTS.md, Agent Skills, SKILL.md, progressive disclosure, skill routing, conflict resolution, supply-chain risks, and evaluated dynamic loading."
+date: "2026-08-22"
+author: "dome"
+topics:
+  - agentic-engineering
+  - software-architecture
+  - developer-experience
+tags:
+  - Skill Discovery
+  - AGENTS.md
+  - Routing
+  - Dynamic Loading
+draft: false
+series:
+  slug: "agentic-software-engineering-patterns"
+  title: "Agentic Software Engineering & Multi-Agent Design Patterns"
+  order: 3
+ai:
+  assisted: true
+  humanReviewed: true
+  reviewedBy: "Dominik Hahn"
+  reviewedAt: "2026-08-22"
+---
+
+A capable engineering agent needs both a great deal of context and very little context at the same time. It must know how the repository is built, which security rules apply, and which specialized procedures exist for database migrations, threat modeling, or deployments. For a specific task, however, it usually needs only a small subset of that information.
+
+Loading everything into one enormous system prompt does not create an “omniscient agent”; it creates a context problem: important rules compete with irrelevant details, token costs rise, and contradictory instructions become harder to detect.
+
+**Dynamic Skill Discovery** addresses this not through an infinite context window but through **progressive disclosure**: the agent initially knows only metadata about available capabilities and loads detailed instructions only when they become relevant.
+
+---
+
+## 1. AGENTS.md and Agent Skills Solve Different Problems
+
+`AGENTS.md` is an open format for repository instructions. The project describes it as a “README for agents”: a predictable place for setup instructions, tests, and conventions.[^1]
+
+A typical file might contain:
+
+```markdown
+# AGENTS.md
+
+## Build
+- pnpm install
+- pnpm test
+
+## Rules
+- Never edit generated files directly.
+- Run typecheck before completion.
+```
+
+**Agent Skills**, by contrast, are modular capability packages. The current specification defines a skill as a directory containing at least a `SKILL.md` whose YAML frontmatter includes `name` and `description`. Optional `scripts/`, `references/`, and `assets/` directories may also be included.[^2]
+
+```text
+security-review/
+├── SKILL.md
+├── scripts/
+├── references/
+└── assets/
+```
+
+The useful separation is:
+
+```text
+AGENTS.md -> repository-wide working rules
+SKILL.md  -> task-specific capability
+```
+
+---
+
+## 2. Progressive Disclosure Is a Context-Routing Mechanism
+
+The Agent Skills specification describes three levels:[^2]
+
+1. **Metadata:** `name` and `description` are cheaply available.
+2. **Instructions:** the complete `SKILL.md` is loaded when the skill is activated.
+3. **Resources:** additional files are read only as needed.
+
+```text
+Start
+ ↓
+[name + description] × N Skills
+ ↓ task match
+SKILL.md
+ ↓ optional
+references / scripts / assets
+```
+
+Architecturally, this is notable: context is treated hierarchically, much like memory. Not everything needs to reside in the model’s “RAM” at once.
+
+---
+
+## 3. The Description Becomes Part of Runtime Logic
+
+When routing is semantic, the `description` effectively becomes a dispatch rule.
+
+Too broad:
+
+```yaml
+description: Helps with security.
+```
+
+Too narrow:
+
+```yaml
+description: Use only when the user literally says "OWASP review".
+```
+
+Better:
+
+```yaml
+description: >
+  Review application code and diffs for injection, authorization,
+  path traversal, secret exposure and insecure file handling.
+  Use for security reviews, threat-focused PR review and secure-code audits.
+```
+
+The official Agent Skills documentation explicitly notes that description quality is critical for reliable triggering.[^3]
+
+Skill routing therefore belongs in the eval suite.
+
+---
+
+## 4. Explicit and Implicit Routing
+
+There are two basic models.
+
+### Explicit
+
+The user or workflow names the skill:
+
+```text
+Run security-review on this diff.
+```
+
+Advantage: deterministic and auditable.  
+Disadvantage: users must know the skill landscape.
+
+### Implicit
+
+A router decides from the task:
+
+```text
+"Review this authentication change"
+      ↓
+Skill Router
+      ↓
+security-review (0.91)
+api-review      (0.63)
+```
+
+Advantage: convenient.  
+Disadvantage: false positives and false negatives.
+
+In critical areas, a hybrid is useful:
+
+```text
+Auto-suggest skill
+     ↓
+Policy requires security-review for auth paths
+     ↓
+Skill becomes mandatory
+```
+
+Probabilistic routing can thus be reinforced with deterministic policy.
+
+---
+
+## 5. Skill Discovery Is a Supply-Chain Boundary
+
+A skill can contain more than text. The specification allows optional scripts and resources.[^2] This means a skill can introduce executable code into an agent workflow.
+
+That changes the threat model:
+
+```text
+Untrusted Skill
+   ↓
+Instructions
+   + Scripts
+   + External References
+   ↓
+Agent with Tools
+```
+
+A malicious or compromised skill could attempt to:
+
+- read secrets,
+- override rules,
+- exfiltrate external data,
+- execute dangerous shell commands.
+
+Skills should therefore be treated like software dependencies:
+
+- trusted registry,
+- version pinning,
+- code review,
+- signatures or provenance,
+- capability restrictions,
+- sandboxing for scripts.
+
+“Dynamic loading” must not mean “execute arbitrary internet text.”
+
+---
+
+## 6. Skill Versioning Is Part of Reproducibility
+
+If an agent uses `security-review@2.3` today and automatically loads `@2.4` tomorrow, identical tasks may lead to different decisions.
+
+Auditable runs should therefore record:
+
+```json
+{
+  "skill": "security-review",
+  "version": "2.3.1",
+  "digest": "sha256:...",
+  "activated_by": "policy:auth-change"
+}
+```
+
+A central registry can expose metadata such as:
+
+```yaml
+name: security-review
+version: 2.3.1
+risk: medium
+capabilities:
+  - read-repository
+  - execute-approved-scanners
+network: denied
+```
+
+The official skill metadata is intentionally lightweight; these additional governance fields are therefore a **platform-specific extension pattern**, not part of the base specification.
+
+---
+
+## 7. Conflicts Between Repository Rules and Skills
+
+A skill might say:
+
+> “Run `npm install` for analysis.”
+
+The repository policy says:
+
+> “Network access is prohibited during reviews.”
+
+Without a precedence model, the result is ambiguity.
+
+A robust hierarchy could be:
+
+```text
+Platform Security Policy
+        >
+Repository Rules (AGENTS.md)
+        >
+Task-specific Approved Skill
+        >
+User Preference
+        >
+Retrieved External Content
+```
+
+The exact priority order depends on the agent product. What matters is that security constraints **cannot be overridden by a skill**.
+
+---
+
+## 8. Skills Should Encapsulate Workflows, Not Encyclopedias
+
+A bad skill tries to explain everything about Kubernetes in 500 pages.
+
+A good skill specifies:
+
+- when to apply it,
+- which steps to execute,
+- which sources are authoritative,
+- which tools to use,
+- which verification is required,
+- which errors require escalation.
+
+```markdown
+# Database Migration Review
+
+1. Inspect migration and rollback path.
+2. Verify backward compatibility.
+3. Run migration tests in ephemeral DB.
+4. Check lock / table-scan risk.
+5. Produce structured findings.
+```
+
+Deep references can live under `references/` and be loaded only when needed.[^2]
+
+---
+
+## 9. Routing Evals Measure Precision and Recall
+
+A skill router is a classifier. It should therefore be evaluated like one.
+
+Test set:
+
+```text
+"Review login endpoint for auth bypass" -> security-review
+"Rename button text"                    -> no security-review
+"Add DB index"                          -> database-performance
+"Rotate production certificate"         -> pki-operations + approval
+```
+
+Metrics:
+
+- **Precision:** How often was an activated skill actually relevant?
+- **Recall:** How often was a required skill found?
+- **Conflict Rate:** How often were incompatible skills activated together?
+- **Cost:** How much context did selection add?
+
+A router with 100% recall that always loads every skill has effectively failed.
+
+---
+
+## 10. Target Architecture: Skill Control Plane
+
+A scalable platform can treat skill discovery as its own control plane:
+
+```text
+Task
+ ↓
+Skill Metadata Index
+ ↓
+Semantic Router + Deterministic Policy
+ ↓
+Approved Skill Versions
+ ↓
+Context Loader
+ ↓
+Capability Broker
+ ↓
+Sandboxed Execution
+ ↓
+Evidence: selected skill + digest + result
+```
+
+A folder full of Markdown files thus becomes a governable platform function.
+
+---
+
+## 11. Example: Skill Routing for a Database Migration
+
+A user writes only: “Add an index on `orders.customer_id`.” The semantic router first detects a database-related task. A deterministic repository policy then adds the rule that any change under `db/migrations/**` must activate the `database-migration-review` skill.
+
+```text
+User task
+   ↓
+Semantic candidate: database-performance
+   ↓
+Path policy after plan: db/migrations/**
+   ↓
+Mandatory skill: database-migration-review
+   ↓
+Load SKILL.md
+   ↓
+Load reference only when PostgreSQL detected
+```
+
+The skill can then require checks for lock risk, online-index options, rollback, and production data size. It does not need to load the entire PostgreSQL manual into context. That is exactly what progressive disclosure is for.
+
+After the run, the skill digest actually used is recorded. This matters especially when a skill version is later changed and a historical audit must explain why an agent made a particular decision.
+
+---
+
+## 12. Discovery Needs Negative Routing Rules
+
+Positive descriptions alone are often insufficient. A security skill with a very broad description might activate on almost every code change and bloat context again. Internal routers can therefore manage additional exclusions or priorities:
+
+```yaml
+routing:
+  prefer:
+    - database-migration-review
+  suppress_when:
+    - documentation-only
+    - generated-code-only
+```
+
+Such fields are not part of the Agent Skills standard; they are platform logic. This separation matters: the open skill format should remain portable, while organization-specific governance can be layered on top without redefining the base format.
+
+The best skill platform therefore has two levels: **portable capability packages** and a **local policy layer** that determines when and with which privileges they may run.
+
+---
+
+## Conclusion
+
+Dynamic Skill Discovery is primarily **context and capability management**. `AGENTS.md` provides repository-wide rules; Agent Skills package specialized capabilities in an open `SKILL.md` format with progressive disclosure.[^1][^2]
+
+The technical benefit is substantial: an agent can have hundreds of available capabilities without loading hundreds of complete instruction sets into every run. At the same time, a new supply-chain boundary emerges. Skills must be versioned, evaluated, and—when they contain code or trigger privileged actions—controlled as security-sensitive dependencies.
+
+The next part applies these principles to the code change itself: **How do you build automated testing and refactoring loops without allowing the agent to manipulate its own success criteria?**
+
+---
+
+## Literature & Primary Sources
+
+[^1]: AGENTS.md Project. *AGENTS.md – a simple, open format for guiding coding agents.* https://agents.md/
+[^2]: Agent Skills. *Specification.* https://agentskills.io/specification
+[^3]: Agent Skills. *Optimizing skill descriptions.* https://agentskills.io/skill-creation/optimizing-descriptions
+
+## Metadata
+
+**SEO Title:** Dynamic Skill Discovery: AGENTS.md, SKILL.md & Routing for AI Agents  
+**Meta Description:** How agents load skills dynamically: AGENTS.md, SKILL.md, progressive disclosure, routing evals, versioning, and secure skill supply chains.  
+**Slug:** `dynamic-skill-discovery-und-routing`

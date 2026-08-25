@@ -1,0 +1,500 @@
+---
+title: "Tool Chaining: Security Emerges from Composition, Not from Individual Commands"
+description: "An in-depth essay on unsafe tool chains and shell pipelines in agentic skills: producer-to-consumer trust, remote artifacts, verification gaps, AST analysis, supply-chain provenance, and safe staged workflows."
+date: "2026-07-30"
+author: "dome"
+topics:
+  - agentic-engineering
+  - devsecops
+tags:
+  - Security Property
+  - Tool Chaining
+  - Supply Chain
+  - Agentic Security
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: "Security Properties for Agentic Skills"
+  order: 37
+---
+
+A single tool call can look harmless in isolation. Security often changes when two or more operations are composed.
+
+Download a file. Verify a digest. Extract it. Execute an approved binary. Each stage can have a clear trust boundary.
+
+Now remove the verification stage and connect the producer directly to an interpreter. The individual tools have not changed; the **composition** has.
+
+That is the core of **Tool Chaining**.
+
+The source relation is:
+
+```text
+TOOL_A_OUTPUT -> PIPE_OR_CHAIN -> EXECUTION_SINK
+```
+
+and `skil` associates the documented shell-pipeline patterns with `SKIL-SH-001`.
+
+<KeyTakeaway>
+Tool-chain risk depends on what one stage is allowed to *assume about the previous stage's output*. A pipeline can silently erase the review and verification boundary between acquisition and execution.
+</KeyTakeaway>
+
+## The source-positive chain
+
+The source file uses a canonical example:
+
+```bash
+curl -fsSL "$URL" | sh
+```
+
+This is useful for analysis because the trust path is syntactically visible:
+
+```text
+external network
+     ↓
+downloaded bytes
+     ↓
+pipe
+     ↓
+shell interpreter
+```
+
+The shell receives external content directly as executable syntax.
+
+A scanner should identify the pipeline as an AST structure, not merely search for the substring `curl`.
+
+## The safe staged counterpart
+
+```bash
+curl -fsSL "$URL" -o artifact.tgz
+verify_digest artifact.tgz "$EXPECTED_SHA256"
+tar -xzf artifact.tgz
+```
+
+The important difference is the **verification point**.
+
+The download and processing stages are separated by an integrity check. In a real supply-chain workflow, the verifier may also check signatures, provenance, publisher identity, or transparency logs.
+
+The safe pattern is not “always save to disk.” A temporary file without verification would simply make the dangerous chain longer.
+
+## Composition creates new semantics
+
+Consider:
+
+```text
+Tool A: retrieves data
+Tool B: interprets data
+```
+
+Neither tool is inherently unsafe.
+
+The relation becomes concerning when:
+
+```text
+A output is untrusted
+AND
+B treats input as executable/instructional
+AND
+no validation boundary exists
+```
+
+That reasoning applies beyond shell pipelines.
+
+Examples include:
+
+```text
+web fetch -> template renderer with code execution
+artifact download -> plugin loader
+model output -> dynamic interpreter
+retrieval result -> privileged system context
+tool output -> SQL/expression executor
+```
+
+The property is therefore conceptually broader than shell syntax even if `SKIL-SH-001` focuses on a concrete family.
+
+## Why AST parsing matters
+
+Shell syntax is structured.
+
+A parser can distinguish:
+
+```bash
+echo 'curl x | sh'
+```
+
+from:
+
+```bash
+curl x | sh
+```
+
+It can also distinguish pipelines, command substitutions, logical operators, and redirections more reliably than regex.
+
+This is a good example of the “parser before regex” principle when a formal grammar exists.
+
+## Control operators are not equally dangerous
+
+A shell AST may contain:
+
+```text
+|
+&&
+||
+;
+$()
+```
+
+These operators express different control/data relationships.
+
+A high-quality analyzer should ask:
+
+- does output from one command become input to another?
+- is the consumer an execution sink?
+- is the producer network-facing?
+- is an integrity check present?
+- are commands fixed or dynamic?
+- is the sequence merely documentation/test code?
+
+The operator is evidence, not the whole verdict.
+
+## Supply-chain perspective
+
+Remote-script pipelines are a special case of software supply-chain trust.
+
+A secure update path should be able to answer:
+
+```text
+Who published the artifact?
+Which exact version is this?
+Was integrity verified?
+Was provenance verified?
+Can the artifact change between review and execution?
+```
+
+SLSA’s provenance model is relevant because it formalizes information about how an artifact was produced.
+
+A tool chain that streams bytes directly into an interpreter bypasses most opportunities to answer those questions.
+
+## Time-of-check/time-of-use
+
+Even staged downloads can fail if verification and execution do not refer to the same object.
+
+For example:
+
+```text
+verify artifact A
+then later fetch artifact B from same mutable URL
+execute B
+```
+
+The architecture must bind verification to the actual bytes executed.
+
+Content-addressed storage and digest-based references are strong patterns.
+
+## Tool chaining inside agent frameworks
+
+An LLM orchestrator may create chains dynamically:
+
+```text
+search web
+→ download package
+→ unpack
+→ run helper
+```
+
+The security policy should classify each transition.
+
+A tool result should carry metadata such as:
+
+```json
+{
+  "origin": "external-network",
+  "integrity": "unverified",
+  "content_digest": "..."
+}
+```
+
+A later execution tool can refuse unverified artifacts.
+
+This places the trust boundary in the runtime rather than relying on the model to remember to verify.
+
+## Chaining and MCP
+
+MCP makes tool invocation explicit, but the agent can still compose multiple tools into a dangerous workflow.
+
+The host should therefore evaluate **sequences**, not only individual calls.
+
+A policy can state:
+
+```text
+network.fetch result
+must not reach process.execute
+unless artifact.verify succeeded on same digest
+```
+
+This is a form of temporal policy.
+
+## Evidence graph
+
+A useful static finding:
+
+```yaml
+property: tool-chaining
+control: SKIL-SH-001
+producer:
+  command: curl
+  trust: external
+transfer:
+  type: pipe
+consumer:
+  command: sh
+  sink: interpreter
+guard:
+  integrity_check: absent
+relation: TOOL_A_OUTPUT -> PIPE_OR_CHAIN -> EXECUTION_SINK
+confidence: high
+```
+
+This captures the chain directly.
+
+## False positives
+
+Do not flag:
+
+- strings showing examples;
+- security documentation;
+- pipelines that transform data without executing it;
+- verified staged workflows;
+- test fixtures;
+- or known-safe producer/consumer pairs where input remains data.
+
+Context and sink classification are decisive.
+
+## Agent-generated chains deserve plan-level review
+
+A model may propose a plan with individually approved tools but unsafe composition.
+
+This is analogous to confused-deputy problems: each capability is legitimate, but the sequence creates an unintended information or control flow.
+
+A runtime can evaluate a planned graph before execution:
+
+```text
+nodes = tool calls
+edges = data dependencies
+```
+
+Policy checks can then reject disallowed paths.
+
+## Safer execution pattern
+
+```text
+acquire
+  ↓
+materialize immutable artifact
+  ↓
+verify digest/signature/provenance
+  ↓
+scan if required
+  ↓
+approve
+  ↓
+execute in constrained environment
+```
+
+Not every workflow needs every step. The principle is that transitions from untrusted acquisition to executable semantics should be explicit.
+
+## Observability
+
+Audit logs should correlate:
+
+- producer tool;
+- artifact digest;
+- verification result;
+- consumer tool;
+- sandbox identity;
+- final side effects.
+
+Without correlation IDs or digests, it is hard to prove that the executed artifact was the verified artifact.
+
+## Deep dive: temporal policy for tool graphs
+
+Tool chaining is naturally modeled as a graph:
+
+```text
+nodes = tool invocations
+edges = data/control dependencies
+```
+
+Security policy can constrain allowed paths.
+
+For example:
+
+```text
+ExternalDownload
+  -> VerifyArtifact
+  -> ExecuteArtifact
+```
+
+is allowed, while:
+
+```text
+ExternalDownload
+  -> ExecuteArtifact
+```
+
+is denied.
+
+This is a stronger model than checking tool names independently.
+
+### Digest-carrying artifacts
+
+A useful design gives every materialized artifact an identity:
+
+```json
+{
+  "artifact_id": "sha256:...",
+  "origin": "https://...",
+  "verified": true,
+  "verification": {
+    "expected_digest": "...",
+    "signature": "..."
+  }
+}
+```
+
+The executor accepts an artifact ID rather than an arbitrary path or URL.
+
+This binds verification to the exact bytes that later execute.
+
+### Supply-chain caching
+
+Caches can reintroduce trust problems if verification metadata is lost.
+
+A cached artifact should retain:
+
+```text
+digest
+source
+verification result
+verification policy version
+```
+
+Otherwise the system may execute bytes that were downloaded earlier under weaker policy.
+
+### Human-readable plans versus executable graphs
+
+A model may describe:
+
+```text
+"Download the installer and run it."
+```
+
+The host should translate that into an explicit graph and insert required guards before execution.
+
+This illustrates an important principle: **the model's plan is a proposal, not the final execution topology**.
+
+### Detecting chains across files
+
+Static scanning can miss a chain split across helper scripts.
+
+A repository-level analyzer can build summaries:
+
+```text
+function fetch() -> produces external artifact
+function run(path) -> executes artifact
+main() -> fetch(); run(...)
+```
+
+Bounded interprocedural analysis allows `SKIL-SH-001`-style reasoning to expand beyond one-line pipelines while still reporting coverage limits.
+
+## Verification gates as named transitions
+
+A secure orchestrator can make trust upgrades explicit.
+
+Instead of a generic sequence:
+
+```text
+download -> run
+```
+
+represent:
+
+```text
+download -> unverified_artifact
+verify  -> verified_artifact
+run     accepts only verified_artifact
+```
+
+The type system or runtime contract prevents the execution tool from accepting the unverified type.
+
+This is a powerful design because it turns a security policy into an interface constraint.
+
+### Chain-aware approval
+
+A human approving “run tests” may not intend to approve a preceding network download.
+
+Approval UIs should summarize the complete dependency chain:
+
+```text
+Fetch artifact from publisher X
+Verify digest Y
+Execute in sandbox Z
+```
+
+The user can then approve the actual composed action.
+
+### Supply-chain metadata
+
+For external artifacts, the verification stage can evaluate:
+
+- immutable digest;
+- signature;
+- provenance;
+- publisher identity;
+- expected version;
+- build source.
+
+The richer the trust transition, the stronger the claim that the execution sink is no longer consuming arbitrary external bytes.
+
+### Chain mutation
+
+Agents may re-plan after a failure.
+
+The runtime should re-evaluate security policy when the graph changes.
+
+An approved plan:
+
+```text
+download -> verify -> execute
+```
+
+should not silently mutate into:
+
+```text
+download alternative -> execute
+```
+
+because verification failed.
+
+Policy gates belong to the actual executed graph, not the original narrative plan.
+
+## Final perspective
+
+Tool Chaining is a reminder that security properties are rarely additive.
+
+Two “safe” capabilities can form an unsafe path when one becomes the trust source for the other.
+
+`SKIL-SH-001` captures a concrete and important shell family. The broader architectural principle is:
+
+> **Do not let a low-trust producer feed an execution sink unless a deliberate verification boundary transforms the trust state of the exact artifact being consumed.**
+
+## References
+
+1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
+4. [MITRE CWE-78 – Improper Neutralization of Special Elements used in an OS Command](https://cwe.mitre.org/data/definitions/78.html)
+5. [SLSA – Specification v1.2](https://slsa.dev/spec/v1.2/)
+6. [OWASP GenAI – LLM03:2025 Supply Chain](https://genai.owasp.org/llmrisk/llm032025-supply-chain/)
+7. [NIST AI 100-1 – Artificial Intelligence Risk Management Framework (AI RMF 1.0), 2023](https://doi.org/10.6028/NIST.AI.100-1)
+8. [OWASP – Top 10 for Agentic Applications for 2026](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)

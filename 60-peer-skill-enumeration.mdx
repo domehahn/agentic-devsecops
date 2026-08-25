@@ -1,0 +1,182 @@
+---
+title: 'Peer Skill Enumeration: Preventing Unnecessary Discovery Across the Agent
+  Ecosystem'
+description: A deep essay on sibling-skill enumeration, directory discovery, capability
+  catalogs, graph-based delegation, least knowledge, isolation, and scoped metadata
+  APIs.
+date: '2026-07-30'
+author: dome
+topics:
+- agentic-engineering
+- devsecops
+tags:
+- Security Property
+- Peer Skill Enumeration
+- Agentic Security
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: Security Properties for Agentic Skills
+  order: 60
+---
+
+## Least knowledge for skill ecosystems
+
+Once skills become installable modules, the host effectively contains a local ecosystem. A skill that can list every sibling package and read every `SKILL.md` learns far more than it needs for most tasks: names, triggers, tool capabilities, internal descriptions and sometimes operational instructions.
+
+Peer discovery should follow least knowledge. A skill sees itself and the peers the host deliberately exposes for the current workflow; it should not infer the entire installed capability graph through raw filesystem enumeration. The original `skil` control model expresses the same idea as `ENUMERATE_OR_READ(OTHER_INSTALLED_SKILLS)`. That relation is more useful than a label such as “suspicious” because it specifies what must be evidenced and what a legitimate counterexample must break.
+
+## Property at a glance
+
+| Dimension | Assessment |
+| --- | --- |
+| Security property | Peer Skill Enumeration |
+| Relevant `skil` controls | `SKIL-BOUNDARY-PEER-SKILL` |
+| Primary analysis mechanism | peer-skill directory/manifest enumeration detection |
+| Declared coverage character | FULL |
+| Core security relation | `ENUMERATE_OR_READ(OTHER_INSTALLED_SKILLS)` |
+
+<Architecture>
+Code/Text → list/glob/read primitive → known skills directories/SKILL.md → own-vs-peer resolution → Finding
+</Architecture>
+
+## Delegation as an authorization graph
+
+A deliberately small positive fixture from the source property illustrates the boundary:
+
+```python
+for p in Path.home().joinpath(".claude", "skills").iterdir():
+    print((p / "SKILL.md").read_text())
+```
+
+The safe counterexample changes the semantics rather than merely deleting a suspicious token:
+
+```md
+Read only this skill package and files explicitly supplied by the user. Do not enumerate sibling skills.
+```
+
+The purpose of pairing them is not to teach exploitation. It is to force the detector to explain which relation changes between the two cases. A scanner that fires on both has learned vocabulary; a scanner that can explain the difference has begun to model the security property.
+
+## Why sibling enumeration matters
+
+Knowledge of peer skills enables targeted trigger collisions, social-engineering of tool names, dependency on undocumented internal capabilities and lateral discovery of sensitive automation. Reconnaissance is valuable even before any peer is directly compromised. In an agentic environment this distinction becomes operational because model-generated plans can select the relevant value or capability at runtime. The host therefore needs evidence that can survive from code review into execution policy.
+
+## Catalog APIs instead of raw directories
+
+Hosts can expose a filtered catalog containing stable identifiers and minimal metadata for approved delegation targets. This separates discovery from package internals and allows authorization, auditing and redaction at the query boundary. The design implication is that detection and authorization must remain separate: the scanner identifies the condition, while a policy layer decides whether the condition is permissible in this deployment context.
+
+## Delegation is a graph problem
+
+In multi-agent systems, each skill or agent can be modeled as a node and permitted delegation as edges. Security policy should define which edges exist. Raw filesystem visibility effectively reveals nodes and may encourage unreviewed edges outside the intended workflow. This also improves explainability. Reviewers can see the specific security fact rather than receiving a generic severity label, and future tooling can compose that fact with independent findings without double-counting the same evidence.
+
+## Identity and trigger integrity are related
+
+Knowing peer names and triggers can make shadowing or baiting attacks easier. Canonical namespaces, collision checks and host-controlled routing reduce the value of enumeration and prevent one skill from impersonating another. A useful implementation records both the positive observation and the guard that would have made the path safe. That makes remediation testable and turns false-positive handling into explicit logic instead of a collection of suppressions.
+
+## Isolation should be the default packaging model
+
+Each skill package should be mounted or materialized separately where practical. Shared global directories are convenient for installers but should not automatically become readable runtime state. The same model supports change detection: when identity, configuration or code changes, the platform can recompute the relation and show exactly which part of the previously reviewed assumption no longer holds.
+
+## Packaging and mount isolation
+
+For this property, a finding is defensible only when the scanner can reconstruct the relation `ENUMERATE_OR_READ(OTHER_INSTALLED_SKILLS)` from observable evidence. The relevant implementation controls are `SKIL-BOUNDARY-PEER-SKILL`. The mechanism—peer-skill directory/manifest enumeration detection—should therefore emit more than a Boolean match: reviewers need location, the structured observation, context resolution, the decision path, and the coverage state. The source material characterizes current coverage as FULL; that statement should travel with the finding rather than being lost in presentation.
+
+A compact machine-readable evidence record can retain the essentials without pretending to encode the entire analysis:
+
+```yaml
+property_order: 60
+property: "peer-skill-enumeration"
+controls: "SKIL-BOUNDARY-PEER-SKILL"
+mechanism: "peer-skill directory/manifest enumeration detection"
+security_relation: "ENUMERATE_OR_READ(OTHER_INSTALLED_SKILLS)"
+coverage: "FULL"
+evidence:
+  raw_location: true
+  structured_observation: true
+  context_resolved: true
+  safe_countercase_tested: true
+```
+
+## False positives, ambiguity, and safe counterexamples
+
+Developer tooling that builds a catalog or performs security inventory legitimately enumerates skills. Those tools should be recognized by an explicit administrative capability and produce structured inventory output instead of granting all ordinary skills directory access.
+
+Coverage should be treated as first-class security data. Deterministic syntax and configuration observations can often be reproduced exactly, while intent, future identity and runtime targets may remain uncertain. A mature scanner reports those asymmetries instead of collapsing them into one confidence score. This is particularly important in agentic systems, where the model may choose arguments and tools only after deployment.
+
+## Legitimate inventory tooling
+
+Use per-skill mounts, host-mediated catalog queries, scoped delegation tokens and canonical skill identities. Record discovery and delegation edges in traces so cross-skill behavior is reviewable after the fact.
+
+Defense in depth is intentionally redundant. Authoring lint, static analysis, contract verification, supply-chain verification, runtime policy and audit telemetry answer different questions. A strong result from one layer should never be used as a reason to remove the others.
+
+## Runtime observability
+
+True-positive fixtures should cover canonical violations, while true-negative fixtures should intentionally reuse similar tokens and syntax so the detector proves it understands context. Boundary cases should change one security-relevant fact at a time. Mutation tests can vary scope, target, normalization, version, guard, or sink. Holdout fixtures protect against overfitting to the public examples. For **Peer Skill Enumeration**, the most valuable tests are those that preserve the surface appearance while changing the underlying security relation; that is how the suite verifies semantics instead of vocabulary.
+
+For `skil`, implementation claims should be checked against the repository’s control matrix, external-control crosswalk, analyzer tests and any provider-specific tests. Provider-backed coverage—such as OSV or external rule packs—must state whether the provider actually ran.
+
+## Architecture drill-down: from finding to enforceable boundary
+
+A design review for this capability and isolation boundary property should begin by drawing the trust boundary rather than opening with a rule ID. Identify who controls the input, which component interprets it, what authority is available at that point, and which deterministic guard is expected to stop an unsafe transition. Then map `ENUMERATE_OR_READ(OTHER_INSTALLED_SKILLS)` onto that diagram. The purpose of peer-skill directory/manifest enumeration detection is to provide one or more observable edges in that model; it is not a substitute for the model itself. Reviewers should ask whether the same relation can be created indirectly through wrappers, generated configuration, aliases, cached metadata, transitive dependencies, or delegated tools. If so, the implementation needs either deeper static summaries or a runtime control at the unresolved boundary. Finally, confirm that evidence identifiers survive across CI, packaging and runtime so an observed denial or drift event can be traced back to the assumption approved in code review.
+
+The paired fixtures also serve as an architectural regression test. The unsafe example begins with `for p in Path.home().joinpath(".claude", "skills").iterdir():` while the safe example begins with `Read only this skill package and files explicitly supplied by the user. Do not enumerate s`. The important difference is the security relation, not the cosmetic text. If a refactor causes both to produce the same result, the detector or policy has lost a meaningful distinction.
+
+## Common implementation traps
+
+Several implementation mistakes recur around **Peer Skill Enumeration**, even when the high-level policy is correct:
+
+**1. Using a contract vocabulary that is too coarse to enforce.** A declaration such as 'network' is weak if the runtime cannot distinguish approved targets from arbitrary egress. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
+
+**2. Interpreting absence of static observation as proof that a capability is unused.** Dynamic frameworks, reflection and remote configuration require explicit coverage states and sometimes runtime evidence. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
+
+**3. Mounting global control-plane state for convenience.** Home directories, peer skill directories and MCP config files create ambient authority that bypasses the intended capability model. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
+
+A useful review discipline is to turn every exception into a scoped, expiring artifact with an owner and rationale. Permanent blanket suppressions hide whether the architecture improved; narrow exceptions preserve the signal and make technical debt measurable.
+
+## How this property composes with adjacent findings
+
+**Peer enumeration plus trigger or identity abuse.** Knowledge of installed peers can enable targeted trigger shadowing, imitation, or unauthorized delegation. A host can therefore correlate peer-discovery attempts with namespace collisions or delegation requests. The graph view makes lateral movement visible without treating every inventory operation as malicious.
+
+This composition model is deliberately graph-like: each detector contributes a typed fact and shared evidence identifiers allow a higher-level policy engine to connect them. That prevents one rule from becoming an overloaded catch-all and makes severity escalation explainable.
+
+## Operational signals and measurable assurance
+
+Track peer-directory enumeration attempts, catalog API requests, delegation edges created, namespace-collision warnings, and unauthorized peer reads. Inventory tooling should be identifiable as an administrative workload rather than blended into normal skill traffic.
+
+Metrics should be tied to an explicit denominator and deployment profile. A low finding count may mean strong controls, weak coverage, or simply little exposure; telemetry and coverage state are needed to tell those cases apart. Trend the data over time and review unexpected changes in both positive findings and scanner-negative regression behavior.
+
+## Engineering implications beyond the scanner
+
+Capability and isolation properties become most valuable when compiled into runtime controls. A declaration can drive egress filters, filesystem mounts, process brokers, secret scopes and delegation edges. Static observations then test whether implementation and contract agree, while runtime denials expose behaviors the static analyzers could not resolve. This feedback loop turns the contract into a living security boundary instead of documentation that gradually drifts from reality.
+
+The broader lesson is that an agentic skill is simultaneously text, code, configuration, a tool contract and a supply-chain artifact. Security review should follow the boundary that is actually crossed—data, authority, identity, execution, or control-plane visibility—rather than forcing every risk into the same detection template.
+
+## Validating the boundary
+
+A reviewer should be able to answer four questions before accepting this property as controlled:
+
+1. **What exact security relation is being asserted?** Here it is `ENUMERATE_OR_READ(OTHER_INSTALLED_SKILLS)`.
+2. **What concrete evidence supports the relation?** The evidence must come from peer-skill directory/manifest enumeration detection, not from a keyword alone.
+3. **What near-neighbor safe case has been tested?** The paired negative fixture should differ in the property, not merely in spelling.
+4. **What remains outside static visibility?** Runtime identity, dynamic values, provider state and policy decisions must be named explicitly.
+
+## Implementation evidence in `skil`
+
+- [Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – native control identifiers and scanner-positive/scanner-negative coverage.
+- [External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – property-level equivalence and coverage states.
+- [External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – implementation differences, mechanisms, and documented gaps.
+
+## Standards, research, and references
+
+1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
+4. [OWASP – Top 10 for Agentic Applications for 2026](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)
+5. [MITRE ATLAS – Adversarial Threat Landscape for AI Systems](https://atlas.mitre.org/)
+6. [NIST AI 100-1 – Artificial Intelligence Risk Management Framework (AI RMF 1.0), 2023](https://doi.org/10.6028/NIST.AI.100-1)
+7. [MITRE CWE-200 – Exposure of Sensitive Information to an Unauthorized Actor](https://cwe.mitre.org/data/definitions/200.html)
+
+## Conclusion
+
+**Peer Skill Enumeration** is valuable only when it is treated as a falsifiable security property rather than a checklist term. The goal is not to declare an entire skill “malicious” or “safe.” The goal is to state what boundary may be crossed, show the evidence that supports that statement, preserve the coverage limits, and make the safe countercondition explicit. That produces findings engineers can test, reviewers can reproduce, and runtime policy can enforce.

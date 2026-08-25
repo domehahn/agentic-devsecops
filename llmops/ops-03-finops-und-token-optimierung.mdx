@@ -1,0 +1,412 @@
+---
+title: "Part 3: FinOps & Token Optimization – Cost per Successful Agent Task"
+description: "A technical essay on FinOps for LLM and agent systems: token economics, context budgets, caching, model routing, retries, tool costs, and cost optimization against quality SLOs."
+date: "2026-08-22"
+author: "dome"
+topics:
+  - platform-engineering
+  - devsecops
+  - ai-engineering
+tags:
+  - FinOps
+  - Token Optimization
+  - Caching
+  - Cost Control
+draft: false
+series:
+  slug: "llmops-platform-infrastructure"
+  title: "LLMOps & Platform Infrastructure: The Agent Runtime"
+  order: 3
+ai:
+  assisted: true
+  humanReviewed: true
+  reviewedBy: "Dominik Hahn"
+  reviewedAt: "2026-08-22"
+---
+
+With traditional cloud workloads, costs can often be mapped relatively directly to CPU hours, storage, or requests. An agent system, by contrast, creates a chain of variable costs: multiple model calls, growing contexts, embeddings, retrieval, reranking, tool infrastructure, browser sessions, and repeated attempts.
+
+The central FinOps question is therefore not:
+
+> “How do we reduce tokens?”
+
+It is:
+
+> **“How do we reduce the cost per successfully completed outcome without violating quality and security objectives?”**
+
+The FinOps Foundation now treats AI cost management as a dedicated focus area; by 2026, token economics and the connection between usage, cost, and value have become central FinOps topics.[^1]
+
+---
+
+## 1. The Cost Model of an Agent
+
+Simplified:
+
+```text
+C_task =
+  Σ C_model_calls
++ Σ C_embeddings
++ Σ C_reranking
++ Σ C_tool_execution
++ C_runtime
++ C_storage
++ C_observability
+```
+
+For a model call:
+
+```text
+C_model ≈ input_tokens * p_in
+        + output_tokens * p_out
+        + cache_terms
+        + provider_specific_costs
+```
+
+Prices change frequently. An internal FinOps system should therefore treat them as versioned tariff data instead of hard-coding them into dashboards.
+
+---
+
+## 2. Cost per Token Is Not the Most Important Metric
+
+A cheap model that fails three times and then escalates to an expensive model can cost more than using a stronger model directly.
+
+```text
+Cheap model:
+0.2 cost × 5 attempts = 1.0
+success rate = 55%
+
+Strong model:
+0.8 cost × 1 attempt = 0.8
+success rate = 92%
+```
+
+The numbers are purely illustrative, but the principle is real: **price per call and price per successful outcome are different metrics.**
+
+A dashboard should therefore show at least:
+
+- Cost per Task,
+- Cost per Successful Task,
+- Cost per Accepted Output,
+- Cost per Human-Saved Hour,
+- Retry Cost,
+- Routing Escalation Cost.
+
+---
+
+## 3. Context Budgeting: The Largest Input Is Often Self-Generated
+
+Agents accumulate history:
+
+```text
+System instructions
++ repository context
++ user request
++ tool results
++ prior attempts
++ retrieved documents
++ test logs
+```
+
+After several iterations, the same old context is sent to the model again and again.
+
+A context manager should classify information:
+
+```text
+Must keep      -> current goal, constraints, latest state
+Summarize      -> older discussion
+Reference only -> large files / logs
+Drop           -> stale failed hypotheses
+Reload on need -> source files, documentation
+```
+
+The goal is not maximum compression. If a summary loses a critical constraint, the system saves tokens and creates an expensive failure.
+
+---
+
+## 4. Prompt Caching and Semantic Caching Are Different Things
+
+### Provider / Prefix Caching
+
+Reusable prompt segments can, with supported APIs, be reused more cheaply or efficiently. This is suitable for stable system instructions or large recurring contexts.
+
+### Semantic Caching
+
+A semantic cache tries to recognize similar requests and reuse a previous result.
+
+```text
+Query
+ ↓ embedding
+Similarity Search
+ ↓ high enough?
+ yes -> cached result
+ no  -> model
+```
+
+This is riskier. Two semantically similar questions can concern different current data or permissions.
+
+A safe cache key therefore has to incorporate context dimensions:
+
+```text
+tenant
+permissions
+data_version
+model_version
+policy_version
+tool_state
+```
+
+Caching must never bridge an authorization boundary.
+
+---
+
+## 5. Model Routing: Not Every Task Needs the Strongest Model
+
+Research such as RouteLLM shows that a router choosing between a stronger and a weaker model can substantially reduce costs in certain benchmark settings without reducing measured quality.[^2]
+
+This is not a universal production guarantee. It does, however, demonstrate an important architectural principle:
+
+```text
+Task
+ ↓
+Complexity / Risk Router
+ ├─ simple -> small / fast model
+ ├─ medium -> standard model
+ └─ hard / high risk -> stronger reasoning model
+```
+
+Routing should consider more than “complexity.” For security-relevant or irreversible actions, a stronger model may be justified even for a short task.
+
+---
+
+## 6. Cascades Optimize Expected Cost
+
+FrugalGPT investigated cascades of multiple LLMs as early as 2023 and showed substantial cost-quality advantages on the evaluated benchmarks.[^3]
+
+A cascade pattern:
+
+```text
+Small Model
+ ↓ confidence / verifier
+Pass? -> return
+Fail? -> Medium Model
+         ↓
+       Pass? -> return
+       Fail? -> Frontier Model
+```
+
+The key is the **verifier**. If the platform cannot detect when the small model is wrong, routing becomes a quality regression.
+
+---
+
+## 7. Retry Budgets: Failures Must Not Become Exponentially Expensive
+
+An agent calls model A, tool B times out, model A decides again, tool B is called again—and suddenly a loop forms.
+
+```yaml
+budgets:
+  max_model_calls: 12
+  max_tool_retries_per_operation: 3
+  max_total_tokens: 250000
+  max_wall_time: 30m
+```
+
+Backoff and error classification are also required. A `400 invalid request` should not be retried like a `503`.
+
+---
+
+## 8. Tool Costs Belong in the Same Equation
+
+A coding agent can occupy a large CI runner for ten minutes. A research agent can use paid search APIs. A data agent can generate expensive warehouse queries.
+
+Therefore:
+
+```text
+Agent Cost != LLM Cost
+```
+
+Tool gateways should return cost metadata:
+
+```json
+{
+  "tool": "warehouse.query",
+  "status": "success",
+  "estimated_cost_units": 0.42,
+  "rows_scanned": 18000000
+}
+```
+
+This allows an agent budget to govern tool and model costs together.
+
+---
+
+## 9. RAG Can Reduce Costs—or Increase Them
+
+Retrieval can reduce the need for very long contexts. But an advanced RAG pipeline can itself call several models:
+
+```text
+query rewrite
++ embedding
++ hybrid search
++ reranker
++ generator
+```
+
+RAG therefore has to be evaluated as a system. The relevant question is:
+
+> Does this additional retrieval step improve the success rate enough to justify its latency and cost?
+
+---
+
+## 10. Budget Enforcement Must Live Outside the Model
+
+A prompt such as
+
+> “Please use no more than 50,000 tokens”
+
+is not reliable cost control.
+
+The runtime must enforce limits:
+
+```text
+Budget Service
+   ↓ permits call?
+Model Gateway
+   ↓ reports usage
+Ledger
+   ↓ updates remaining budget
+```
+
+The agent may **request** more budget. It may not increase the budget itself.
+
+---
+
+## 11. Showback and Chargeback Need Stable Dimensions
+
+At minimum:
+
+```text
+team
+application
+agent
+use_case
+environment
+model_provider
+model
+run_id
+```
+
+This allows a platform team to determine whether rising costs are caused by growth, regression, or inefficient loops.
+
+A sudden 30% increase in `input_tokens/task` after a release, for example, can indicate context bloat even if traffic has remained constant.
+
+---
+
+## 12. Optimization as a Controlled Experiment
+
+Every cost optimization needs quality measurement:
+
+```text
+Baseline:
+quality = 91
+cost/task = 1.0
+
+Variant:
+quality = 90.8
+cost/task = 0.62
+```
+
+That can be an excellent optimization—provided 90.8 satisfies the accepted quality threshold.
+
+By contrast:
+
+```text
+quality = 76
+cost/task = 0.3
+```
+
+“70% cost savings” would be a misleading success claim here.
+
+---
+
+## 13. Context ROI: Not Every Token Has the Same Value
+
+A repository agent can receive 100,000 tokens of context and still miss a critical three-line interface definition. FinOps and quality therefore meet in **context selection**.
+
+For every context object, one can conceptually consider an expected utility:
+
+```text
+expected_value(context_i)
+-------------------------
+tokens(context_i)
+```
+
+Of course, this value cannot be predicted perfectly in advance. Evals can, however, show which context sources actually increase task success. A 20,000-token architecture document that is irrelevant to 95% of tasks may be better loaded only on demand.
+
+This leads to a principle: **context is a budget, not an archive.**
+
+## 14. Cost Optimization Must Not Bypass Security
+
+A smaller model may be cheaper, but it may validate tool arguments less reliably or follow policies less consistently. Likewise, disabling a reranker may make retrieval cheaper while increasing the frequency with which incorrect internal documents enter the context.
+
+Optimization experiments therefore need guardrail metrics:
+
+```text
+quality >= minimum
+security violations = 0
+policy compliance >= threshold
+latency <= target
+THEN minimize cost
+```
+
+Mathematically, this is closer to constrained optimization than to a simple `min(cost)` objective.
+
+## 15. Forecasting for Agents Is Behavior-Dependent
+
+Traffic forecasts alone are insufficient because an agent release can change consumption per task. A new planning pattern can turn five model calls into twelve.
+
+Forecasting should therefore decompose spend:
+
+```text
+monthly cost ≈
+number_of_tasks
+× calls_per_task
+× tokens_per_call
+× effective_price_per_token
++ tool/runtime costs
+```
+
+Each factor can change independently. This makes regressions much easier to diagnose than a single monthly spend curve.
+
+## 16. FinOps Needs Unit Economics for AI Work
+
+For an agent platform, a useful unit may be:
+
+- completed pull request,
+- investigated incident,
+- resolved support case,
+- reviewed document,
+- accepted research report.
+
+The closer the denominator is to actual business value, the more meaningful optimization becomes. `€/1M tokens` remains an infrastructure metric; `€/accepted task` is an operating metric.
+
+## Conclusion
+
+FinOps for agent systems cannot be reduced to token trimming. The economically relevant unit is the **successfully completed and accepted task**. A platform must therefore measure model calls, context size, retries, routing escalations, tool execution, runtime resources, and quality outcomes together.
+
+The strongest optimization patterns are context budgeting, provider/prefix caching, carefully scoped semantic caching, model routing, cascades, retry budgets, and external budget enforcement. None of these should be deployed without quality and security evals.
+
+Cost control is ultimately a systems-engineering discipline: not “use the cheapest model,” but **use the least expensive execution path that still satisfies the required quality, latency, and risk constraints.**
+
+---
+
+## Literature & Primary Sources
+
+[^1]: FinOps Foundation (2026). *FinOps for AI / AI cost management resources.* FinOps Foundation. https://www.finops.org/
+[^2]: Ong, I., et al. (2024). *RouteLLM: Learning to Route LLMs with Preference Data.* arXiv:2406.18665. https://arxiv.org/abs/2406.18665
+[^3]: Chen, L., Zaharia, M., & Zou, J. (2023). *FrugalGPT: How to Use Large Language Models While Reducing Cost and Improving Performance.* arXiv:2305.05176. https://arxiv.org/abs/2305.05176
+
+## Metadata
+
+**SEO Title:** FinOps for AI Agents: Cost per Successful Task  
+**Meta Description:** How to control the cost of production agent systems with context budgets, caching, model routing, retry budgets, tool-cost accounting, and quality SLOs.  
+**Slug:** `finops-und-token-optimierung`

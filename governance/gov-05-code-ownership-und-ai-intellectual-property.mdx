@@ -1,0 +1,305 @@
+---
+title: "Part 5: Code Ownership & AI Intellectual Property – Copyright, Licenses, and Provenance for AI-Generated Code"
+description: "The final governance essay on AI-generated source code: human authorship, open-source licenses, training data, text and data mining, code provenance, and robust enterprise controls."
+date: "2026-08-22"
+author: "dome"
+topics:
+  - compliance-automation
+  - security
+  - agentic-engineering
+tags:
+  - IP Law
+  - Code Ownership
+  - Open Source Licenses
+  - Copyright
+draft: false
+series:
+  slug: "ai-governance-compliance-eu-ai-act"
+  title: "AI Governance, Compliance & EU AI Act: Regulation in Practice"
+  order: 5
+ai:
+  assisted: true
+  humanReviewed: true
+  reviewedBy: "Dominik Hahn"
+  reviewedAt: "2026-08-22"
+---
+
+The question “Who owns the code written by an AI agent?” sounds like a single legal question. In reality, it combines at least four different problems: **copyright in the output, rights in training data, open-source licensing obligations, and contractual allocation or liability**. Collapsing these layers produces simple answers—and poor governance.
+
+For engineering organizations, a different approach is more useful: AI-generated code should not be treated as a magical special category, but as a **software artifact with uncertain provenance** that must pass the same—and in some cases stricter—quality, licensing, and evidentiary controls as code from other sources.
+
+This final part of the governance series therefore deliberately distinguishes between what is relatively clear in law, what depends on jurisdiction and individual circumstances, and what enterprises can control technically regardless of those uncertainties.
+
+---
+
+## 1. “AI Code Has No Copyright” Is Too Broad
+
+Under U.S. copyright law, the U.S. Copyright Office takes the clear position that copyright requires **human authorship**. Material generated purely by a generative system is therefore not protected merely because a machine produced it. At the same time, a work can contain protectable human contributions—for example creative selection, arrangement, or modification. The assessment is case-specific.[^1]
+
+This does not imply:
+
+> “A human reviewed the AI code, so the entire codebase is now automatically protected by copyright.”
+
+Review is quality control. Whether it creates an independently protectable human work depends on the nature and extent of the actual creative contribution and on the relevant jurisdiction.
+
+The same caution is required in Europe. EU copyright law builds on the concept of the author’s **own intellectual creation**. The classification of AI-generated output continues to evolve and cannot be answered with a single global rule.
+
+The governance implication is therefore: **Do not derive ownership from the tool; clarify it contractually and procedurally.**
+
+---
+
+## 2. Output Copyright and Training Data Are Two Different Questions
+
+A common line of reasoning is:
+
+```text
+Model was trained on open-source code
+        ↓
+Output comes from that code
+        ↓
+Output must carry the same license
+```
+
+That conclusion is not generally valid. Training and a concrete output involve different legal and technical questions.
+
+### Training Side
+
+In the EU, Directive (EU) 2019/790 addresses **Text and Data Mining (TDM)**. Article 4 provides, under certain conditions, an exception or limitation for reproductions and extractions of lawfully accessible works for TDM purposes, provided rights holders have not reserved the use in an appropriate manner; for online content, such reservation can be machine-readable.[^2]
+
+The AI Act additionally requires providers of general-purpose AI models to put in place a policy to comply with Union copyright law, including respecting such rights reservations.[^3]
+
+### Output Side
+
+Whether a concrete output infringes third-party rights or reproduces components subject to licensing obligations is a separate question. Relevant considerations may include whether the output reproduces substantial protected material nearly verbatim.
+
+For a company **using** a coding model, the abstract debate about the entire training corpus is therefore not the only operational issue. Another key question is:
+
+> Does the concrete commit contain third-party code or other material that triggers obligations?
+
+---
+
+## 3. Open-Source Licensing Obligations Attach to Concrete Material
+
+GPL, Apache 2.0, and MIT differ significantly. A serious policy should not reduce them to “open source = free to use.”
+
+- **MIT** requires, among other things, preservation of the copyright and license notice in relevant copies or substantial portions.[^4]
+- **Apache License 2.0** additionally contains patent provisions and NOTICE-related obligations.[^5]
+- **GPLv3** includes copyleft obligations for certain forms of distribution of modified or derivative software.[^6]
+
+If a model accidentally or on request reproduces a relevant code fragment nearly verbatim, the organization should treat the situation just as it would if a developer had copied that fragment from an external source.
+
+The right control point is therefore the pull request, not the philosophical question of whether the model “learned” or “copied.”
+
+---
+
+## 4. License Scanning Helps—but It Is Not a Universal Provenance Detector
+
+Software Composition Analysis (SCA) is excellent at identifying known dependencies, package metadata, and license information. Spontaneously generated code fragments are harder.
+
+```text
+AI-generated diff
+      ↓
+Dependency / SCA Scan
+      ↓
+Secret Scan
+      ↓
+Similarity / Provenance Checks
+      ↓
+Human Review for suspicious fragments
+```
+
+A scanner cannot reliably prove that every syntactically new fragment was independently created. Conversely, similarity does not automatically imply infringement: APIs, idiomatic patterns, and short trivial sequences can naturally look alike.
+
+A multi-stage approach is therefore appropriate:
+
+1. analyze known dependencies and license files,
+2. inspect unusually long or distinctive fragments,
+3. document provenance when a source is recognizable,
+4. escalate uncertainty rather than automatically declaring the code “clean.”
+
+---
+
+## 5. Provenance Matters More Than a `generated_by` Flag
+
+A simple marker such as
+
+```yaml
+generated_by: ai
+```
+
+says little. A useful provenance record should document at least:
+
+```yaml
+artifact: src/auth/token.ts
+change_id: pr-4812
+agent: coding-agent-v4
+model: provider/model-version
+human_reviewed: true
+verification:
+  tests: passed
+  sast: passed
+  license_scan: passed
+source_material:
+  - repository-context
+  - internal-api-documentation
+```
+
+Not every organization needs to retain prompts indefinitely. For audits, it is often more important to know **which output entered which commit and which checks preceded it**.
+
+This provenance can be combined with software supply-chain practices: commits, build artifacts, SBOMs, and attestations can include AI origin as an additional metadata dimension.
+
+---
+
+## 6. Contracts Answer Questions Copyright Does Not
+
+Enterprise model use is rarely governed by copyright alone. Contracts address matters such as:
+
+- permitted use,
+- treatment of inputs and outputs,
+- use of customer data for training,
+- warranty disclaimers,
+- IP indemnification,
+- liability caps,
+- audit and data-protection obligations.
+
+Two providers may offer technically comparable coding models while presenting very different contractual risk profiles.
+
+Model procurement therefore belongs in a **software supply-chain process**:
+
+```text
+Technical Evaluation
+        +
+Security Review
+        +
+Privacy Review
+        +
+Legal / IP Terms
+        +
+Operational Resilience
+        ↓
+Approved Model Catalog
+```
+
+A developer should not have to decide during a daily prompt which contract clauses are acceptable for a provider. That decision belongs upstream at the platform level.
+
+---
+
+## 7. The Role of Human Review: Important, but for a Different Reason
+
+Human review remains central—not because arbitrary review automatically creates copyright, but because responsibility for software should not be delegated away.
+
+A reviewer checks, among other things:
+
+- functionality,
+- architecture conformity,
+- security,
+- licensing anomalies,
+- understandable provenance,
+- test coverage,
+- unintended side effects.
+
+The developer’s role therefore shifts:
+
+```text
+before:
+Author -> writes code -> Review
+
+agentic:
+Engineer -> specifies + directs
+Agent    -> generates candidate
+Engineer -> reviews + modifies + assumes responsibility
+```
+
+That organizational assumption of responsibility matters regardless of how any individual jurisdiction classifies the copyright status of the output.
+
+---
+
+## 8. The AI Act and GPAI: Copyright Compliance Particularly Affects Providers
+
+The EU AI Act contains specific obligations for providers of general-purpose AI models. Article 53 requires, among other things, a policy to comply with Union copyright law and, in particular, to identify and respect reservations of rights under Article 4(3) of the DSM Directive.[^3]
+
+This is important because it separates two roles:
+
+```text
+GPAI Provider
+  -> Training / Model Governance / Copyright Policy
+
+Enterprise Deployer / Downstream Provider
+  -> own Use Case / Outputs / Integrations / Software License Process
+```
+
+A company using a model API does not automatically inherit every provider obligation. Conversely, provider compliance does not relieve the company of its own obligations for the code it actually generates and ships.
+
+---
+
+## 9. A Robust AI-Code Governance Process
+
+A pragmatic enterprise workflow can look like this:
+
+```text
+1. Approved Model Catalog
+2. Repository Policy / AGENTS.md
+3. Agent generates isolated diff
+4. Unit + Integration Tests
+5. SAST / Secret Detection
+6. Dependency + License Scan
+7. Similarity Review on suspicious output
+8. Human Code Review
+9. Provenance Attestation
+10. Merge through normal branch protection
+```
+
+Step 10 is crucial. AI-generated code should not bypass security mechanisms; it should pass through **the same or stricter gates** as human-authored code.
+
+---
+
+## 10. What Companies Should Not Claim
+
+Several apparently clear statements are risky in policy documents:
+
+**“AI-generated code is public domain.”**  
+Too broad and jurisdiction-dependent.
+
+**“Human review makes the code copyright-safe.”**  
+Review can contain human contributions, but it creates no universal legal guarantee.
+
+**“Our model provider guarantees that no GPL code will appear.”**  
+Make this claim only if the actual contractual commitment supports it—and retain operational controls even then.
+
+**“The SCA scan was green, so provenance is resolved.”**  
+SCA does not answer every fragment- or origin-related question.
+
+Good governance is less absolute and therefore more defensible.
+
+---
+
+## Conclusion
+
+AI-generated code changes the software supply chain, but it does not suspend its basic principles. Copyright in the output, training data, open-source licensing obligations, and contractual liability are **separate analytical layers**.
+
+The U.S. Copyright Office emphasizes human authorship and case-specific evaluation of human contributions. The EU regulates text and data mining and requires GPAI providers under the AI Act to maintain a copyright-compliance policy. None of these rules replaces an enterprise’s operational responsibility to review the code it actually ships.[^1][^2][^3]
+
+For DevSecOps, provenance is therefore the connecting idea: which artifact was created, which sources were known, which automated checks ran, who reviewed it, and which commit was approved? That evidence chain is far more valuable than a claim that AI code is inherently “safe” or “license-free.”
+
+This closes the governance series: **AI governance is not a document next to the system. It is the sum of role models, policies, technical controls, evidence, and human accountability.**
+
+---
+
+## Notes on the Sources
+
+Copyright and liability are jurisdiction-dependent and continue to evolve for generative systems. This article is not legal advice. The status of individual AI-generated outputs in particular can only be assessed in light of their concrete creation process and the applicable law.
+
+## Literature & Primary Sources
+
+[^1]: U.S. Copyright Office (2025). *Copyright and Artificial Intelligence, Part 2: Copyrightability.* https://www.copyright.gov/ai/Copyright-and-Artificial-Intelligence-Part-2-Copyrightability-Report.pdf
+[^2]: European Union (2019). *Directive (EU) 2019/790 on copyright and related rights in the Digital Single Market*, in particular Articles 3 and 4 on Text and Data Mining. https://eur-lex.europa.eu/eli/dir/2019/790/oj
+[^3]: European Union (2024). *Regulation (EU) 2024/1689 (AI Act)*, in particular Article 53. https://eur-lex.europa.eu/eli/reg/2024/1689/oj/deu
+[^4]: Open Source Initiative. *The MIT License.* https://opensource.org/license/mit
+[^5]: Apache Software Foundation. *Apache License, Version 2.0.* https://www.apache.org/licenses/LICENSE-2.0
+[^6]: Free Software Foundation. *GNU General Public License, Version 3.* https://www.gnu.org/licenses/gpl-3.0.html
+
+## Metadata
+
+**SEO Title:** AI Code Ownership: Correctly Classifying Copyright, Open Source & Provenance  
+**Meta Description:** Who owns AI-generated code? A deep dive into copyright, open-source licenses, training data, the EU AI Act, TDM, provenance, and enterprise controls.  
+**Slug:** `code-ownership-und-ai-intellectual-property`

@@ -1,0 +1,582 @@
+---
+title: "JavaScript and TypeScript Process Execution: Structural Detection in an Agent Runtime"
+description: "A deep technical essay on JS/TS process and dynamic-code execution: Tree-sitter ASTs, child_process APIs, shell semantics, eval/new Function, taint provenance, alias resolution, and safe executor design."
+date: "2026-07-30"
+author: "dome"
+topics:
+  - agentic-engineering
+  - devsecops
+tags:
+  - Security Property
+  - JavaScript
+  - TypeScript
+  - Process Execution
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: "Security Properties for Agentic Skills"
+  order: 40
+---
+
+Node.js makes process execution easy. A few lines can start a compiler, invoke Git, call a package manager, run a shell, or dynamically evaluate code. That power is essential for developer agents—and exactly why process-execution analysis must distinguish ordinary automation from paths where **untrusted data becomes executable behavior**.
+
+The source article frames the relevant relation as:
+
+```text
+JS_CALL ∈ {child_process.exec,execSync,spawn,spawnSync,eval,new Function}
+with dangerous dynamic argument
+```
+
+and documents `SKIL-JS-001` and `SKIL-JS-002` as the relevant `skil` controls. The current repository contains structural JS/TS analyzer coverage for these rule families.
+
+<KeyTakeaway>
+The security question is not “does this project use `child_process`?” It is “which process or code-execution primitive is invoked, how are its arguments constructed, and what trust level reaches those arguments?”
+</KeyTakeaway>
+
+## Why JavaScript call shape matters
+
+Compare:
+
+```typescript
+spawn("git", ["status", "--short"], { shell: false });
+```
+
+with:
+
+```typescript
+exec(userInput);
+```
+
+Both start external execution. Their semantics differ greatly.
+
+`exec` passes a command string through shell interpretation in common usage. `spawn` with a fixed executable, structured argv, and `shell: false` removes shell metacharacter interpretation.
+
+The latter can still be unsafe if the executable or arguments are dangerous, but the attack surface is narrower.
+
+## The source-positive example
+
+```typescript
+import { exec } from "node:child_process";
+exec(userInput);
+```
+
+This creates a direct flow:
+
+```text
+untrusted value
+    ↓
+exec(commandString)
+    ↓
+shell/process semantics
+```
+
+A structural detector can resolve the imported function and classify the call.
+
+A useful finding:
+
+```yaml
+property: js-ts-process-execution
+controls:
+  - SKIL-JS-001
+  - SKIL-JS-002
+resolved_callee: node:child_process.exec
+argument:
+  provenance: untrusted
+  form: dynamic_string
+execution_mode: shell_command
+confidence: high
+```
+
+## The source-negative form
+
+```typescript
+import { spawn } from "node:child_process";
+spawn("git", ["show", validatedSha], { shell: false });
+```
+
+This is safer because:
+
+- `git` is fixed;
+- shell interpretation is disabled;
+- arguments are separated;
+- the dynamic revision is expected to be validated.
+
+Again, `validatedSha` must be genuine validation rather than a reassuring variable name. Static evidence should ideally identify the validator or retain uncertainty.
+
+## Why Tree-sitter or another parser beats regex
+
+JavaScript and TypeScript syntax can place the same token sequence in many contexts:
+
+```typescript
+// exec(userInput)
+const example = "exec(userInput)";
+function exec(x: string) { /* unrelated local function */ }
+child_process.exec(userInput);
+```
+
+A parser distinguishes comments, strings, declarations, identifiers, member expressions, imports, and calls.
+
+Tree-sitter is attractive for security tooling because it provides robust parse trees across JS/TS/TSX and handles partially invalid code reasonably well.
+
+## Import and binding resolution
+
+The same API can appear as:
+
+```typescript
+import { exec } from "node:child_process";
+exec(cmd);
+```
+
+```typescript
+import * as cp from "node:child_process";
+cp.exec(cmd);
+```
+
+```typescript
+const { exec: run } = require("child_process");
+run(cmd);
+```
+
+A structural analyzer should normalize these forms toward a canonical callee identity.
+
+Perfect JavaScript resolution is difficult because values can be reassigned dynamically. Practical coverage can still handle common static import patterns.
+
+## `exec` versus `spawn`
+
+A secure review should understand the API semantics rather than treat all process primitives equally.
+
+### `exec`
+
+Typically takes a command string and invokes a shell. Dynamic input therefore has broad syntactic power.
+
+### `execFile`
+
+Executes a specified file without a shell by default, reducing shell injection risk.
+
+### `spawn`
+
+Uses an executable plus argument array; `shell: true` can reintroduce shell parsing.
+
+### `fork`
+
+Spawns another Node.js process/module and carries its own trust considerations.
+
+A scanner can use these distinctions to improve remediation guidance.
+
+## `eval` and `new Function`
+
+Dynamic JavaScript execution is a separate sink family:
+
+```typescript
+eval(modelOutput);
+new Function(modelOutput)();
+```
+
+If untrusted or model-generated strings reach these sinks, the data/code boundary collapses.
+
+A tool that legitimately evaluates a DSL should use a constrained parser or dedicated interpreter rather than full JavaScript evaluation.
+
+## Package-runner semantics
+
+Developer agents often execute package tooling:
+
+```text
+npm
+pnpm
+yarn
+npx
+```
+
+These tools may execute package lifecycle scripts or fetched binaries. Even without a shell, the operation can cross a supply-chain execution boundary.
+
+Process security therefore needs callee-aware semantics, not only shell semantics.
+
+A fixed `npm test` invocation is different from running an arbitrary package name derived from untrusted input.
+
+## Taint propagation
+
+A useful taint model labels sources:
+
+```text
+HTTP request
+user prompt
+model output
+tool output
+environment
+retrieved document
+```
+
+and propagates them through:
+
+- assignments;
+- template literals;
+- arrays/objects;
+- simple function summaries;
+- and destructuring.
+
+Template literals are especially important:
+
+```typescript
+const cmd = `git show ${revision}`;
+```
+
+If passed to `exec`, the dynamic segment has shell significance.
+
+## Template strings are not automatically vulnerable
+
+A template literal used for display is harmless:
+
+```typescript
+console.log(`Selected revision: ${revision}`);
+```
+
+The sink determines the security meaning.
+
+This reinforces the source-to-sink approach.
+
+## Validation and allowlists
+
+Strong validation narrows the allowed domain.
+
+For a Git SHA:
+
+```text
+40 hexadecimal characters
+```
+
+For an action:
+
+```text
+enum of known commands
+```
+
+For a path:
+
+```text
+canonical path inside workspace root
+```
+
+The analyzer should recognize known validators where feasible, but avoid trusting arbitrary function names.
+
+## Shell option propagation
+
+A subtle pattern is:
+
+```typescript
+spawn(tool, args, { shell: userControlledFlag });
+```
+
+Even if the command itself is structured, a dynamic `shell` flag changes interpretation semantics.
+
+This illustrates why tool parameter abuse and process execution analysis can compose.
+
+## TypeScript types help developers, not attackers
+
+TypeScript can express:
+
+```typescript
+type Action = "status" | "show";
+```
+
+That is useful if runtime data is actually validated into `Action`.
+
+Type annotations disappear at runtime. A value arriving from JSON is not safe because a programmer cast it:
+
+```typescript
+const action = req.body.action as Action;
+```
+
+Static analysis should distinguish compile-time assertions from runtime validation when possible.
+
+## Framework wrappers
+
+Execution may be hidden behind helpers:
+
+```typescript
+runCommand(...)
+executeProcess(...)
+shell(...)
+```
+
+A scanner can use local function summaries to track wrappers around known sinks.
+
+Beyond local code, external-package behavior may require curated summaries or remain outside static coverage.
+
+## False-positive control
+
+Negative fixtures should include:
+
+- comments and strings;
+- fixed `spawn` calls;
+- safe `execFile` use with fixed executable and validated args;
+- test mocks;
+- wrapper functions that never call a sink;
+- documentation;
+- `eval` appearing as an object property name rather than global dynamic execution.
+
+Structural context is essential.
+
+## Evidence and coverage
+
+A strong finding can report:
+
+```yaml
+property: js-ts-process-execution
+resolved_api: child_process.exec
+source:
+  symbol: userInput
+  trust: untrusted
+flow:
+  - userInput
+  - exec(userInput)
+coverage:
+  import_resolution: verified
+  local_dataflow: verified
+  external_wrappers: not_observable
+confidence: high
+```
+
+This communicates exactly what the scanner knows.
+
+## Runtime architecture: use a command broker
+
+For agentic developer tools, the best defense may be to centralize process execution behind a broker.
+
+Instead of letting every skill call `child_process` directly:
+
+```text
+skill
+  ↓
+command broker
+  ↓
+allowed executable?
+allowed args?
+workspace scope?
+network needed?
+approval needed?
+  ↓
+spawn(shell=false)
+```
+
+The broker can log and enforce policy consistently.
+
+## Sandboxing remains defense in depth
+
+Even safe process APIs execute powerful programs.
+
+A workspace agent should generally run with:
+
+- constrained filesystem access;
+- limited network;
+- no host socket;
+- no privileged container mode;
+- bounded resources;
+- and short-lived credentials.
+
+Process-analysis controls reduce the probability of dangerous invocation; sandboxing limits consequences.
+
+## Relationship to code generation
+
+Developer agents often generate TypeScript and then run tests. That is legitimate output-to-execution by design.
+
+The secure workflow is:
+
+```text
+generate code
+→ write only inside workspace
+→ inspect diff
+→ run bounded test command in sandbox
+→ collect result
+```
+
+The model should not be allowed to choose an arbitrary host command simply because testing requires *some* process execution.
+
+## Deep dive: Node.js execution wrappers and package semantics
+
+Many real projects wrap process execution behind utilities:
+
+```typescript
+await execa("git", ["status"]);
+```
+
+or framework abstractions.
+
+A scalable analyzer can maintain summaries for common libraries:
+
+```text
+execa(command,args) -> process sink, shell false by default
+execaCommand(string) -> command-string sink
+```
+
+These summaries should be versioned because library semantics can change.
+
+### Environment inheritance
+
+A process can receive sensitive environment variables even when arguments are safe.
+
+Secure execution should consider:
+
+```typescript
+spawn("tool", args, {
+  env: filteredEnv,
+  shell: false
+});
+```
+
+Rather than automatically inheriting the full parent environment.
+
+This connects process execution with credential exposure.
+
+### Working-directory confinement
+
+A fixed command can still operate on unintended files if `cwd` is attacker-controlled.
+
+A process broker should canonicalize and constrain:
+
+```text
+cwd ∈ allowed workspace roots
+```
+
+### Signal and lifecycle handling
+
+Agent runtimes should propagate cancellation to child processes. Otherwise a user may cancel the agent while spawned tools continue running.
+
+A robust broker tracks process groups, deadlines, and cleanup.
+
+### Package scripts
+
+Commands such as:
+
+```text
+npm install
+npm test
+```
+
+can execute lifecycle scripts from the repository.
+
+That may be intended in a developer sandbox, but it means “fixed command” is not synonymous with “no arbitrary code execution.”
+
+The effective trust source becomes the package manifest and dependency tree.
+
+This is why sandbox boundaries remain essential even when `child_process` arguments are well structured.
+
+### Type-aware linting and AST security complement each other
+
+TypeScript’s compiler can prove some structural facts, while Tree-sitter offers language-syntax coverage without requiring successful type checking.
+
+A layered scanner can use:
+
+```text
+Tree-sitter for syntax and call shapes
+TypeScript compiler metadata where available
+taint for provenance
+runtime broker for enforcement
+```
+
+No single layer needs to solve the entire problem.
+
+## Process broker design in more detail
+
+A centralized execution broker can expose a deliberately small API:
+
+```typescript
+run({
+  executable: ExecutableId,
+  args: ValidatedArg[],
+  cwd: WorkspacePath,
+  timeout: Duration,
+  envProfile: EnvProfile
+})
+```
+
+The skill cannot provide an arbitrary executable path if `ExecutableId` is an enum resolved by the broker.
+
+### Environment profiles
+
+Instead of inheriting `process.env`, define profiles:
+
+```text
+default-clean
+git-readonly
+build-with-registry-token
+```
+
+The broker materializes only the required variables for the child process.
+
+This dramatically reduces accidental secret inheritance.
+
+### Filesystem and network coupling
+
+A process can be safe syntactically while dangerous through ambient runtime authority.
+
+Therefore the broker should couple execution with sandbox policy:
+
+```text
+process identity
+filesystem mounts
+network policy
+resource limits
+```
+
+The command and sandbox are one authorization decision.
+
+### Child-process output is also untrusted
+
+Process execution is not only a sink. Its stdout/stderr become new untrusted sources.
+
+If the agent feeds command output back into planning, cross-context and output-handling rules apply.
+
+This closes the loop:
+
+```text
+agent input
+→ process
+→ process output
+→ model
+→ next process
+```
+
+Security analysis should not stop after the first execution.
+
+### Dependency scripts and repository trust
+
+Running `npm test` can execute repository-controlled scripts. In a code-review agent that scans untrusted pull requests, the repository itself is an attacker-controlled source.
+
+The safe architecture executes such commands in a disposable sandbox with no host credentials and constrained network.
+
+This is a central DevSecOps lesson: a fixed process command can still execute untrusted *project code*.
+
+## Final perspective
+
+JavaScript and TypeScript process execution is not a binary “uses child_process / does not use child_process” property.
+
+The meaningful analysis reconstructs:
+
+```text
+callee identity
++ execution semantics
++ argument structure
++ source provenance
++ validation
++ shell mode
++ runtime boundary
+```
+
+`SKIL-JS-001` and `SKIL-JS-002` provide structural signals for that analysis.
+
+The review question is:
+
+> **Can data controlled by a user, model, tool, or external source influence code or process execution beyond a narrowly validated argument domain?**
+
+If yes, the execution boundary needs to become more explicit.
+
+## References
+
+1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
+4. [MITRE CWE-78 – Improper Neutralization of Special Elements used in an OS Command](https://cwe.mitre.org/data/definitions/78.html)
+5. [MITRE CWE-94 – Improper Control of Generation of Code](https://cwe.mitre.org/data/definitions/94.html)
+6. [NIST AI 100-1 – Artificial Intelligence Risk Management Framework (AI RMF 1.0), 2023](https://doi.org/10.6028/NIST.AI.100-1)
+7. [OWASP – Top 10 for Agentic Applications for 2026](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)
