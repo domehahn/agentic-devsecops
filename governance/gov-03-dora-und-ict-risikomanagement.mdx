@@ -1,0 +1,310 @@
+---
+title: "Part 3: DORA & ICT Risk Management – LLM Providers as Part of the Digital Supply Chain"
+description: "A technical long-form essay on DORA when using LLM and agent platforms: ICT risk, third parties, contracts, concentration risk, exit strategies, resilience testing, and evidence."
+date: "2026-08-22"
+author: "dome"
+topics:
+  - compliance-automation
+  - security
+  - agentic-engineering
+tags:
+  - DORA
+  - ICT Risk
+  - Financial Services
+  - Resiliency
+draft: false
+series:
+  slug: "ai-governance-compliance-eu-ai-act"
+  title: "AI Governance, Compliance & EU AI Act: Regulation in Practice"
+  order: 3
+ai:
+  assisted: true
+  humanReviewed: true
+  reviewedBy: "Dominik Hahn"
+  reviewedAt: "2026-08-22"
+---
+
+From a developer’s perspective, a cloud LLM often looks like an API. For a regulated financial entity, that view is too narrow. As soon as an external service is integrated into a business-relevant process, an **ICT dependency** emerges: networking, identity, data transfer, model availability, API versions, rate limits, and provider operations become part of the organization’s own operational risk.
+
+This perspective lies at the center of the **Digital Operational Resilience Act (DORA), Regulation (EU) 2022/2554**. DORA has applied since 17 January 2025 and covers a broad range of financial entities. It establishes an EU-wide harmonized framework for ICT risk management, incident management, resilience testing, and ICT third-party risk.[^1]
+
+DORA is not a dedicated “AI regulation.” An LLM does not fall under special DORA treatment merely because it is AI. What matters is whether and how an external technology is incorporated as an **ICT service**, which function it supports, and how critical that function is to the financial entity.
+
+---
+
+## 1. Outsourcing Does Not Transfer Accountability
+
+Article 28 establishes a principle that is relevant to every AI platform architecture: a financial entity remains responsible for its regulatory obligations even when it uses ICT services from third parties.[^1]
+
+This is the opposite of the architectural assumption that “the provider takes care of it.”
+
+```text
+Financial Entity
+     |
+     +--> SaaS Agent Platform
+     |
+     +--> Model API Provider
+     |
+     +--> Vector DB / Cloud Storage
+     |
+     +--> Observability Provider
+```
+
+Each of these components can create a third-party dependency. Governance must therefore capture the **entire technical supply chain**, not merely the contract with the most visible model provider.
+
+---
+
+## 2. Criticality Starts with the Business Service, Not the Model Name
+
+Whether a system uses GPT, Claude, Gemini, or a self-hosted model says little about criticality on its own. What matters is the function that depends on it.
+
+An internal agent that produces non-binding meeting summaries has a different risk profile from a system that:
+
+- supports credit processes,
+- automates incident response,
+- influences trading or payment processes,
+- prepares regulatory reporting,
+- executes privileged changes in production systems.
+
+A robust analysis therefore begins with service mapping:
+
+```text
+Business Service
+      ↓
+Critical / Important Function?
+      ↓
+Supporting Application
+      ↓
+Agent / AI System
+      ↓
+Model + Tools + Data Stores
+      ↓
+ICT Third Parties + Subcontractors
+```
+
+Only then can exit risk, concentration, and contractual requirements be assessed meaningfully.
+
+---
+
+## 3. The Register of Information as a Mirror of Architecture
+
+DORA requires financial entities to maintain and update a register of information covering contractual arrangements for ICT services. For modern AI stacks, this is more demanding than maintaining a list of SaaS contracts.[^1]
+
+An agent may, for example, run through a platform provider that in turn:
+
+- uses an external foundation model,
+- sends telemetry to an observability service,
+- executes code in another cloud service,
+- processes data through subprocessors.
+
+Technical inventory and vendor management therefore cannot operate independently.
+
+A CMDB or service catalog can model the relevant relationships in machine-readable form:
+
+```yaml
+service: fraud-investigation-assistant
+business_function: fraud-operations
+criticality: high
+components:
+  - type: agent-runtime
+    provider: internal
+  - type: model-api
+    provider: external-provider-a
+  - type: object-storage
+    provider: cloud-provider-b
+fallback:
+  model-api: internal-vllm-cluster
+```
+
+This does not automatically replace the regulatory register, but it can substantially improve its data quality.
+
+---
+
+## 4. Article 30: Contracts Must Reflect Technical Reality
+
+Article 30 contains key contractual requirements for ICT services. Among other things, functions and services must be clearly described, and locations of service provision and data processing must be transparent. Additional requirements apply where ICT services support critical or important functions.[^1]
+
+For LLM and agent services, contract reviews should explicitly address technical questions such as:
+
+- In which regions are prompts and outputs processed?
+- Which subcontractors may be involved?
+- How will location or subcontracting changes be communicated?
+- Which service levels are guaranteed?
+- Which support and information obligations apply during incidents?
+- Which audit and access rights exist where required?
+- How are data exported or deleted at contract termination?
+- What exit assistance is provided?
+
+A marketing claim such as “Enterprise Grade” answers none of these questions.
+
+---
+
+## 5. Concentration Risk: Multi-Cloud Is Not Automatically Multi-Provider
+
+DORA requires risks arising from ICT third-party relationships, including concentration risks, to be taken into account.[^1]
+
+With AI, concentration can remain hidden. Two different applications may use different SaaS products while ultimately depending on the same model or hyperscaler.
+
+```text
+App A ---> Vendor X ---\
+                       +--> Model Provider P ---> Cloud Region R
+App B ---> Vendor Y ---/
+```
+
+At the application layer, the architecture looks diversified. At the infrastructure layer, a single point of failure remains.
+
+Concentration analysis should therefore examine several layers:
+
+1. **Commercial Provider**
+2. **Underlying Model Provider**
+3. **Cloud / Region**
+4. **Identity Provider**
+5. **Network Path**
+6. **Critical Data Store**
+
+A fallback to a second API endpoint of the same backend does not necessarily reduce concentration risk.
+
+---
+
+## 6. Exit Strategy Means More Than “We Have a Second API Key”
+
+A robust exit strategy must be technically executable. LLM systems can create several forms of lock-in:
+
+- proprietary tool-calling schemas,
+- provider-specific prompt templates,
+- embedding vector spaces,
+- fine-tuning artifacts,
+- safety and moderation APIs,
+- model-specific evaluation thresholds,
+- context and file formats.
+
+An abstract provider interface helps:
+
+```typescript
+interface ModelGateway {
+  generate(request: ModelRequest): Promise<ModelResponse>;
+  embed(request: EmbeddingRequest): Promise<EmbeddingResponse>;
+}
+```
+
+But it does not remove lock-in. Another model may accept the same request and still produce semantically different results. A real exit test must therefore examine **quality regression** and safety behavior as well.
+
+```text
+Provider A Failure
+      ↓
+Switch Provider
+      ↓
+Compatibility Tests
+      ↓
+Quality / Safety Eval
+      ↓
+Controlled Activation
+```
+
+---
+
+## 7. Resilience Testing for AI Dependencies
+
+DORA establishes a comprehensive digital operational resilience testing program; for certain entities this also includes threat-led penetration testing. The European Supervisory Authorities publish additional implementation materials and technical standards.[^1][^2]
+
+For an agent stack, tests should not be limited to HTTP availability. Relevant failure modes include:
+
+- model API returns `429` for an extended period,
+- provider latency rises from 2 to 30 seconds,
+- context window or model version changes,
+- tool calling returns incompatible structures,
+- an embedding model is deprecated,
+- a region becomes unavailable,
+- credentials are revoked,
+- the provider returns functionally degraded answers despite HTTP 200.
+
+The last point highlights a special property of AI systems: **technical availability and functional quality are separate SLO dimensions**.
+
+---
+
+## 8. Incident Management: Not Every Bad Answer Is a DORA Major Incident
+
+DORA contains obligations for classifying, handling, and—in relevant cases—reporting major ICT-related incidents.[^1]
+
+It would be wrong, however, to treat every chatbot hallucination as a reportable DORA incident. Classification depends on the regulatory criteria, the impact, and the affected service.
+
+A technical incident model should nevertheless include AI-specific signals:
+
+```text
+Availability Incident
+Performance Incident
+Security Incident
+Data Confidentiality Incident
+Model Quality Degradation
+Tool Execution Failure
+Provider Policy / API Breaking Change
+```
+
+A domain- and regulation-specific classification process then determines which category and reporting obligations are triggered.
+
+---
+
+## 9. DORA, the AI Act, and the GDPR Apply Side by Side
+
+A production agent in a financial institution can simultaneously touch several regulatory regimes:
+
+```text
+DORA        -> operational resilience + ICT third-party risk
+AI Act      -> AI-specific obligations depending on role / system
+GDPR        -> processing of personal data
+Sector Law  -> sector-specific supervisory obligations
+```
+
+These rules should not be implemented in separate governance silos. A model inventory, vendor register, DPIA, AI risk assessment, and service catalog partly describe the same technical reality from different perspectives.
+
+The objective should therefore be a shared **control-plane model** from which different compliance views can be generated.
+
+---
+
+## 10. A DORA-Compatible AI Control Loop
+
+A practical process can look like this:
+
+```text
+1. Register AI Service
+2. Map Business Function
+3. Identify ICT Third Parties
+4. Assess Criticality + Concentration
+5. Verify Contractual Controls
+6. Define SLOs + Fallbacks + Exit Plan
+7. Test Failure Modes
+8. Collect Evidence
+9. Monitor Changes
+10. Reassess on Material Change
+```
+
+Step 9 is especially important. Cloud AI products change models, regions, features, and subprocessors far more frequently than traditional multi-year outsourcing arrangements. Continuous vendor risk is therefore not a luxury; it is the technical consequence of dynamic platforms.
+
+---
+
+## Conclusion
+
+DORA turns the question “Which model is best?” into a more robust one: **Which business function depends on this ICT service, which dependencies arise, and can we safely switch the service or tolerate its failure?**
+
+For agent systems, this means provider abstraction, fallbacks, exit plans, contractual controls, service mapping, and testing must be designed together. A second API key is not yet a resilience strategy; a contract is not yet a tested exit.
+
+DORA requires financial entities in particular to manage ICT third-party risks as part of their own ICT risk management. Responsibility remains with the regulated entity.[^1]
+
+The next part shifts the focus from availability and third parties to the data itself: **How can agentic work with personal data be designed in a GDPR-compliant way without destroying observability and functionality?**
+
+---
+
+## Notes on the Sources
+
+This article is a technical interpretation, not legal advice. Whether a particular LLM or agent provider is an ICT third-party service provider in a concrete DORA context, and which detailed obligations apply, depends on the contractual setup, function, criticality, and regulatory role of the financial entity.
+
+## Literature & Primary Sources
+
+[^1]: European Union (2022). *Regulation (EU) 2022/2554 on digital operational resilience for the financial sector (DORA).* EUR-Lex. https://eur-lex.europa.eu/eli/reg/2022/2554/oj/deu
+[^2]: European Supervisory Authorities (ESA). *Digital Operational Resilience Act – Regulatory Technical Standards and implementation materials.* https://www.eba.europa.eu/regulation-and-policy/operational-resilience
+
+## Metadata
+
+**SEO Title:** DORA for LLMs & AI Agents: ICT Risk, Providers, and Exit Strategies  
+**Meta Description:** DORA in practice: how financial institutions manage LLM providers, agent platforms, third-party risk, concentration, exit, and resilience technically.  
+**Slug:** `dora-und-ict-risikomanagement`

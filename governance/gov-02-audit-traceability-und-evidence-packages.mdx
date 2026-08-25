@@ -1,0 +1,312 @@
+---
+title: "Part 2: Audit Traceability & Evidence Packages – From Logs to Defensible Evidence"
+description: "A technical essay on the auditability of agentic systems: event logging, provenance, evidence packages, integrity, privacy, and the boundary between regulatory obligation and engineering pattern."
+date: "2026-08-22"
+author: "dome"
+topics:
+  - compliance-automation
+  - security
+  - agentic-engineering
+tags:
+  - Audit Traceability
+  - Evidence Packages
+  - Compliance
+  - Audit Log
+draft: false
+series:
+  slug: "ai-governance-compliance-eu-ai-act"
+  title: "AI Governance, Compliance & EU AI Act: Regulation in Practice"
+  order: 2
+ai:
+  assisted: true
+  humanReviewed: true
+  reviewedBy: "Dominik Hahn"
+  reviewedAt: "2026-08-22"
+---
+
+An agent that only generates text already leaves behind decisions that can be difficult to interpret. An agent that modifies source code, provisions infrastructure, or calls external APIs additionally creates **real-world side effects**. The central governance question therefore shifts from “What answer did the model produce?” to “What state change occurred, and on the basis of which authorized decision?”
+
+This is where **audit traceability** begins. It is not the same as maximum logging. A data graveyard containing complete prompts, chain-of-thought-like intermediate text, and raw tool outputs can be problematic for privacy, security, and still be almost useless to auditors. Good traceability instead creates a **reconstructable chain of evidence**.
+
+An *Evidence Package* is a useful engineering pattern for this purpose. The term must be classified correctly, however: the EU AI Act does not prescribe a universal ZIP format called an “Evidence Package.” Different rules require documentation, logging, risk management, or evidence. The Evidence Package is an architectural approach for bringing those records together reproducibly.[^1][^2]
+
+---
+
+## 1. Auditability Starts with a Precise Question
+
+An auditor does not necessarily need to reconstruct every internal model state. Questions such as the following are usually more relevant:
+
+- Which system and model version were involved?
+- Which identity triggered the execution?
+- Which policies applied at that point in time?
+- Which tools was the agent permitted to use?
+- Which tools did it actually call?
+- Which external resources or artifacts were read?
+- Which files, tickets, data, or systems were changed?
+- Which tests and security checks ran?
+- Where did human approvals occur?
+- Can it be demonstrated that the evidence was not modified afterwards?
+
+This produces a much better data model than “just log everything.”
+
+---
+
+## 2. What the AI Act Actually Says About Logging
+
+For **high-risk AI systems**, Article 12 requires the technology to enable automatic recording of relevant events throughout the lifecycle. The logging capability is intended, among other things, to support traceability, help identify risks or substantial changes, and enable post-market monitoring.[^1]
+
+Article 19 requires providers of high-risk AI systems to retain automatically generated logs under their control for a period appropriate to the intended purpose and, in principle, for **at least six months**, unless Union or national law—particularly data-protection law—requires otherwise.[^1]
+
+These are concrete requirements. They do not imply that every company must store every token from every internal chatbot for six months. The first question is whether the relevant provision applies to the system and to the organization’s role at all.
+
+This distinction is fundamental for compliance engineering:
+
+```text
+Legal Requirement
+      ↓
+Required Evidence Objective
+      ↓
+Technical Logging Design
+      ↓
+Retention + Access + Integrity Controls
+```
+
+Not the other way around.
+
+---
+
+## 3. The Evidence Package as an Engineering Pattern
+
+For an agent run, an evidence package might logically look like this:
+
+```text
+run-01J.../
+├── manifest.json
+├── identity.json
+├── policy-decision.json
+├── model.json
+├── tool-events.jsonl
+├── changes.patch
+├── test-results.xml
+├── security-scan.sarif
+├── approvals.json
+├── provenance.json
+└── manifest.sig
+```
+
+### `manifest.json`
+
+Contains the run ID, timestamps, artifact hashes, schema version, and references to the systems involved.
+
+### `identity.json`
+
+Documents the initiator and executing workload identity. Rather than duplicating personal data in every event, stable pseudonymous identifiers should be used wherever possible.
+
+### `policy-decision.json`
+
+Records which policy version governed tool access or an approval decision.
+
+```json
+{
+  "policy": "agent-production-change@3.4.1",
+  "decision": "require_human_approval",
+  "reason": "environment=production && capability=write"
+}
+```
+
+### `tool-events.jsonl`
+
+Contains structured tool calls. The separation between **intent**, **authorization**, and **execution result** is important.
+
+### `provenance.json`
+
+Links generated artifacts to inputs, build environment, model version, and verification steps.
+
+The goal is not a forensic novel, but a directed graph of verifiable claims.
+
+---
+
+## 4. Why Complete Prompt Transcripts Are Problematic
+
+The intuitive design of many early agent platforms was:
+
+```text
+"For audit, we will simply store the complete chat."
+```
+
+That can create several problems at once:
+
+1. **Personal data:** prompts and tool outputs can contain names, IDs, support cases, or other personal data.
+2. **Secrets:** agents may see tokens, configurations, stack traces, or sensitive database content.
+3. **Retention conflicts:** a desire for long audit retention can collide with data minimization and deletion obligations.
+4. **Signal-to-noise:** a thousand-line agent trace does not automatically answer who authorized a critical action.
+
+The GDPR requires, among other things, data minimization and privacy by design; Article 32 requires appropriate security measures.[^3]
+
+An evidence system should therefore distinguish three layers:
+
+```text
+Operational Trace   -> short-lived, detailed, debugging
+Audit Evidence      -> minimized, structured, longer-lived
+Business Record     -> domain record with its own retention policy
+```
+
+A trace may contain clues about a decision. An audit record should model the decision **explicitly**.
+
+---
+
+## 5. Integrity: A Log Is Not Yet Evidence
+
+If a privileged administrator can modify events afterwards, an audit log has limited evidentiary value. Integrity requires additional mechanisms.
+
+A simple foundation is content addressing:
+
+```text
+H(artifact) = SHA-256(bytes)
+```
+
+The manifest contains a hash for each artifact. The manifest itself is then digitally signed.
+
+```text
+Evidence Files
+     ↓ hash
+Manifest
+     ↓ sign
+Signed Manifest
+```
+
+For longer event sequences, hash chains can be used:
+
+```text
+h1 = H(event1)
+h2 = H(h1 || event2)
+h3 = H(h2 || event3)
+```
+
+Tampering with an earlier event changes all later hashes. In more regulated environments, WORM storage, external timestamping services, or transparency-log approaches can be added.
+
+The wording matters: cryptographic integrity proves that a record has not changed since a particular anchoring point. It does **not automatically prove that the original record was true**. The point of capture and the identity producing the record must therefore also be trustworthy.
+
+---
+
+## 6. Traceability Across Multiple Agents
+
+Multi-agent systems make the problem harder. An orchestrator delegates to an implementer, which invokes a security agent, which in turn starts a scanner.
+
+```text
+Run A: User Goal
+  └─ Span B: Orchestrator
+      ├─ Span C: Developer Agent
+      │   ├─ Tool: git.write
+      │   └─ Tool: test.run
+      └─ Span D: Security Agent
+          └─ Tool: sast.scan
+```
+
+Every level needs:
+
+- a global `trace_id`,
+- a local `span_id`,
+- a parent relationship,
+- principal/workload identity,
+- capability,
+- policy decision,
+- input/output references.
+
+This allows an auditor to trace a relevant change backwards without storing every irrelevant token.
+
+---
+
+## 7. Observability and Auditability Are Related, but Not Identical
+
+Observability usually answers:
+
+> Why is the system slow or why did it fail?
+
+Auditability answers:
+
+> What controlled action occurred, on what basis, and with what authorization?
+
+An OpenTelemetry trace can be valuable for both, but different retention and access classes are often appropriate. Production telemetry is frequently heavily aggregated. Audit evidence, by contrast, needs certain immutable identity and decision information.
+
+NIST’s AI Risk Management Framework emphasizes documented testing, evaluation, verification, and validation processes as well as traceable measurement and governance activities.[^2] This supports an architecture in which evidence is generated **during** execution rather than immediately before an audit.
+
+---
+
+## 8. A Pragmatic Evidence Schema
+
+A generic event can, for example, be modeled as follows:
+
+```json
+{
+  "schema": "agent-evidence/v1",
+  "trace_id": "tr_7f1...",
+  "event_id": "evt_b21...",
+  "timestamp": "2026-08-23T00:00:00Z",
+  "actor": {
+    "type": "workload",
+    "id": "security-review-agent"
+  },
+  "action": "scanner.execute",
+  "resource": "git:repo@example/service@commit:abc123",
+  "authorization": {
+    "policy_version": "security-agent@8",
+    "decision": "allow"
+  },
+  "result": "success",
+  "evidence": {
+    "artifact": "security-scan.sarif",
+    "sha256": "..."
+  }
+}
+```
+
+This schema deliberately does not include the full prompt by default. If prompt content is required for a particular evidentiary purpose, it can be stored separately, under stronger protection, with its own retention policy.
+
+---
+
+## 9. Evidence Packages Must Not Become Compliance Theater
+
+A common failure mode is to maximize the number of generated artifacts: more logs, more reports, more PDFs. That does not automatically improve control.
+
+A good evidence package has three properties:
+
+**Relevance:** every artifact answers a concrete control question.  
+**Authenticity:** origin and integrity are traceable.  
+**Reproducibility:** where possible, a decision or check can be executed again.
+
+The decisive test is:
+
+> Can an independent person use the package to understand which critical change occurred and which controls it passed?
+
+If that requires manually searching ten gigabytes of raw agent logs, the architecture is not auditable—it is merely verbose.
+
+---
+
+## Conclusion
+
+Audit traceability for agents does not mean preserving every thought-like model output. It means connecting identities, policies, tool use, state changes, checks, and approvals into a **verifiable provenance chain**.
+
+The EU AI Act establishes concrete logging requirements for high-risk systems; NIST and other frameworks emphasize documented governance and evaluation. Building on that foundation, an evidence package is an engineering pattern, not a legally standardized file format.[^1][^2]
+
+The strongest architecture separates debug telemetry from audit evidence, minimizes sensitive data, protects integrity cryptographically, and generates evidence automatically at control points. Auditability therefore becomes a property of the system rather than an after-the-fact reporting project.
+
+The next part applies this principle to a particularly regulated environment: **DORA and ICT third-party risk when external LLM and agent platforms are used.**
+
+---
+
+## Notes on the Sources
+
+“Evidence Package” is used here as a technical pattern. Which records are legally required and how long they must be retained depends on the applicable regulation, system classification, organizational role, and additional retention or privacy requirements.
+
+## Literature & Primary Sources
+
+[^1]: European Union (2024). *Regulation (EU) 2024/1689*, in particular Articles 12 and 19. EUR-Lex. https://eur-lex.europa.eu/eli/reg/2024/1689/oj/deu
+[^2]: NIST (2023). *Artificial Intelligence Risk Management Framework (AI RMF 1.0), NIST AI 100-1.* https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.100-1.pdf
+[^3]: European Union (2016). *Regulation (EU) 2016/679 (GDPR)*, in particular Articles 5, 25, and 32. https://eur-lex.europa.eu/eli/reg/2016/679/oj/deu
+
+## Metadata
+
+**SEO Title:** Audit Traceability for AI Agents: Building Evidence Packages Correctly  
+**Meta Description:** How agent logs become defensible audit evidence: provenance, signatures, policy decisions, privacy, the EU AI Act, and evidence packages.  
+**Slug:** `audit-traceability-und-evidence-packages`

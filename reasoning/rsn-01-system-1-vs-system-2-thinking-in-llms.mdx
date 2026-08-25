@@ -1,0 +1,229 @@
+---
+title: "Part 1: System 1 vs. System 2 Thinking in LLMs – From Intuitive to Deliberate Cognition"
+description: "An evidence-based essay on reasoning models: what the System 1/System 2 analogy explains, where it misleads, and how reinforcement learning, test-time compute, and tool use are changing modern LLMs."
+date: "2026-08-22"
+author: "dome"
+topics:
+  - ai-engineering
+  - agentic-engineering
+tags:
+  - Reasoning Models
+  - System 2 Thinking
+  - OpenAI o1
+  - DeepSeek R1
+draft: false
+series:
+  slug: "reasoning-models-zukunft-der-kognition"
+  title: "Reasoning Models & The Future of Cognition"
+  order: 1
+ai:
+  assisted: true
+  humanReviewed: true
+  reviewedBy: "Dominik Hahn"
+  reviewedAt: "2026-08-22"
+---
+
+When OpenAI introduced the o1 model family in September 2024, the conversation around large language models shifted noticeably. Until then, progress had been associated primarily with larger training runs, more parameters, longer context windows, and better post-training methods. With o1, however, another resource moved to center stage: **compute during inference**. OpenAI described o1 as a model capable of running a longer internal reasoning process before answering, with performance improving both through additional reinforcement learning during training and through additional “thinking time” at runtime.[^1][^2]
+
+This development is often explained using Daniel Kahneman’s distinction between **System 1** and **System 2**: fast, automatic thinking on one side and slow, controlled, deliberative thinking on the other.[^3] The analogy is intuitive—but it is also dangerous when taken literally. A language model has neither two psychological thinking systems nor consciousness in the sense used by cognitive psychology. What has actually changed is the **computational strategy** a model can use to solve a task: instead of producing an answer as directly as possible, a reasoning model can spend additional internal tokens, explore search paths, perform verification steps, and use tools before generating the visible response.
+
+That distinction is crucial for AI engineering. The relevant paradigm shift is not “LLMs are beginning to think like humans,” but rather: **inference is evolving from a single forward-generation process into a budgetable computation process.**
+
+---
+
+## 1. Why the System 1/System 2 Metaphor Is Still Useful
+
+Kahneman’s terminology comes from psychology and describes two clusters of cognitive properties. System 1 represents fast, automatic, and associative processes; System 2 represents slower, effortful, and rule-governed processing.[^3] If these terms are transferred cautiously to language models, they can illustrate two different execution modes:
+
+```text
+Direct generation
+Prompt -> Model -> Answer
+
+Deliberative generation
+Prompt -> internal search / reasoning / verification / tools -> Answer
+```
+
+A conventional autoregressive language model also performs a large neural forward pass for every token; “fast” therefore does not mean “without computation.” The difference lies in **how much additional sequential computation is inserted between the request and the final answer**. Reasoning models can generate more internal steps, explore alternative solution paths, or check intermediate results.
+
+OpenAI explicitly stated that o1 models were trained with large-scale reinforcement learning to perform complex reasoning, vary strategies, and recognize mistakes.[^1] DeepSeek-R1-Zero soon demonstrated a related result: a base model could develop pronounced reasoning behavior through large-scale reinforcement learning without supervised fine-tuning as an initial stage.[^4] The resulting model, however, had significant drawbacks—including poor readability and language mixing—which is why DeepSeek ultimately used a multi-stage training pipeline for R1 with cold-start data and additional post-training phases.[^4]
+
+The System 2 analogy is therefore useful for describing **the reservation of additional compute for deliberative processing**. It does not prove that the same psychological mechanisms found in humans are present.
+
+---
+
+## 2. From “Next-Token Predictor” to Optimized Search Process
+
+The statement “an LLM only predicts the next token” is mathematically correct but incomplete as a system-level description. A reasoning model also ultimately produces tokens autoregressively. The important question is **which sequences training rewards and which infrastructure is available during inference**.
+
+A simplified language model maximizes the probability of a token sequence:
+
+```text
+P(x1, x2, ..., xn) = Π P(xi | x1, ..., x(i-1))
+```
+
+A reasoning model does not necessarily replace this basic architecture. Instead, it is post-trained so that certain longer processing strategies receive higher reward: forming intermediate steps, revising hypotheses, running tests, or choosing an alternative path. Functionally, the result resembles a search through a solution space.
+
+This perspective explains why reasoning is especially useful where the solution is **not locally obvious**: formal mathematics, complex programming problems, multi-stage planning, scientific analysis, or tasks with hard verification conditions. OpenAI already reported substantial improvements for o1 in mathematics, competitive programming, and science benchmarks.[^2] Later o3/o4-mini models extended this principle with native tool use; OpenAI describes these models as being able to use web search, Python, image and file analysis, and other tools during their reasoning process.[^5]
+
+The architecture therefore shifts:
+
+```text
+Earlier pattern:
+Prompt -> LLM -> Text
+
+Reasoning/agentic pattern:
+Prompt
+  -> problem decomposition
+  -> internal solution attempt
+  -> tool/verifier
+  -> observation
+  -> correction or alternative path
+  -> final answer
+```
+
+The model remains probabilistic. The surrounding computation, however, can introduce **deterministic components**: compilers, unit tests, SMT solvers, Python execution, database queries, or formal proof checkers.
+
+---
+
+## 3. “Hidden Chain of Thought” Is Not a Synonym for Truth
+
+A common misconception is that if the model thinks longer, its answer automatically becomes correct. The evidence does not support that claim. Additional reasoning can reduce errors, but it can also elaborate incorrect assumptions for longer. A convincing intermediate step is not proof that the underlying state is correct.
+
+This matters especially because visible or internal **chain-of-thought text is not a privileged source of truth**. It is model output as well. OpenAI therefore does not treat the internal reasoning tokens of its o-series models as a transparent, verbatim representation of some “mental state.” In newer systems, users are often shown summaries of reasoning rather than the complete internal sequence. Anthropic follows a similar approach in its hybrid reasoning models, distinguishing between normal and “extended thinking” modes; for longer reasoning traces, summaries can be generated.[^6]
+
+From an engineering perspective, three layers should therefore be kept separate:
+
+1. **Reasoning as a compute budget:** How many additional inference steps may the system spend?
+2. **Reasoning as a training objective:** Which solution strategies are reinforced through reinforcement learning or process feedback?
+3. **Reasoning as an observability signal:** Which parts of internal processing are visible to developers and actually useful for diagnosis?
+
+These layers are related, but they are not identical.
+
+---
+
+## 4. Why Reinforcement Learning Makes the Difference
+
+Reasoning models are not merely ordinary LLMs with a prompt such as “think step by step.” The essential advance lies in post-training. OpenAI describes o1 and its successors as models trained with large-scale reinforcement learning for reasoning behavior.[^1][^5] DeepSeek-R1-Zero provides an especially instructive counterexample because it investigated reinforcement learning without supervised fine-tuning as a prior stage.[^4]
+
+In simplified form, the objective can be expressed as maximizing expected reward:
+
+```text
+max_theta E_y~pi_theta(.|x) [ R(x, y) ]
+```
+
+`R(x, y)` can come from human preferences, reward models, or—particularly attractive for reasoning—from **automatically verifiable outcomes**. In mathematics, a final answer can often be checked exactly; in code, a test suite can act as a verifier; in formal proofs, the proof checker decides.
+
+This creates a decisive advantage over purely subjective preference tuning: the model can learn from tasks whose quality is partly **machine-verifiable**. DeepSeek-R1 uses precisely this idea in its RL training. At the same time, the authors report limitations such as reward hacking, formatting problems, and the need for additional training stages.[^4]
+
+Reasoning is therefore less a single architectural innovation than a **training and runtime regime** that combines multiple components.
+
+---
+
+## 5. The Economics of Thinking: Reasoning as a Variable Resource
+
+Perhaps the most consequential aspect is economic. For conventional API models, inference is often treated primarily as a function of input and output tokens. Reasoning models introduce another variable: **How much compute is this specific task worth?**
+
+OpenAI offers explicit levels of reasoning effort for several reasoning models; for o3-mini, for example, low, medium, and high reasoning settings were described.[^7] Later, with GPT-5, OpenAI introduced a system that combines fast and deeper reasoning models through a router and chooses between them depending on the task, tool requirements, and user intent.[^8]
+
+This makes a model stack conceivable that looks more like a query planner than a single chatbot:
+
+```text
+                    +-> Fast Model ---------+
+User Request -> Router                       +-> Response
+                    +-> Reasoning Model -----+
+                    +-> Tool/Agent Workflow -+
+```
+
+For platform teams, this creates a new optimization problem. Not every task benefits from maximum thinking time. Syntactic reformatting, classification, or simple data extraction often does not require expensive reasoning. A complex merge conflict, an architecture decision, or a formal security analysis may justify additional computation.
+
+Productive use of reasoning models therefore means **adaptive compute allocation**: compute is spent where additional search and verification produce measurable value.
+
+---
+
+## 6. From Reasoning Model to Agent
+
+With o3/o4-mini, a second development became visible: reasoning and tool use are converging. OpenAI describes these models as systems that can use tools inside their reasoning processes.[^5] Architecturally, this matters more than the question of whether a model “thinks more.”
+
+An isolated reasoning model can check a hypothesis by generating additional tokens. An agentic reasoning system can instead:
+
+- execute code,
+- run tests,
+- search documentation,
+- inspect files,
+- call structured APIs,
+- or consult a formal solver.
+
+Uncertainty therefore shifts from a purely linguistic problem into an **information and action problem**. The better strategy is often not “think longer about the unknown version number,” but “read the release notes.” Not “estimate whether the code compiles,” but “run the compiler.”
+
+This is where reasoning models and agentic engineering begin to overlap: high-quality reasoning increasingly means recognizing **when internal computation is sufficient and when external evidence is required**.
+
+---
+
+## 7. Limits of the Analogy: Why “System 2” Does Not Automatically Mean Cognition
+
+The anthropomorphic language surrounding reasoning models is understandable, but it creates three risks.
+
+First, it suggests a psychological architecture that is not established by the available technical publications. A model can exhibit functionally deliberative behavior without reproducing human cognition.
+
+Second, “thinking” can be confused with **explainability**. A long reasoning trace does not automatically make a model transparent. Internal representations, training data, reward signals, and model parameters remain largely opaque.
+
+Third, strong results on reasoning benchmarks can easily be mistaken for general reliability. OpenAI’s system cards continue to treat hallucinations, jailbreaks, and other failure modes explicitly as relevant risk categories.[^1][^5]
+
+A more technically precise formulation is therefore:
+
+> Reasoning models increase the amount of computation a language model can spend before or during an answer and are trained so that this additional computation is more often converted into useful search, verification, and correction strategies.
+
+That is already a fundamental advance. It does not require any claim about machine consciousness.
+
+---
+
+## 8. Implications for AI Engineering
+
+For developers and platform teams, this paradigm shift leads to concrete design principles.
+
+### Reasoning Must Be Budgeted
+
+Latency, token consumption, and tool costs become part of the architecture. A request needs a cost and time budget, not just a model.
+
+### Verification Beats Mere Self-Reflection
+
+Wherever possible, external verifiers should be used. Tests, schemas, compilers, and proof checkers provide stronger signals than another ungrounded self-evaluation by the model.
+
+### Routing Becomes a Core Function
+
+Fast models, reasoning models, and specialized tools should not be treated as competing products, but as different execution paths.
+
+### Reasoning Observability Requires Privacy Controls
+
+Internal or summarized reasoning traces can contain sensitive information. Telemetry covering prompts, tool calls, and reasoning metadata therefore needs the same privacy and security controls as other production logs.
+
+---
+
+## Conclusion
+
+The distinction between System 1 and System 2 provides a useful metaphor for the shift from direct language generation to deliberative inference. It should not, however, be confused with a claim about human cognition.
+
+The real technical progress is more concrete: modern reasoning models combine large-scale reinforcement learning, variable inference budgets, search and verification strategies, and increasingly native tool use. OpenAI o1 made this development visible in 2024; DeepSeek-R1 showed in early 2025 how far reasoning behavior can be pushed through RL and automatically verifiable rewards; later systems integrated reasoning more deeply with tools and routing.[^1][^4][^5][^8]
+
+This creates a new optimization dimension for AI systems. Not only **which model** is used, but **how much computation an individual task receives** becomes an architectural decision.
+
+That question is the focus of Part 2: **[Test-Time Compute & Inference Scaling Laws](/blog/rsn-02-test-time-compute-und-inference-scaling-laws)**.
+
+---
+
+## Notes on the Sources
+
+Vendor statements about proprietary reasoning models describe observed behavior and evaluation results, but do not disclose the full architecture, training data, or all RL details. Statements about internal “thoughts” are therefore deliberately framed functionally rather than psychologically.
+
+---
+
+## 📚 Literature & Primary Sources
+
+[^1]: OpenAI (2024). *OpenAI o1 System Card.* https://openai.com/index/openai-o1-system-card/
+[^2]: OpenAI (2024). *Learning to Reason with LLMs.* https://openai.com/index/learning-to-reason-with-llms/
+[^3]: Kahneman, D. (2011). *Thinking, Fast and Slow.* Farrar, Straus and Giroux.
+[^4]: DeepSeek-AI et al. (2025). *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning.* arXiv:2501.12948. https://arxiv.org/abs/2501.12948
+[^5]: OpenAI (2025). *OpenAI o3 and o4-mini System Card.* https://openai.com/index/o3-o4-mini-system-card/
+[^6]: Anthropic (2025/2026). *Claude 4 System Card*, section on extended thinking mode. https://www.anthropic.com/claude-4-system-card
+[^7]: OpenAI (2025). *OpenAI o3-mini.* https://openai.com/index/openai-o3-mini/
+[^8]: OpenAI (2025). *GPT-5 System Card.* https://openai.com/index/gpt-5-system-card/

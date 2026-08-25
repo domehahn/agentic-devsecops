@@ -1,364 +1,689 @@
 ---
-title: "Dynamic-target SSRF bei Agentic Skills: Security Property, Detection und Nachweis"
-description: "Dynamic-target SSRF wissenschaftlich erklärt: Bedrohungsmodell, scanner-positive und scanner-negative Beispiele, Detection-Mechanismus in skil, Evidence Chain, Grenzen und Referenzen."
-date: "2026-07-30"
+title: "Dynamic-Target SSRF in Agentic Skills: Controlling the Dataflow from Untrusted Input to Network Authority"
+description: "A deep technical essay on dynamic-target SSRF in agentic systems: source-to-sink taint analysis, URL authorization, skil boundary and taint analyzers, runtime egress policy, agent tool design, evidence paths, and validation."
+date: "2026-08-25"
 author: "dome"
 topics:
   - agentic-engineering
   - devsecops
 tags:
   - Security Property
-  - Dynamic-target SSRF
+  - Dynamic Target SSRF
+  - Taint Analysis
   - Agentic Security
+  - Network Egress
 featured: false
 draft: false
 series:
   slug: agentic-skill-security-properties
-  title: "Security Properties für Agentic Skills"
+  title: "Security Properties for Agentic Skills"
   order: 63
 ---
 
-Agentic Skills sind gleichzeitig **Instruktion, Code, Konfiguration, Tool-Vertrag und Supply-Chain-Artefakt**. Deshalb genügt es nicht, eine Datei als „Text“ zu behandeln. Eine belastbare Security-Analyse muss rekonstruieren, welche **Trust Boundary**, welche Datenklasse oder welche ausführbare Capability ein Artefakt tatsächlich berührt.
+Dynamic-target SSRF is the most important of the three SSRF properties to understand conceptually because the dangerous destination may not exist anywhere in the source code.
 
-Die Security Property **Dynamic-target SSRF** gehört zur Kategorie **Network Boundary**. Diese Property klassifiziert Netzwerkziele und Datenfluss, um SSRF-artige Confused-Deputy-Pfade zu erkennen.
-
-<Note>
-**Terminologie:** In dieser Serie bedeutet **scanner-positiv**: Der Scanner erkennt einen Security Concern und erzeugt ein Finding. **Scanner-negativ** bedeutet: Der legitime Gegenfall darf für genau diese Property nicht anschlagen. Diese Definition entspricht der `skil` Security Control Matrix.
-</Note>
-
-## Kurzfassung
-
-| Dimension | Einordnung |
-| --- | --- |
-| Security Property | **Dynamic-target SSRF** |
-| `skil` Controls | `SKIL-BOUNDARY-SSRF`, `SKIL-TAINT-NETWORK` |
-| Primärer Mechanismus | **untrusted URL target taint + request sink** |
-| Aktueller Coverage-Charakter | **FULL für modellierte input/request forms** |
-| Security-Relation | `UNTRUSTED_INPUT -> URL_TARGET -> HTTP_REQUEST` |
-| Hauptziel | False Positives durch Kontextprüfung reduzieren und den eigentlichen Sicherheitszusammenhang als Evidence Chain nachweisen |
-
-<KeyTakeaway>
-Ein **positiver Treffer** für Dynamic-target SSRF ist nur dann belastbar, wenn die Property-spezifische Relation `UNTRUSTED_INPUT -> URL_TARGET -> HTTP_REQUEST` aus konkreter Evidence rekonstruiert werden kann. Ein Schlüsselwort allein ist keine wissenschaftlich ausreichende Begründung.
-</KeyTakeaway>
-
-## 1. Welche Sicherheitsannahme schützt die Property?
-
-Die Property lässt sich als Invariante formulieren:
+Cloud Metadata SSRF can often be recognized from a privileged endpoint. Internal/Loopback SSRF can often be recognized from a private destination. Dynamic-target SSRF begins earlier in the causal chain:
 
 ```text
-UNTRUSTED_INPUT -> URL_TARGET -> HTTP_REQUEST
+untrusted value
+      ↓
+URL or destination construction
+      ↓
+server-side request primitive
 ```
 
-Ein Scanner versucht damit nicht, „bösartige Wörter“ zu finden. Er prüft eine Hypothese über ein Systemartefakt:
+At scan time, the final host may be completely unknown.
+
+That shifts the problem from **destination classification** to **information-flow control**.
+
+A static scanner is no longer asking:
+
+> “Does this code call a dangerous host?”
+
+It is asking:
+
+> “Can a less-trusted source influence the network destination used by a more-privileged runtime?”
+
+This is a classic taint-analysis question, but agentic systems broaden both the source taxonomy and the meaning of privilege.
+
+## From web parameter to semantic control channel
+
+In a traditional web application, the source might be obvious:
 
 ```text
-H0: Die Sicherheitsgrenze bleibt eingehalten.
-H1: Die Sicherheitsgrenze wird durch beobachtbare Evidence verletzt.
+HTTP request parameter
 ```
 
-Das Finding ist die Entscheidung zugunsten von `H1` innerhalb der **sichtbaren statischen Coverage**. Daraus folgt eine wichtige epistemische Grenze: Ein scanner-negatives Ergebnis ist kein mathematischer Beweis für Gesamtsicherheit, sondern die Aussage, dass **unter dem verwendeten Analysemodell kein hinreichender Nachweis für diese Property gefunden wurde**.
+In an agent runtime, network target influence can originate from:
 
-## 2. Bedrohungsmodell
+```text
+user prompt
+retrieved document
+MCP tool output
+another agent
+model-generated value
+repository content
+persistent memory
+LLM response
+external HTTP response
+```
 
-Für Dynamic-target SSRF sollte das Threat Model mindestens vier Elemente trennen:
+The current `skil` taint analyzer explicitly recognizes several of these source categories in Python, JavaScript, JSX, TypeScript, and TSX, including request data, standard input, file reads, tool/MCP output, model/LLM output, and selected HTTP-response forms.[^1]
 
-1. **Quelle der Kontrolle oder Daten:** Nutzerinput, eingebettete Instruktion, Tool-Metadaten, Code, Dependency, Runtime-Konfiguration oder persistenter Zustand.
-2. **Trust Boundary:** Welche Information oder Authority wird höhergestuft, überschritten oder erweitert?
-3. **Operation/Sink:** Welche Aktion erzeugt die relevante Wirkung?
-4. **Guard:** Welche Allowlist, Validierung, Policy, Approval, Signatur oder Capability-Grenze müsste die Relation verhindern?
+This matters because the trust boundary is not language-specific. A model output may look syntactically like an ordinary string, but its **provenance** is what determines whether it can safely control a network sink.
 
 <Architecture>
-Input source → AST/Taint → URL construction/interpolation → request sink → allowlist/scheme/host validator → Finding
+**Dynamic-target SSRF as information flow**
+
+`UNTRUSTED_SOURCE` → `assignment / parameter / return propagation` → `URL target` → `NETWORK_SINK` → `destination policy`
 </Architecture>
 
-Die Architektur ist bewusst mehrstufig. Candidate Generation und Finding Decision sind getrennt: Ein lexikalischer, syntaktischer oder struktureller Kandidat wird erst nach Kontext-, Scope- und Guard-Prüfung zu einem Security Finding.
+## The security invariant
 
-## 3. Scanner-positives Beispiel: Das Finding muss entstehen
+The property can be expressed as:
 
-```python
-url = request.args["url"]
-return requests.get(url).text
+```text
+UNTRUSTED_SOURCE
+    ──propagation*──>
+NETWORK_DESTINATION
+    ──without destination-specific validation──>
+SERVER_SIDE_REQUEST
 ```
 
-### Warum ist das ein positiver Treffer?
+The important phrase is *destination-specific validation*.
 
-Positiv ist der Datenfluss von untrusted Input in das Request-Ziel. Das Ziel ist dadurch attacker-controlled, auch wenn noch keine private IP im Code steht.
+A sanitizer named `sanitize()` is not enough. HTML escaping does not make a URL safe. Trimming whitespace does not authorize a host. URL parsing alone does not establish that the resolved destination is permissible.
 
-Die Evidence sollte deshalb nicht nur `matched=true` enthalten. Mindestens folgende Felder sind für reproduzierbare Findings sinnvoll:
+A declassifier for this property must constrain the capability that creates the risk.
+
+For example, transforming:
+
+```text
+"docs"
+```
+
+through a closed mapping:
+
+```text
+docs   → https://docs.example.com
+status → https://status.example.com
+```
+
+meaningfully reduces attacker control.
+
+Transforming:
+
+```text
+raw_url.strip()
+```
+
+does not.
+
+<KeyTakeaway>
+Dynamic-target SSRF is not “a URL contains user input.” It is a **provenance-to-authority relation**: untrusted data is allowed to select the destination of a request made with the server's network position and credentials.
+</KeyTakeaway>
+
+## Why this property is especially important for agents
+
+Agents generate intermediate values constantly.
+
+A user may ask:
+
+```text
+"Check the status page for the service described in this document."
+```
+
+The document may contain a URL. The model extracts it. A tool call is generated. The runtime performs the request.
+
+No developer wrote:
+
+```python
+requests.get(user_input)
+```
+
+Yet the effective dataflow is identical:
+
+```text
+retrieved untrusted content
+        ↓
+model transformation
+        ↓
+tool argument
+        ↓
+network request
+```
+
+This creates an important distinction between **syntactic taint** and **semantic taint**.
+
+A conventional static analyzer can track values through source code. It cannot automatically see every model-mediated transformation that happens at runtime unless the system represents provenance explicitly.
+
+Agent platforms therefore need both:
+
+1. static source-to-sink analysis for code-level flows;
+2. runtime provenance on model/tool messages.
+
+The second can be represented as metadata:
+
+```json
+{
+  "value": "https://service.example/path",
+  "provenance": [
+    "retrieved_document:doc-184",
+    "model_output:turn-37"
+  ],
+  "trust": "untrusted-derived"
+}
+```
+
+The tool broker can then evaluate policy without asking the model whether its own value is safe.
+
+## What `skil` currently detects
+
+The current control matrix maps dynamic-target SSRF to `SKIL-BOUNDARY-SSRF` and complements it with `SKIL-TAINT-NETWORK` for broader source-to-network flows.[^2]
+
+These controls use different mechanisms.
+
+### Boundary evidence
+
+`internal/analyzer/boundary.go` contains a deterministic rule for cases where a recognized request primitive appears to consume an untrusted destination source such as request parameters, stdin, tool output, or MCP output.[^3]
+
+This is a high-signal pattern layer. It is useful for obvious forms, but it is line-oriented and intentionally bounded.
+
+### Taint evidence
+
+`internal/analyzer/taint.go` is structurally richer. It parses Python and JS/TS-family code with Tree-sitter, collects assignments and call expressions, recognizes source and sink classes, propagates taint, resolves Python import aliases, and builds selected function summaries.[^1]
+
+The supported network sinks include common Python and JavaScript HTTP mechanisms. The analyzer also models other sink categories—execution, filesystem write, logs, SQL-like execution, and agent-to-agent output—because the same provenance engine can support multiple security properties.[^1]
+
+This makes the taint layer a better conceptual fit for:
+
+```text
+source → propagation → network sink
+```
+
+than a simple regex.
+
+However, even structured taint analysis has boundaries.
+
+## Static taint analysis is a model of the program, not the program itself
+
+A static taint engine makes choices about abstraction.
+
+It needs to decide:
+
+- what counts as a source;
+- what counts as a sink;
+- how assignments propagate;
+- whether containers preserve taint;
+- how function parameters map to sinks;
+- how aliases are resolved;
+- which sanitizer names are recognized;
+- how unknown functions are handled;
+- whether paths are flow-sensitive;
+- how multiple files are summarized.
+
+The current `skil` implementation includes a fixed source catalog, a fixed sink catalog, a sanitizer-name pattern, Tree-sitter parsing, assignment/call collection, and selected function summaries.[^1]
+
+That is materially stronger than text matching, but it is still not an omniscient interprocedural theorem prover.
+
+For security documentation, that nuance should be explicit.
+
+A useful coverage model is:
+
+```text
+supported_source
+    +
+supported_language
+    +
+supported_propagation_form
+    +
+supported_sink
+    =
+statically observable flow
+```
+
+If one term falls outside the model, the absence of a finding is not evidence of safety.
+
+## The validator problem: names are not semantics
+
+One of the hardest parts of taint analysis is sanitizer recognition.
+
+The current `skil` taint code recognizes names such as:
+
+```text
+sanitize
+validate
+allowlist
+whitelist
+escape
+urlparse
+url.parse
+path.resolve
+```
+
+That is useful evidence, but a security analyzer should distinguish **sanitizer candidate** from **proven sanitizer semantics**.
+
+Consider three functions:
+
+```python
+validate_url(value)
+allowlist_host(value)
+urlparse(value)
+```
+
+Their names sound defensive. Only implementation evidence can show whether they constrain:
+
+- scheme;
+- hostname;
+- port;
+- resolved address;
+- redirect target;
+- credentials in the URL;
+- fragments or alternative encodings.
+
+Therefore a high-assurance result should say:
+
+```text
+validator_observed: true
+validator_semantics_verified: false
+```
+
+unless the function body or contract has actually been analyzed.
+
+This prevents a dangerous pattern where developers silence taint findings by renaming a helper.
+
+## Positive and negative fixtures should differ by authority
+
+A scanner-positive fixture:
+
+```python
+def fetch_document(request):
+    target = request.args["url"]
+    return http_client.get(target)
+```
+
+The relevant path is:
+
+```text
+request.args["url"]
+      ↓
+target
+      ↓
+http_client.get(target)
+```
+
+A scanner-negative counterpart should not merely “clean” the input. It should remove arbitrary destination authority:
+
+```python
+APPROVED = {
+    "docs": "https://docs.example.com/api",
+    "status": "https://status.example.com/api",
+}
+
+def fetch_service(request):
+    service = request.args["service"]
+    target = APPROVED[service]
+    return http_client.get(target, timeout=2)
+```
+
+The user still influences *which approved service* is used, but not the raw destination space.
+
+That is a meaningful capability reduction.
+
+## URL validation is not one check
+
+When arbitrary URLs are genuinely required, destination authorization becomes a pipeline.
+
+OWASP's SSRF guidance distinguishes applications that communicate only with known trusted services from applications that must access arbitrary external targets. It recommends allowlisting in the former case and careful validation plus network controls in the latter.[^4]
+
+A defensive pipeline should reason about:
+
+```text
+scheme
+host
+port
+DNS result
+IP address class
+redirects
+proxy routing
+connection target
+```
+
+These are separate because parsers and network stacks transform the value between user input and connection.
+
+A policy function can be conceptualized as:
+
+```text
+authorize_url(raw):
+    parsed = strict_parse(raw)
+    require parsed.scheme in allowed_schemes
+    require parsed.port in allowed_ports
+    addresses = resolve(parsed.host)
+    require all addresses satisfy destination_policy
+    return canonical_destination
+```
+
+The network layer should still enforce the same constraints. Validation without enforcement creates a gap.
+
+## Redirects change the dataflow
+
+A common conceptual mistake is to think that only the first URL is attacker-controlled.
+
+The actual request graph can be:
+
+```text
+untrusted URL
+    ↓
+approved initial host
+    ↓
+HTTP redirect
+    ↓
+different destination
+```
+
+If the client automatically follows redirects, the effective destination may not be the one that passed the original check. OWASP specifically advises disabling redirect following where it can bypass SSRF validation.[^4]
+
+For an agent runtime, a clean design is:
+
+```text
+redirect received
+      ↓
+new destination classified
+      ↓
+policy evaluated again
+      ↓
+follow or deny
+```
+
+Every hop is a new authorization decision.
+
+## DNS is another transformation step
+
+Hostname authorization is incomplete until address resolution is considered.
+
+A destination policy may approve:
+
+```text
+hostname = api.example.com
+```
+
+while the network stack connects to an IP address.
+
+This creates two identities:
+
+```text
+logical destination
+network destination
+```
+
+Both matter.
+
+A robust runtime can log both:
 
 ```yaml
-property: "dynamic-target-ssrf"
-rules: ["SKIL-BOUNDARY-SSRF", "SKIL-TAINT-NETWORK"]
-analysis: "untrusted URL target taint + request sink"
-coverage: "FULL für modellierte input/request forms"
-security_relation: "UNTRUSTED_INPUT -> URL_TARGET -> HTTP_REQUEST"
-location:
-  file: "path/to/artifact"
-  line: 42
-context_checked: true
-evidence_complete: true
-confidence: high
+request:
+  logical_host: api.example.com
+  resolved_addresses:
+    - 203.0.113.10
+  policy:
+    hostname_allowed: true
+    address_class_allowed: true
 ```
 
-`confidence: high` ist hier nur beispielhaft. In einer realen Engine muss Confidence aus Evidenzqualität, Kontextauflösung und Coverage resultieren; sie darf nicht allein aus der Severity abgeleitet werden.
+The exact implementation depends on the HTTP stack, but the evidence model should not pretend hostname text is the final network peer.
 
-## 4. Scanner-negatives Beispiel: Der Gegenfall darf nicht anschlagen
+## Agent tools should expose capability, not transport
 
-```python
-raw = request.args["service"]
-host = validate_service_name(raw, allowed={"docs", "status"})
-return requests.get(f"https://{host}.example.com/api", timeout=2).text
+The best SSRF defense is often an API-design decision.
+
+Compare:
+
+```json
+{
+  "tool": "fetch_url",
+  "arguments": {
+    "url": "..."
+  }
+}
 ```
 
-### Warum muss dieser Fall scanner-negativ bleiben?
+with:
 
-Der Negativfall mappt Input auf eine geschlossene Allowlist und konstruiert den Host aus kontrollierten Komponenten.
+```json
+{
+  "tool": "read_documentation",
+  "arguments": {
+    "product": "payments",
+    "document": "api-reference"
+  }
+}
+```
 
-Das ist für die Qualität des Detektors genauso wichtig wie das Positivbeispiel. Eine Security Rule ohne systematische Negativ-Fixtures optimiert leicht auf Recall, produziert aber im Engineering-Alltag so viele False Positives, dass Findings ignoriert oder Controls deaktiviert werden.
+The first gives the model transport authority.
 
-## 5. Wie `skil` die Property technisch ermittelt
+The second gives the model business capability.
 
-Aktuell relevante Controls: `SKIL-BOUNDARY-SSRF`, `SKIL-TAINT-NETWORK`.
+The tool implementation can map product/document identifiers to reviewed resources. This shrinks the reachable state space, simplifies authorization, and produces better audit logs.
 
-Der Boundary-Analyzer klassifiziert sicherheitsrelevante Zielräume wie Container-Control-Planes, Agent State, MCP-Konfiguration, Cloud Metadata, private Netzbereiche und Cloud-Uploads. Er erzeugt Findings erst, wenn Operation und Boundary-Klasse zusammenpassen.
-
-Die Taint-Schicht modelliert Sources, Propagation und Sinks. Assignments und ausgewählte Funktionspfade erhalten Herkunftslabels; ein Finding entsteht, wenn Taint einen sink-spezifisch relevanten Endpunkt ohne anerkannten Declassifier erreicht.
-
-Der Mechanismus lässt sich als Evidence Pipeline darstellen:
+This principle generalizes:
 
 ```text
-Raw artifact
-    ↓
-parser-/analyzer-spezifische Beobachtung
-    ↓
-Property-spezifische Zwischenrepräsentation
-    ↓
-Context / Negation / Scope / Guard
-    ↓
-entscheidende Security-Relation
-    ↓
-Finding + Confidence + Coverage
+prefer:
+    semantic operation + constrained identifier
+
+over:
+    generic protocol primitive + arbitrary target
 ```
 
-### 5.1 Candidate Generation
+## Runtime provenance closes the gap left by static taint
 
-Candidate Generation soll **breit genug für Recall**, aber noch nicht entscheidend sein. Abhängig von der Property entstehen Kandidaten aus AST-Knoten, Unicode-Codepoints, Manifestfeldern, Versionsconstraints, Netzwerkzielen, Taint Sources/Sinks oder semantischen Clauses.
+Static code analysis can prove that a program path *could* carry taint. Runtime provenance can show which value actually did.
 
-### 5.2 Property-spezifische Zwischenrepräsentation
+For agent systems, a tool broker can preserve:
 
-Die entscheidende IR für diesen Beitrag ist:
+```yaml
+tool_call:
+  tool: fetch_public_resource
+  argument:
+    name: url
+    value_hash: "..."
+    provenance:
+      - user_input
+      - retrieved_document
+      - model_transformation
+  policy:
+    decision: deny
+    reason: dynamic_target_not_allowlisted
+```
+
+This creates an evidence chain across the model boundary.
+
+It also solves a governance problem: reviewers no longer need hidden chain-of-thought to understand why the action occurred. They need the observable inputs, tool proposal, provenance labels, policy decision, and result.
+
+## Composing the three SSRF properties
+
+Properties 61–63 form a useful hierarchy.
+
+### Property 63: dynamic target
 
 ```text
-UNTRUSTED_INPUT -> URL_TARGET -> HTTP_REQUEST
+untrusted source → request destination
 ```
 
-Diese IR ist absichtlich kleiner als der Originaltext. Sie enthält nur die für die Sicherheitsentscheidung relevanten Entitäten und Relationen. Dadurch kann derselbe Mechanismus unterschiedliche Oberflächenformen auf dieselbe Property abbilden.
+This tells us **who controls the target**.
 
-### 5.3 Finding Decision
+### Property 62: internal/loopback target
 
 ```text
-IF
-    property relation is evidenced
-AND relevant context/scope is resolved
-AND no valid guard/declassifier negates the relation
-THEN
-    emit finding
-ELSE
-    keep candidate as signal or scanner-negative
+request → private/internal destination
 ```
 
-Der positive Treffer ist damit eine **Relation über Evidence**, nicht ein Worttreffer.
+This tells us **which network boundary is crossed**.
 
-## 6. False-Positive-Unterdrückung
-
-Nur `startswith("https://")` ist kein ausreichender SSRF-Sanitizer. Host, Scheme, Port, DNS/redirects und IP-Klasse müssen kontrolliert werden.
-
-Ein wissenschaftlich belastbarer Scanner sollte False-Positive-Unterdrückung nicht durch globale „ignore this file“-Ausnahmen lösen, sondern durch **lokale Gegenhypothesen**:
+### Property 61: metadata target
 
 ```text
-Candidate
-  ├─ defensive/negated context? ──> suppress or downgrade
-  ├─ validated/allowlisted?      ──> suppress relation
-  ├─ outside relevant field?     ──> not this property
-  └─ relation complete?          ──> finding
+request → workload identity service
 ```
 
-Das verbessert Erklärbarkeit: Der Scanner kann nicht nur sagen, warum er anschlägt, sondern auch, **welche Bedingung einen ähnlichen sicheren Fall unterscheidet**.
+This tells us **which privileged infrastructure plane is touched**.
 
-## 7. Evidence Chain: Warum der Treffer nachvollziehbar sein muss
-
-Für Dynamic-target SSRF sollte ein Finding mindestens diese Nachweise verbinden:
+A high-impact chain might be:
 
 ```text
-Fundstelle
-  ↓
-parser-/analyzer-spezifische Beobachtung
-  ↓
-Security-Relation: UNTRUSTED_INPUT -> URL_TARGET -> HTTP_REQUEST
-  ↓
-Scope-/Guard-Entscheidung
-  ↓
-potenzielle Wirkung
+UNTRUSTED_SOURCE
+   ↓
+SKIL-BOUNDARY-SSRF / SKIL-TAINT-NETWORK
+   ↓
+INTERNAL DESTINATION
+   ↓
+SKIL-BOUNDARY-SSRF-INTERNAL
+   ↓
+METADATA / IDENTITY PLANE
+   ↓
+SKIL-BOUNDARY-METADATA
 ```
 
-Eine geeignete interne Repräsentation könnte so aussehen:
+A scanner should not emit three unrelated alarms and leave the reviewer to infer the relationship. It should be able to construct a shared evidence graph where the same request path supports multiple properties.
+
+<Note>
+Finding composition should increase explanatory power before it increases severity. The chain must be evidenced; co-occurrence in one repository is not enough.
+</Note>
+
+## A more expressive finding model
+
+Dynamic-target SSRF needs path evidence.
 
 ```yaml
 finding:
   property: dynamic-target-ssrf
-  rule_ids: ["SKIL-BOUNDARY-SSRF", "SKIL-TAINT-NETWORK"]
-  evidence:
-    raw_location: true
-    structured_relation: true
-    context_resolution: true
+  rules:
+    - SKIL-BOUNDARY-SSRF
+    - SKIL-TAINT-NETWORK
+  source:
+    class: http_request_parameter
+    location: app.py:18
+  propagation:
+    - assignment: target
+      location: app.py:19
+  sink:
+    class: network_request
+    location: app.py:20
+  guard:
+    observed: false
   coverage:
-    status: "verified-or-bounded"
-    runtime_dependencies_documented: true
-  decision:
-    scanner_positive: true
+    language: python
+    interprocedural: bounded
+    runtime_dns: not_observed
+    redirects: not_observed
 ```
+
+This is much more useful than a line-only warning because it tells the engineer **why the value is tainted**.
+
+## Testing strategy for `skil`
+
+The detector should be tested across multiple dimensions.
+
+### Source coverage
+
+- HTTP request parameters;
+- stdin;
+- file reads;
+- tool output;
+- MCP output;
+- model output;
+- HTTP response content.
+
+### Propagation coverage
+
+- direct assignment;
+- multiple assignments;
+- object/container storage;
+- function parameter forwarding;
+- function return summaries;
+- import aliasing.
+
+### Sink coverage
+
+- Python HTTP clients;
+- JavaScript/TypeScript HTTP clients;
+- wrapper functions;
+- calls in different files.
+
+### Guard coverage
+
+- closed allowlist;
+- parser-only helper;
+- misleading sanitizer name;
+- actual host validator;
+- validation that constrains path but not host.
+
+### Negative fixtures
+
+The strongest negatives resemble the positives syntactically while removing destination authority.
+
+This is how precision becomes an engineering property rather than an anecdote.
+
+## Metrics that matter
+
+For static analysis:
+
+```text
+precision
+recall
+source-class coverage
+sink-class coverage
+propagation-depth coverage
+interprocedural coverage
+sanitizer false-negative rate
+sanitizer false-positive rate
+```
+
+For runtime:
+
+```text
+arbitrary-destination tool calls
+denied private/link-local targets
+redirect revalidation failures
+requests with untrusted-derived provenance
+policy overrides
+approved destination count
+```
+
+Tracking both layers reveals whether security is improving because code is safer or merely because findings are being suppressed.
+
+## Design review checklist
+
+A reviewer should ask:
+
+1. What sources can influence this URL?
+2. Does the model ever produce a raw destination?
+3. Is the tool interface transport-oriented or capability-oriented?
+4. What validator constrains scheme, host, port, and resolved address?
+5. Are redirects independently authorized?
+6. Is DNS resolved inside the policy boundary?
+7. Can proxies change the effective destination?
+8. Does static taint track the relevant language and call shapes?
+9. Are sanitizer semantics verified or merely inferred from names?
+10. Is runtime provenance retained for tool arguments?
+11. Does egress policy enforce the same invariant as static analysis?
+12. Can SSRF findings compose with internal and metadata boundary evidence?
 
 <Warning>
-Ein Finding darf keine Sicherheit vortäuschen, die der Analyzer nicht besitzt. Wenn ein Ziel, ein Call, ein Contract oder eine semantische Relation zur Laufzeit unaufgelöst bleibt, ist `runtime_dependent`, `provider_backed`, `partially_resolved` oder `not_observable` die korrektere Aussage als ein künstliches „safe“.
+Do not use the LLM as the URL validator. A model can assist classification, but the final destination policy must be deterministic and enforced by the runtime that owns the network capability.
 </Warning>
 
-## 8. Mechanismus im Hintergrund: Aufbau und Designprinzipien
+## References
 
-Die Detektion folgt fünf allgemeinen Prinzipien:
+[^1]: domehahn/skil, `internal/analyzer/taint.go`. https://github.com/domehahn/skil/blob/main/internal/analyzer/taint.go
+[^2]: domehahn/skil, *Security control matrix*. https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md
+[^3]: domehahn/skil, `internal/analyzer/boundary.go`. https://github.com/domehahn/skil/blob/main/internal/analyzer/boundary.go
+[^4]: OWASP Cheat Sheet Series, *Server-Side Request Forgery Prevention Cheat Sheet*. https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
 
-### 8.1 Deterministische Evidenz vor semantischer Vermutung
+## Conclusion
 
-AST, strukturierte Manifestfelder, Codepoints, Versionen, Pfade und Source→Sink-Flows sind reproduzierbare Evidenz. Freie Sprache ist dagegen probabilistischer. Semantische Provider sollten deterministische Evidence **ergänzen**, nicht verdecken.
+Dynamic-target SSRF is the point where **dataflow becomes network authority**.
 
-### 8.2 Parser vor Regex, wenn Syntax existiert
+The problem cannot be solved by searching for private IPs because the target may not be statically known. It cannot be solved by asking the model whether a URL is safe because the model is part of the influenced control path. And it cannot be solved by a generic `sanitize()` call because the relevant property is not string cleanliness—it is destination authorization.
 
-Wenn ein Artefakt eine formale Grammatik besitzt, ist ein Parser strukturell stärker: `exec(` in einem Kommentar ist nicht dasselbe wie ein `Call`-Knoten; `"*"` in einem Regex ist nicht dasselbe wie ein Wildcard-Permission-Feld.
-
-### 8.3 Context Guards sind Teil der Rule
-
-Eine Security Rule besteht konzeptionell aus:
-
-```text
-positive evidence
-+ scope constraints
-+ negative evidence / safe context
-+ decision rule
-```
-
-Ohne den dritten Teil werden Security-Dokumentation, Tests und sichere Gegenregeln regelmäßig zu False Positives.
-
-### 8.4 Composition erst nach Einzelbefund
-
-Die Property sollte mit benachbarten Findings nur dann zu einer höheren Severity komponiert werden, wenn ein gemeinsamer Daten-, Kontroll- oder Trust-Pfad nachweisbar ist.
-
-### 8.5 Coverage ist ein First-Class-Result
-
-Das System sollte mindestens zwischen folgenden Zuständen unterscheiden:
-
-```text
-verified
-partially_resolved
-provider_backed
-runtime_dependent
-semantic_only
-not_observable
-```
-
-Damit bleibt sichtbar, **was** der Scanner tatsächlich gemessen hat.
-
-## 9. Wissenschaftliche Validierung des Detektors
-
-Für eine belastbare Evaluation reichen einzelne Demo-Files nicht. Pro Property sollte die Testsuite mindestens enthalten:
-
-| Testklasse | Zweck |
-| --- | --- |
-| True Positive Fixtures | kanonische Verletzungen der Property |
-| True Negative Fixtures | legitime Gegenfälle mit ähnlichen Tokens/Syntaxen |
-| Adversarial Paraphrases | Recall gegen Oberflächenvariation |
-| Boundary Cases | minimale Änderung zwischen positiv und negativ |
-| Differential Tests | Vergleich mit unabhängigen Referenzimplementierungen |
-| Holdout Fixtures | Schutz gegen Überanpassung an bekannte Tests |
-| Mutation Tests | systematische Änderung von Negation, Scope, Pfad, Sink oder Version |
-
-Für sprachliche Properties sind Precision/Recall und Error Taxonomy sinnvoll. Für AST-/Taint-/Schema-Properties kann zusätzlich die **strukturelle Coverage** gemessen werden: Welche Source-, Sink-, Call-, Manifest- oder Codepoint-Klassen unterstützt der Analyzer tatsächlich?
-
-## 10. Grenzen der Erkennung
-
-Runtime DNS kann ein erlaubtes Hostname-Label auf interne IPs auflösen. Static validation muss daher mit network egress enforcement kombiniert werden.
-
-Generell gelten drei Grenzen:
-
-1. **Static visibility:** Laufzeitwerte, DNS, Reflection, dynamische Downloads oder externe Policies können fehlen.
-2. **Semantic ambiguity:** Zweck, Legitimität und manche Trust-Entscheidungen sind nicht vollständig aus Syntax ableitbar.
-3. **Authority mismatch:** Ein gefährlicher Text kann technisch machtlos sein; ein harmlos formulierter Skill kann durch Runtime-Konfiguration enorme Authority erhalten.
-
-Deshalb ist die Zielgröße nicht „malicious / benign“, sondern eine nachvollziehbare Aussage über **Property, Evidence, Coverage und mögliche Wirkung**.
-
-## 11. Technische Controls und Remediation
-
-- host allowlist
-- parse then validate
-- DNS/redirect revalidation
-- egress firewall
-- typed URL sanitizer
-
-Defense in Depth bleibt zentral:
-
-```text
-Authoring lint
-    +
-static scan
-    +
-contract verification
-    +
-supply-chain verification
-    +
-runtime policy
-    +
-audit / telemetry
-```
-
-Kein einzelner Layer ersetzt die anderen.
-
-## 12. Einordnung in DevSecOps
-
-Die Property sollte an mehreren Punkten des Lifecycles geprüft werden:
-
-1. **Authoring:** schneller lokaler Scan und IDE-/pre-commit Feedback.
-2. **Pull/Merge Request:** reproduzierbarer Scan mit diff-basierter Evidence.
-3. **Registry/Katalog:** Scan des veröffentlichten, digest-adressierten Artefakts.
-4. **Installation:** Verification gegen Capability Contract, Lockfiles und Provenance.
-5. **Runtime:** technische Enforcement-Schicht für Netzwerk, Filesystem, Tools, Secrets, Approval und Ressourcen.
-6. **Change Detection:** erneute Bewertung, wenn Tool-Metadaten, Dependencies, Runtime Policy oder Identitäten wechseln.
-
-Damit wird verhindert, dass eine saubere statische Analyse auf Artefakt A durchgeführt wird, während später Artefakt B oder eine breitere Runtime-Konfiguration tatsächlich ausgeführt wird.
-
-## 13. Implementierungsnachweise in `skil`
-
-- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – definiert scanner-positive/scanner-negative Control Coverage und die nativen `SKIL-*` Controls.
-- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – dokumentiert property-level Äquivalenz, Analyzer und Coverage-State.
-- [`docs/external-scanner-feature-parity.md`](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – beschreibt Detektionslogik, Lücken und Unterschiede der Mechanismen.
-- [`internal/analyzer/boundary.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/boundary.go) – Implementierungsquelle für `boundary`.
-- [`internal/analyzer/taint.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/taint.go) – Implementierungsquelle für `taint`.
-
-## 14. Standards, Forschung und Referenzen
-
-1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
-2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
-3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
-4. [MITRE CWE-918 – Server-Side Request Forgery (SSRF)](https://cwe.mitre.org/data/definitions/918.html)
-5. [Model Context Protocol – Security Best Practices](https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices)
-6. [Denning – A Lattice Model of Secure Information Flow, Communications of the ACM 19(5), 1976](https://doi.org/10.1145/360051.360056)
-7. [OWASP – Top 10 for Agentic Applications for 2026](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)
-
-## Fazit
-
-**Dynamic-target SSRF** ist als Security Property dann nützlich, wenn sie nicht als Checklistenwort, sondern als **überprüfbare Relation** implementiert wird. Für `skil` bedeutet das: untrusted URL target taint + request sink, klar ausgewiesene Coverage, reproduzierbare Evidence und scanner-negative Gegenfälle mit ähnlicher Oberfläche.
-
-Die entscheidende Review-Frage lautet deshalb nicht:
-
-> „Kommt ein verdächtiges Wort vor?“
-
-sondern:
-
-> **Welche Sicherheitsannahme wird verletzt, welche Evidence belegt genau diese Relation, welcher sichere Gegenfall wurde ausgeschlossen und welche Teile der Aussage sind statisch tatsächlich beobachtbar?**
+`skil` already combines a deterministic boundary rule with a Tree-sitter-based taint engine for modeled source-to-network flows. The next level of assurance comes from making provenance and authorization first-class runtime concepts: constrained tools, deterministic destination policy, egress enforcement, redirect revalidation, and evidence that survives the model boundary.

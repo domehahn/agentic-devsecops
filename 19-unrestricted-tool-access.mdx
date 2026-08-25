@@ -1,6 +1,6 @@
 ---
-title: "Unrestricted Tool Access bei Agentic Skills: Security Property, Detection und Nachweis"
-description: "Unrestricted Tool Access wissenschaftlich erklärt: Bedrohungsmodell, scanner-positive und scanner-negative Beispiele, Detection-Mechanismus in skil, Evidence Chain, Grenzen und Referenzen."
+title: "Unrestricted Tool Access in Agentic Systems: Designing a Capability Boundary Around Model-Driven Action"
+description: "A deep technical essay on unrestricted tool access in agentic systems: wildcard permissions, MCP tool discovery, capability contracts, authorization, schema trust, scope drift, runtime policy, and measurable least privilege."
 date: "2026-07-30"
 author: "dome"
 topics:
@@ -14,350 +14,345 @@ featured: false
 draft: false
 series:
   slug: agentic-skill-security-properties
-  title: "Security Properties für Agentic Skills"
+  title: "Security Properties for Agentic Skills"
   order: 19
 ---
 
-Agentic Skills sind gleichzeitig **Instruktion, Code, Konfiguration, Tool-Vertrag und Supply-Chain-Artefakt**. Deshalb genügt es nicht, eine Datei als „Text“ zu behandeln. Eine belastbare Security-Analyse muss rekonstruieren, welche **Trust Boundary**, welche Datenklasse oder welche ausführbare Capability ein Artefakt tatsächlich berührt.
+Tools convert language-model output into effects. Once an agent can query databases, alter repositories, send messages, provision infrastructure, or trigger deployments, the security question changes from “what can the model say?” to **“what authority can the system exercise on the model's behalf?”**
 
-Die Security Property **Unrestricted Tool Access** gehört zur Kategorie **Agency / Privilege**. Diese Property begrenzt die **effektive Agency** des Agenten. Maßgeblich ist nicht nur, was der Skill behauptet zu dürfen, sondern welche privilegierten Aktionen technisch erreichbar sind.
+Unrestricted Tool Access is the failure mode in which the callable capability set is much broader than the task requires. The simplest manifestation is a wildcard allowlist, but the deeper issue is effective reachability: dynamic discovery, inherited permissions, shared credentials, or permissive tool brokers can create a de facto wildcard even when no literal `*` appears.
 
-<Note>
-**Terminologie:** In dieser Serie bedeutet **scanner-positiv**: Der Scanner erkennt einen Security Concern und erzeugt ein Finding. **Scanner-negativ** bedeutet: Der legitime Gegenfall darf für genau diese Property nicht anschlagen. Diese Definition entspricht der `skil` Security Control Matrix.
-</Note>
-
-## Kurzfassung
-
-| Dimension | Einordnung |
-| --- | --- |
-| Security Property | **Unrestricted Tool Access** |
-| `skil` Controls | `SKIL-AGENCY-TOOLS`, `SKIL-MCP-001` |
-| Primärer Mechanismus | **Intent + strukturierte Wildcard-Tool-Erkennung** |
-| Aktueller Coverage-Charakter | **FULL** |
-| Security-Relation | `AGENT_TOOL_SET = ALL_AVAILABLE_TOOLS ∧ PURPOSE_REQUIRES_SUBSET` |
-| Hauptziel | False Positives durch Kontextprüfung reduzieren und den eigentlichen Sicherheitszusammenhang als Evidence Chain nachweisen |
-
-<KeyTakeaway>
-Ein **positiver Treffer** für Unrestricted Tool Access ist nur dann belastbar, wenn die Property-spezifische Relation `AGENT_TOOL_SET = ALL_AVAILABLE_TOOLS ∧ PURPOSE_REQUIRES_SUBSET` aus konkreter Evidence rekonstruiert werden kann. Ein Schlüsselwort allein ist keine wissenschaftlich ausreichende Begründung.
-</KeyTakeaway>
-
-## 1. Welche Sicherheitsannahme schützt die Property?
-
-Die Property lässt sich als Invariante formulieren:
+The invariant is:
 
 ```text
-AGENT_TOOL_SET = ALL_AVAILABLE_TOOLS ∧ PURPOSE_REQUIRES_SUBSET
+AGENT_TOOL_SET = ALL_AVAILABLE_TOOLS
+AND PURPOSE_REQUIRES_SUBSET
 ```
 
-Ein Scanner versucht damit nicht, „bösartige Wörter“ zu finden. Er prüft eine Hypothese über ein Systemartefakt:
+A more general formulation is:
 
 ```text
-H0: Die Sicherheitsgrenze bleibt eingehalten.
-H1: Die Sicherheitsgrenze wird durch beobachtbare Evidence verletzt.
+EFFECTIVE_CAPABILITIES ⊃ JUSTIFIED_CAPABILITIES
 ```
 
-Das Finding ist die Entscheidung zugunsten von `H1` innerhalb der **sichtbaren statischen Coverage**. Daraus folgt eine wichtige epistemische Grenze: Ein scanner-negatives Ergebnis ist kein mathematischer Beweis für Gesamtsicherheit, sondern die Aussage, dass **unter dem verwendeten Analysemodell kein hinreichender Nachweis für diese Property gefunden wurde**.
+This is the agentic version of least privilege.
 
-## 2. Bedrohungsmodell
+## The attack surface is the product of model uncertainty and tool authority
 
-Für Unrestricted Tool Access sollte das Threat Model mindestens vier Elemente trennen:
+A model may be extremely capable and still make mistakes. A prompt injection may redirect its objective. A tool description may be misleading. A retrieved document may contain adversarial instructions. The damage from any of these conditions depends heavily on the actions the runtime exposes.
 
-1. **Quelle der Kontrolle oder Daten:** Nutzerinput, eingebettete Instruktion, Tool-Metadaten, Code, Dependency, Runtime-Konfiguration oder persistenter Zustand.
-2. **Trust Boundary:** Welche Information oder Authority wird höhergestuft, überschritten oder erweitert?
-3. **Operation/Sink:** Welche Aktion erzeugt die relevante Wirkung?
-4. **Guard:** Welche Allowlist, Validierung, Policy, Approval, Signatur oder Capability-Grenze müsste die Relation verhindern?
-
-<Architecture>
-Text/MCP config → tool grants → wildcard/all-any classifier → purpose/contract → finding
-</Architecture>
-
-Die Architektur ist bewusst mehrstufig. Candidate Generation und Finding Decision sind getrennt: Ein lexikalischer, syntaktischer oder struktureller Kandidat wird erst nach Kontext-, Scope- und Guard-Prüfung zu einem Security Finding.
-
-## 3. Scanner-positives Beispiel: Das Finding muss entstehen
-
-```yaml
-allowedTools: ["*"]
+```text
+uncertain decision process
+          ×
+reachable tools
+          ×
+credential scope
+          ×
+autonomy
+          =
+possible impact
 ```
 
-### Warum ist das ein positiver Treffer?
+This is why OWASP's Excessive Agency guidance separates **excessive functionality, excessive permissions, and excessive autonomy**.[^owasp-agency] The same principle appears in the OWASP Top 10 for Agentic Applications, where tool misuse and identity/privilege abuse are treated as first-class agentic risks.[^owasp-agentic]
 
-Ein universeller Tool-Scope macht Prompt-/Context-Manipulation unmittelbar wirkmächtiger. Das Finding beruht auf dem erlaubten Set, nicht auf der bloßen Existenz von Tools.
+## A wildcard permission is easy to detect—and should be treated as a design smell
 
-Die Evidence sollte deshalb nicht nur `matched=true` enthalten. Mindestens folgende Felder sind für reproduzierbare Findings sinnvoll:
-
-```yaml
-property: "unrestricted-tool-access"
-rules: ["SKIL-AGENCY-TOOLS", "SKIL-MCP-001"]
-analysis: "Intent + strukturierte Wildcard-Tool-Erkennung"
-coverage: "FULL"
-security_relation: "AGENT_TOOL_SET = ALL_AVAILABLE_TOOLS ∧ PURPOSE_REQUIRES_SUBSET"
-location:
-  file: "path/to/artifact"
-  line: 42
-context_checked: true
-evidence_complete: true
-confidence: high
-```
-
-`confidence: high` ist hier nur beispielhaft. In einer realen Engine muss Confidence aus Evidenzqualität, Kontextauflösung und Coverage resultieren; sie darf nicht allein aus der Severity abgeleitet werden.
-
-## 4. Scanner-negatives Beispiel: Der Gegenfall darf nicht anschlagen
+A synthetic positive fixture can be as small as:
 
 ```yaml
 allowedTools:
-  - "repo.read"
-  - "issue.comment"
+  - "*"
 ```
 
-### Warum muss dieser Fall scanner-negativ bleiben?
+The finding is not that every tool will be abused. The finding is that the task contract has delegated the authorization decision to the model at runtime instead of constraining it beforehand.
 
-Der Negativfall reduziert das Tool-Set auf die für die Aufgabe benötigten Operationen.
-
-Das ist für die Qualität des Detektors genauso wichtig wie das Positivbeispiel. Eine Security Rule ohne systematische Negativ-Fixtures optimiert leicht auf Recall, produziert aber im Engineering-Alltag so viele False Positives, dass Findings ignoriert oder Controls deaktiviert werden.
-
-## 5. Wie `skil` die Property technisch ermittelt
-
-Aktuell relevante Controls: `SKIL-AGENCY-TOOLS`, `SKIL-MCP-001`.
-
-Der Pattern-Analyzer hält ein gemeinsames, deterministisches Intent-Regelwerk vor. Positive Patterns werden mit expliziten Negative-Patterns beziehungsweise lokalem Negations-/Meta-Kontext kombiniert. Dadurch ist ein Match nicht bloß String Presence, sondern eine polaritätsbewusste Kandidatenentscheidung.
-
-Der MCP-Analyzer parst Tool-/Permission-/Parameter-Metadaten strukturiert und wendet Feld-spezifische Checks an. Für Freitextfelder kann das gemeinsame Intent-Regelwerk wiederverwendet werden, ohne eine zweite semantisch abweichende Regex-Engine zu schaffen.
-
-Der Mechanismus lässt sich als Evidence Pipeline darstellen:
-
-```text
-Raw artifact
-    ↓
-parser-/analyzer-spezifische Beobachtung
-    ↓
-Property-spezifische Zwischenrepräsentation
-    ↓
-Context / Negation / Scope / Guard
-    ↓
-entscheidende Security-Relation
-    ↓
-Finding + Confidence + Coverage
-```
-
-### 5.1 Candidate Generation
-
-Candidate Generation soll **breit genug für Recall**, aber noch nicht entscheidend sein. Abhängig von der Property entstehen Kandidaten aus AST-Knoten, Unicode-Codepoints, Manifestfeldern, Versionsconstraints, Netzwerkzielen, Taint Sources/Sinks oder semantischen Clauses.
-
-### 5.2 Property-spezifische Zwischenrepräsentation
-
-Die entscheidende IR für diesen Beitrag ist:
-
-```text
-AGENT_TOOL_SET = ALL_AVAILABLE_TOOLS ∧ PURPOSE_REQUIRES_SUBSET
-```
-
-Diese IR ist absichtlich kleiner als der Originaltext. Sie enthält nur die für die Sicherheitsentscheidung relevanten Entitäten und Relationen. Dadurch kann derselbe Mechanismus unterschiedliche Oberflächenformen auf dieselbe Property abbilden.
-
-### 5.3 Finding Decision
-
-```text
-IF
-    property relation is evidenced
-AND relevant context/scope is resolved
-AND no valid guard/declassifier negates the relation
-THEN
-    emit finding
-ELSE
-    keep candidate as signal or scanner-negative
-```
-
-Der positive Treffer ist damit eine **Relation über Evidence**, nicht ein Worttreffer.
-
-## 6. False-Positive-Unterdrückung
-
-Ein Wildcard in einem nicht sicherheitsrelevanten Schemafeld darf nicht fehlklassifiziert werden; strukturierte Feldpfade sind deshalb besser als globale Regex.
-
-Ein wissenschaftlich belastbarer Scanner sollte False-Positive-Unterdrückung nicht durch globale „ignore this file“-Ausnahmen lösen, sondern durch **lokale Gegenhypothesen**:
-
-```text
-Candidate
-  ├─ defensive/negated context? ──> suppress or downgrade
-  ├─ validated/allowlisted?      ──> suppress relation
-  ├─ outside relevant field?     ──> not this property
-  └─ relation complete?          ──> finding
-```
-
-Das verbessert Erklärbarkeit: Der Scanner kann nicht nur sagen, warum er anschlägt, sondern auch, **welche Bedingung einen ähnlichen sicheren Fall unterscheidet**.
-
-## 7. Evidence Chain: Warum der Treffer nachvollziehbar sein muss
-
-Für Unrestricted Tool Access sollte ein Finding mindestens diese Nachweise verbinden:
-
-```text
-Fundstelle
-  ↓
-parser-/analyzer-spezifische Beobachtung
-  ↓
-Security-Relation: AGENT_TOOL_SET = ALL_AVAILABLE_TOOLS ∧ PURPOSE_REQUIRES_SUBSET
-  ↓
-Scope-/Guard-Entscheidung
-  ↓
-potenzielle Wirkung
-```
-
-Eine geeignete interne Repräsentation könnte so aussehen:
+A better counterpart is explicit:
 
 ```yaml
-finding:
-  property: unrestricted-tool-access
-  rule_ids: ["SKIL-AGENCY-TOOLS", "SKIL-MCP-001"]
-  evidence:
-    raw_location: true
-    structured_relation: true
-    context_resolution: true
-  coverage:
-    status: "verified-or-bounded"
-    runtime_dependencies_documented: true
-  decision:
-    scanner_positive: true
+allowedTools:
+  - repository.read_file
+  - repository.search
+  - tests.run
 ```
 
-<Warning>
-Ein Finding darf keine Sicherheit vortäuschen, die der Analyzer nicht besitzt. Wenn ein Ziel, ein Call, ein Contract oder eine semantische Relation zur Laufzeit unaufgelöst bleibt, ist `runtime_dependent`, `provider_backed`, `partially_resolved` oder `not_observable` die korrektere Aussage als ein künstliches „safe“.
-</Warning>
+Even this is only the beginning. The argument schemas and underlying credentials also need to be scoped.
 
-## 8. Mechanismus im Hintergrund: Aufbau und Designprinzipien
+## Tool names are not capabilities; parameters and resources matter
 
-Die Detektion folgt fünf allgemeinen Prinzipien:
+Suppose an agent is allowed to call `read_file`. If that tool accepts any absolute path, the apparent read capability may include the entire host filesystem. Likewise, a `query_database` tool can be narrow or extremely powerful depending on tenant, database, SQL grammar, and execution identity.
 
-### 8.1 Deterministische Evidenz vor semantischer Vermutung
-
-AST, strukturierte Manifestfelder, Codepoints, Versionen, Pfade und Source→Sink-Flows sind reproduzierbare Evidenz. Freie Sprache ist dagegen probabilistischer. Semantische Provider sollten deterministische Evidence **ergänzen**, nicht verdecken.
-
-### 8.2 Parser vor Regex, wenn Syntax existiert
-
-Wenn ein Artefakt eine formale Grammatik besitzt, ist ein Parser strukturell stärker: `exec(` in einem Kommentar ist nicht dasselbe wie ein `Call`-Knoten; `"*"` in einem Regex ist nicht dasselbe wie ein Wildcard-Permission-Feld.
-
-### 8.3 Context Guards sind Teil der Rule
-
-Eine Security Rule besteht konzeptionell aus:
+A useful capability model therefore has several dimensions:
 
 ```text
-positive evidence
-+ scope constraints
-+ negative evidence / safe context
-+ decision rule
+capability = operation
+           × resource set
+           × tenant / principal
+           × parameter constraints
+           × time window
+           × rate / budget
+           × side-effect class
 ```
 
-Ohne den dritten Teil werden Security-Dokumentation, Tests und sichere Gegenregeln regelmäßig zu False Positives.
+For example:
 
-### 8.4 Composition erst nach Einzelbefund
+```yaml
+capability:
+  operation: repository.read_file
+  resources:
+    repository: current
+    paths:
+      - "src/**"
+      - "docs/**"
+  side_effect: none
+  expires_with_run: true
+```
 
-Die Property sollte mit benachbarten Findings nur dann zu einer höheren Severity komponiert werden, wenn ein gemeinsamer Daten-, Kontroll- oder Trust-Pfad nachweisbar ist.
+This is materially stronger than `filesystem:*`.
 
-### 8.5 Coverage ist ein First-Class-Result
+## MCP makes tool metadata explicit—but metadata is not a trust boundary
 
-Das System sollte mindestens zwischen folgenden Zuständen unterscheiden:
+The Model Context Protocol defines structured tool discovery and invocation. A server can publish tool names, descriptions, and JSON Schema inputs, allowing a client to present those tools to a model.[^mcp-tools]
+
+The current MCP specification also warns implementations not to treat tool annotations as inherently trusted. Servers are expected to validate tool inputs and access controls, while clients should preserve user visibility and confirmation around sensitive operations.[^mcp-tools]
+
+That has two implications for Unrestricted Tool Access:
+
+1. **discovery must not equal authorization**, and
+2. **schema availability must not equal permission to execute**.
+
+A client may know that a tool exists while still withholding it from a particular agent, user, tenant, or run.
+
+## `skil`: `SKIL-AGENCY-TOOLS` and `SKIL-MCP-001`
+
+The current security matrix maps unrestricted/wildcard tool access to `SKIL-AGENCY-TOOLS` and MCP wildcard exposure to `SKIL-MCP-001`.[^skil-matrix]
+
+The property can be evaluated through both prose and structured manifests:
 
 ```text
-verified
-partially_resolved
-provider_backed
-runtime_dependent
-semantic_only
-not_observable
+artifact
+  ↓
+tool declaration / permission candidate
+  ↓
+wildcard or broad-scope classification
+  ↓
+purpose / contract comparison
+  ↓
+negative context and policy checks
+  ↓
+finding
 ```
 
-Damit bleibt sichtbar, **was** der Scanner tatsächlich gemessen hat.
+Structured fields should receive stronger confidence than a phrase such as “use any tools you need” embedded in an explanatory paragraph, although that phrase can still be relevant intent evidence.
 
-## 9. Wissenschaftliche Validierung des Detektors
+## Dynamic discovery creates a moving authorization surface
 
-Für eine belastbare Evaluation reichen einzelne Demo-Files nicht. Pro Property sollte die Testsuite mindestens enthalten:
+Modern agent runtimes often support tools that appear and disappear at runtime. This flexibility creates a security problem if the agent's permission model is based only on discovery-time availability.
 
-| Testklasse | Zweck |
-| --- | --- |
-| True Positive Fixtures | kanonische Verletzungen der Property |
-| True Negative Fixtures | legitime Gegenfälle mit ähnlichen Tokens/Syntaxen |
-| Adversarial Paraphrases | Recall gegen Oberflächenvariation |
-| Boundary Cases | minimale Änderung zwischen positiv und negativ |
-| Differential Tests | Vergleich mit unabhängigen Referenzimplementierungen |
-| Holdout Fixtures | Schutz gegen Überanpassung an bekannte Tests |
-| Mutation Tests | systematische Änderung von Negation, Scope, Pfad, Sink oder Version |
-
-Für sprachliche Properties sind Precision/Recall und Error Taxonomy sinnvoll. Für AST-/Taint-/Schema-Properties kann zusätzlich die **strukturelle Coverage** gemessen werden: Welche Source-, Sink-, Call-, Manifest- oder Codepoint-Klassen unterstützt der Analyzer tatsächlich?
-
-## 10. Grenzen der Erkennung
-
-Der tatsächlich verfügbare Tool-Satz kann zur Laufzeit kleiner oder größer sein als die statische Deklaration. Discovery/Runtime Policy muss einbezogen werden.
-
-Generell gelten drei Grenzen:
-
-1. **Static visibility:** Laufzeitwerte, DNS, Reflection, dynamische Downloads oder externe Policies können fehlen.
-2. **Semantic ambiguity:** Zweck, Legitimität und manche Trust-Entscheidungen sind nicht vollständig aus Syntax ableitbar.
-3. **Authority mismatch:** Ein gefährlicher Text kann technisch machtlos sein; ein harmlos formulierter Skill kann durch Runtime-Konfiguration enorme Authority erhalten.
-
-Deshalb ist die Zielgröße nicht „malicious / benign“, sondern eine nachvollziehbare Aussage über **Property, Evidence, Coverage und mögliche Wirkung**.
-
-## 11. Technische Controls und Remediation
-
-- tool allowlist
-- read/write getrennt
-- dangerous tools mit approval
-- capability contract und observed-use verification
-
-Defense in Depth bleibt zentral:
+Imagine:
 
 ```text
-Authoring lint
-    +
-static scan
-    +
-contract verification
-    +
-supply-chain verification
-    +
-runtime policy
-    +
-audit / telemetry
+09:00  client connects to MCP server
+09:01  server advertises read-only tools
+10:30  server configuration changes
+10:31  new destructive tool becomes discoverable
+10:32  agent sees it automatically
 ```
 
-Kein einzelner Layer ersetzt die anderen.
+If discovery and authorization are conflated, the agent's authority silently expands. A mature runtime therefore needs a **capability snapshot or policy evaluation** that binds allowed tools to a reviewed identity/version/schema state.
 
-## 12. Einordnung in DevSecOps
+This is related to MCP rug-pull and mutable-identity concerns, but the property here remains narrower: the agent must not automatically inherit every newly visible capability.
 
-Die Property sollte an mehreren Punkten des Lifecycles geprüft werden:
+## Schema constraints are part of least privilege
 
-1. **Authoring:** schneller lokaler Scan und IDE-/pre-commit Feedback.
-2. **Pull/Merge Request:** reproduzierbarer Scan mit diff-basierter Evidence.
-3. **Registry/Katalog:** Scan des veröffentlichten, digest-adressierten Artefakts.
-4. **Installation:** Verification gegen Capability Contract, Lockfiles und Provenance.
-5. **Runtime:** technische Enforcement-Schicht für Netzwerk, Filesystem, Tools, Secrets, Approval und Ressourcen.
-6. **Change Detection:** erneute Bewertung, wenn Tool-Metadaten, Dependencies, Runtime Policy oder Identitäten wechseln.
+A tool with a constrained schema can reduce risk before application-level authorization even runs.
 
-Damit wird verhindert, dass eine saubere statische Analyse auf Artefakt A durchgeführt wird, während später Artefakt B oder eine breitere Runtime-Konfiguration tatsächlich ausgeführt wird.
+For example, a deployment tool can expose:
 
-## 13. Implementierungsnachweise in `skil`
+```text
+deploy(environment ∈ {dev, staging}, artifact_digest, change_id)
+```
 
-- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – definiert scanner-positive/scanner-negative Control Coverage und die nativen `SKIL-*` Controls.
-- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – dokumentiert property-level Äquivalenz, Analyzer und Coverage-State.
-- [`docs/external-scanner-feature-parity.md`](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – beschreibt Detektionslogik, Lücken und Unterschiede der Mechanismen.
-- [`internal/analyzer/pattern.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/pattern.go) – Implementierungsquelle für `pattern`.
-- [`internal/analyzer/mcp.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/mcp.go) – Implementierungsquelle für `mcp`.
+rather than:
 
-## 14. Standards, Forschung und Referenzen
+```text
+execute(command: string)
+```
 
-1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
-2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
-3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
-4. [OWASP GenAI – LLM06:2025 Excessive Agency](https://genai.owasp.org/llmrisk/llm062025-excessive-agency/)
-5. [OWASP – Top 10 for Agentic Applications for 2026](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)
-6. [Model Context Protocol – Specification 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25)
-7. [Model Context Protocol – Tools, Specification 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
-8. [Debenedetti et al. – AgentDojo: A Dynamic Environment to Evaluate Attacks and Defenses for LLM Agents, NeurIPS 2024](https://arxiv.org/abs/2406.13352)
+The first interface encodes allowed semantic actions. The second delegates interpretation to an unrestricted execution surface.
 
-## Fazit
+A strong tool contract constrains:
 
-**Unrestricted Tool Access** ist als Security Property dann nützlich, wenn sie nicht als Checklistenwort, sondern als **überprüfbare Relation** implementiert wird. Für `skil` bedeutet das: Intent + strukturierte Wildcard-Tool-Erkennung, klar ausgewiesene Coverage, reproduzierbare Evidence und scanner-negative Gegenfälle mit ähnlicher Oberfläche.
+- enumerated operations,
+- resource identifiers,
+- tenant context,
+- maximum batch size,
+- destination domains,
+- write scope,
+- dangerous combinations of parameters.
 
-Die entscheidende Review-Frage lautet deshalb nicht:
+The authorization layer must still validate those fields. JSON Schema is input structure, not an authorization system.
 
-> „Kommt ein verdächtiges Wort vor?“
+## OAuth scopes and resource binding
 
-sondern:
+For remote MCP deployments, current authorization guidance builds on OAuth and requires resource-aware token use. The specification requires clients to use resource indicators and servers to validate that tokens were issued for the correct audience, and explicitly forbids token passthrough.[^mcp-auth]
 
-> **Welche Sicherheitsannahme wird verletzt, welche Evidence belegt genau diese Relation, welcher sichere Gegenfall wurde ausgeschlossen und welche Teile der Aussage sind statisch tatsächlich beobachtbar?**
+This aligns with RFC 9700's broader OAuth security guidance around restricted tokens and least-privilege authorization.[^rfc9700]
+
+For agentic tools, the practical lesson is simple: **do not give every tool the same bearer token with every scope**. Capability separation at the tool layer is undermined if all calls execute under one unconstrained identity.
+
+## From static allowlist to policy decision
+
+A scalable enterprise design usually needs a policy function:
+
+```text
+allow(
+  agent_identity,
+  user_identity,
+  tool_identity,
+  operation,
+  resource,
+  arguments,
+  purpose,
+  environment,
+  approval_state
+)
+```
+
+The model can propose a tool call. The policy engine decides whether that exact call is authorized.
+
+This creates a clean separation:
+
+```text
+LLM:       "I would like to call tool X with arguments Y."
+Policy:    "This principal may call X only for resource R under condition C."
+Executor:  performs call only after authorization
+```
+
+The LLM is an untrusted planner inside the authorization architecture, not the authorization architecture itself.
+
+<Architecture>
+Goal → candidate tool call → schema validation → policy authorization → optional approval → execution → result filtering → audit trail
+</Architecture>
+
+## Tool minimization improves reliability as well as security
+
+Restricting the tool set is not merely defensive. Large tool catalogs can also make routing harder, increase prompt/context overhead, and create ambiguous affordances.
+
+A router that presents only tools relevant to the current task can improve:
+
+- tool-selection precision,
+- context efficiency,
+- reviewability,
+- deterministic policy evaluation,
+- blast-radius containment.
+
+The key is to ensure that the router itself is policy-bound. “The model chose these tools” is not sufficient evidence that they are authorized.
+
+## False positives and legitimate generic agents
+
+Some platforms intentionally expose broad tools to privileged operators. That may be legitimate in a controlled administrative agent, but it changes the trust model.
+
+The scanner should distinguish:
+
+- wildcard tool access with no reviewed contract,
+- broad access in an explicitly privileged administrative profile,
+- documentation describing wildcard risks,
+- policy code that rejects wildcard declarations,
+- a narrow tool list whose individual parameters remain unconstrained.
+
+A privileged profile may still deserve a finding; the difference may be **accepted risk** rather than “not a risk.” Findings and policy decisions should not be conflated.
+
+## Evidence chain
+
+A useful result can explain both declared and effective scope:
+
+```yaml
+property: unrestricted-tool-access
+controls:
+  - SKIL-AGENCY-TOOLS
+  - SKIL-MCP-001
+declared:
+  tools:
+    - "*"
+purpose:
+  required_tools:
+    - repository.read_file
+    - tests.run
+assessment:
+  overbroad: true
+runtime_authorization:
+  observable: false
+coverage:
+  manifest: deterministic
+  effective_identity: runtime_dependent
+```
+
+That is more actionable than “wildcard found.”
+
+## Runtime observability
+
+Once agents are deployed, useful metrics include:
+
+- number of discoverable tools versus authorized tools,
+- tool calls denied by policy,
+- privilege-escalation requests,
+- new tools appearing during long-running sessions,
+- parameter-scope violations,
+- calls requiring human approval,
+- calls executed under break-glass credentials,
+- tool-call frequency and cost budgets.
+
+These metrics can identify permission drift even when the source artifacts remain unchanged.
+
+## Validation matrix
+
+A serious test suite should include:
+
+- literal wildcard permissions,
+- natural-language “use all tools” intent,
+- explicit allowlists,
+- tool groups that indirectly contain broad capabilities,
+- dynamic MCP discovery,
+- schema changes between versions,
+- overbroad parameters on otherwise allowed tools,
+- tenant/resource constraints,
+- defensive documentation,
+- administrative profiles with explicit risk acceptance.
+
+Tool authorization is multidimensional; test data should reflect that.
+
+## Limits
+
+Static scanning cannot normally prove the effective runtime permission set when it depends on:
+
+- remote server configuration,
+- OAuth grants,
+- dynamic policy,
+- tenant membership,
+- user approvals,
+- server-side argument validation,
+- tool behavior that differs from its declaration.
+
+Coverage metadata should state which layers were actually observed.
+
+<KeyTakeaway>
+A tool catalog is not an authorization model. The secure agentic pattern is to expose the smallest task-relevant capability set, constrain resource and argument scope, bind credentials to those capabilities, and let an independent policy layer authorize each consequential call.
+</KeyTakeaway>
+
+## Implementation references
+
+- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+
+## References
+
+[^skil-matrix]: [domehahn/skil — Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+[^owasp-agency]: [OWASP GenAI — LLM06:2025 Excessive Agency](https://genai.owasp.org/llmrisk/llm062025-excessive-agency/)
+[^owasp-agentic]: [OWASP GenAI — Top 10 for Agentic Applications 2026](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)
+[^mcp-tools]: [Model Context Protocol Specification — Tools, 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
+[^mcp-auth]: [Model Context Protocol Specification — Authorization, 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
+[^rfc9700]: [RFC 9700 — Best Current Practice for OAuth 2.0 Security](https://www.rfc-editor.org/rfc/rfc9700)
+
+## Conclusion
+
+Unrestricted Tool Access is a capability-design failure, not merely a wildcard-syntax problem. The mature control compares effective authority with task need across operation, resource, tenant, arguments, identity, and time. Static analysis can identify broad declarations and suspicious intent; runtime policy must ultimately ensure that the model can propose only those effects that an independent authorization layer is prepared to permit.

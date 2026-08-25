@@ -1,0 +1,443 @@
+---
+title: "Part 5: Resilience & Fallback Architectures – When Agents Must Degrade Gracefully"
+description: "The final LLMOps essay on resilient agent systems: circuit breakers, retries, multi-provider fallbacks, checkpointing, idempotency, quality degradation, chaos engineering, and recovery."
+date: "2026-08-22"
+author: "dome"
+topics:
+  - platform-engineering
+  - devsecops
+  - ai-engineering
+tags:
+  - Resilience
+  - Fallbacks
+  - Circuit Breaker
+  - High Availability
+draft: false
+series:
+  slug: "llmops-platform-infrastructure"
+  title: "LLMOps & Platform Infrastructure: The Agent Runtime"
+  order: 5
+ai:
+  assisted: true
+  humanReviewed: true
+  reviewedBy: "Dominik Hahn"
+  reviewedAt: "2026-08-22"
+---
+
+A production agent system is a distributed system with an unusually large number of external dependencies. Even if your own runtime works perfectly, the model can hit rate limits, the vector store can fail, a tool can roll out an incompatible API version, or an agent can lose its sandbox after 18 minutes.
+
+Resilience therefore does not mean “switch to Claude when OpenAI fails.” A real fallback has to account for **which state has already changed, which capabilities the replacement system has, and whether a degraded answer is acceptable at all**.
+
+In its current Well-Architected guidance for Generative and Agentic AI, AWS describes patterns including redundant model paths, timeout mechanisms, error handling, checkpoints, and explicit degradation.[^1][^2]
+
+---
+
+## 1. Failure Taxonomy Before Retry Logic
+
+A `try/catch` does not distinguish causes.
+
+Agent platforms should model at least the following failure classes:
+
+```text
+Transport Failure
+Rate Limit / Capacity
+Provider 5xx
+Authentication / Authorization
+Invalid Request
+Model Refusal / Policy
+Malformed Structured Output
+Quality Failure
+Tool Failure
+State Conflict
+Budget Exhaustion
+```
+
+Each class requires a different response.
+
+```text
+429             -> backoff / alternate capacity
+503             -> retry / failover
+401             -> do not blindly retry
+invalid schema  -> repair request or escalate
+quality failure -> verifier / stronger model
+budget exceeded -> stop safely
+```
+
+Retrying without classification creates additional load precisely when a provider is already unstable.
+
+---
+
+## 2. Exponential Backoff and Jitter Prevent Retry Storms
+
+If a thousand agents hit a rate limit at the same time and all retry exactly five seconds later, they create another load spike.
+
+Simplified:
+
+```text
+delay_n = min(cap, base * 2^n) + random_jitter
+```
+
+Also important:
+
+- respect `Retry-After`,
+- cap attempts,
+- use a global retry budget,
+- honor the deadline of the overall task.
+
+A single tool call must not consume the entire run duration.
+
+---
+
+## 3. Circuit Breakers Protect the Overall System
+
+Michael Nygard's circuit-breaker pattern remains relevant for model and tool endpoints.[^3]
+
+```text
+CLOSED
+  ↓ repeated failures
+OPEN
+  ↓ cooldown
+HALF_OPEN
+  ↓ success
+CLOSED
+```
+
+While `OPEN`, new requests are not sent to the broken dependency. They can:
+
+- fail immediately,
+- wait in a queue,
+- use a fallback,
+- switch into a degraded mode.
+
+This prevents a local failure from becoming a cascading platform outage.
+
+---
+
+## 4. Multi-Provider Fallback Is a Semantic Problem
+
+Technically, a gateway can send the same message to model B. Semantically, models are not interchangeable.
+
+They differ in:
+
+- tool-calling schema,
+- context window,
+- safety policies,
+- structured output,
+- image/file support,
+- reasoning behavior,
+- latency and cost.
+
+A model catalog therefore needs capability metadata:
+
+```yaml
+model: provider-b/model-x
+capabilities:
+  tool_calling: true
+  json_schema: true
+  vision: false
+approved_for:
+  - code-review
+not_approved_for:
+  - regulated-decision
+```
+
+Fallback then becomes routing against requirements, not a simple priority list.
+
+---
+
+## 5. Fallback Must Not Secretly Change Quality
+
+A particularly dangerous pattern is:
+
+```text
+Frontier model unavailable
+ ↓
+small cheap model
+ ↓
+response returned as if nothing happened
+```
+
+For agent fallbacks, AWS recommends making quality degradation visible to users rather than silently returning a worse response.[^2]
+
+A system can define several modes:
+
+```text
+FULL            -> all capabilities available
+DEGRADED_READ   -> no write tools
+DEGRADED_MODEL  -> simpler model, limited tasks
+QUEUE_ONLY      -> task accepted, continue later
+UNAVAILABLE     -> fail closed
+```
+
+For security- or compliance-critical actions, `fail closed` is often preferable to “best effort.”
+
+---
+
+## 6. Agents Need Checkpoints
+
+A 30-minute task should not restart at minute zero after a provider failure.
+
+Checkpoint:
+
+```json
+{
+  "step": "tests-complete",
+  "workspace": "snapshot:81",
+  "commit": "abc123",
+  "completed_actions": [
+    "inspect-repo",
+    "apply-patch",
+    "unit-tests"
+  ],
+  "pending": "security-review"
+}
+```
+
+The runtime can continue from a safe boundary.
+
+AWS articulates a similar principle for Agentic AI: restore from the last known good state instead of always starting over.[^2]
+
+---
+
+## 7. Idempotency Prevents Duplicate Side Effects
+
+Retries are usually straightforward for read-only tools. With write operations, they can cause damage:
+
+```text
+Timeout after create_payment()
+Client does not know whether server committed
+Retry -> second payment
+```
+
+The same applies to agents creating tickets, deployments, or database changes.
+
+```text
+operation_id
+  + idempotency storage
+  + atomic result persistence
+```
+
+The agent must not interpret an `unknown` status as `failed` on its own and repeat the same action.
+
+---
+
+## 8. Compensating Actions Instead of Magical Rollback
+
+Many distributed actions cannot be rolled back transactionally.
+
+```text
+Create branch
+Open PR
+Post Slack notification
+Start deployment
+```
+
+Failures require compensating actions:
+
+```text
+close PR
+revert commit
+cancel rollout
+post correction
+```
+
+This saga-like view is more realistic for long-running agents than a global database transaction.
+
+---
+
+## 9. Queueing Decouples Availability
+
+Not every task needs a synchronous response.
+
+```text
+User Request
+ ↓
+Durable Queue
+ ↓
+Agent Worker
+ ↓ checkpoint
+Tool / Model Dependencies
+```
+
+If a model provider is unavailable for ten minutes, work can wait without losing the task.
+
+This requires:
+
+- a Dead-Letter Queue,
+- maximum delivery attempts,
+- a task deadline,
+- cancellation,
+- deduplicatable IDs.
+
+---
+
+## 10. Multi-Region Helps Only with Replicated State
+
+A second agent endpoint in another region is not enough if both depend on the same non-replicated vector store or the same model endpoint.
+
+For GenAI workloads, AWS recommends, among other things, redundant connections and distributed availability of model endpoints, embedding data, and agent capabilities.[^1]
+
+A dependency graph should make common failure domains visible:
+
+```text
+Region A Agent ─┐
+                ├─ shared Model Provider
+Region B Agent ─┘
+
+=> provider remains common failure domain
+```
+
+Resilience must be evaluated across the **entire chain**.
+
+---
+
+## 11. Quality Failures Need Different Health Checks
+
+A model endpoint can return HTTP 200 while functionally degrading.
+
+Model health therefore needs small synthetic evals in addition to technical checks:
+
+```text
+Can model still:
+- follow required JSON schema?
+- call required tool correctly?
+- pass safety sentinel tasks?
+- satisfy latency threshold?
+```
+
+A provider switch can be triggered because quality falls below a minimum—not just because of `5xx` responses.
+
+---
+
+## 12. Chaos Engineering for Agents
+
+Failure paths should be tested regularly.[^2]
+
+Possible injections:
+
+```text
+Model returns 429 for 5 minutes
+Tool latency = 30s
+Vector DB unavailable
+Malformed tool response
+Sandbox terminated mid-task
+Fallback model unavailable
+Human approval times out
+```
+
+Then measure:
+
+- Task Recovery Rate,
+- Duplicate Side Effects,
+- Data Loss,
+- Recovery Time,
+- Degraded Quality,
+- User Notification.
+
+The first real outage should not be the first test of the fallback path.
+
+---
+
+## 13. Resilience and Cost Are in Tension
+
+Redundancy costs money:
+
+- reserved GPU capacity,
+- multiple provider contracts,
+- replicated data,
+- warm standby,
+- additional evals.
+
+RTO, RPO, and quality SLOs are therefore needed per use case. An internal blog summarizer does not need the same resilience as an incident-response agent.
+
+Risk-based resilience prevents both under- and over-engineering.
+
+---
+
+## 14. Target Architecture
+
+```text
+                    ┌──────── Model A
+Request -> Gateway -┼──────── Model B
+          │         └──────── Local Model
+          │
+          ├─ Circuit Breaker
+          ├─ Retry Budget
+          ├─ Capability Router
+          └─ Quality Verifier
+                 ↓
+          Durable Agent State
+                 ↓
+          Tool Gateway
+          ├─ idempotency
+          ├─ timeout
+          └─ compensation
+```
+
+Resilience is therefore not a single fallback. It is a property of the orchestration layer.
+
+---
+
+## 15. State Reconciliation After a Partial Failure
+
+The hardest failures are often those where the workflow's exact progress is unclear. An agent may send a deployment request, lose the connection afterward, and no longer know whether the rollout actually started.
+
+The correct response is not an immediate retry, but **reconciliation**:
+
+```text
+Desired state: release abc should be deployed once
+Observed state: unknown
+        ↓
+query deployment system by operation_id
+        ↓
+RUNNING -> continue monitoring
+SUCCEEDED -> record completion
+NOT_FOUND -> safe to submit
+FAILED -> compensation / retry policy
+```
+
+This makes agent orchestration resemble familiar Kubernetes controller patterns: the workflow compares desired and observed state and converges in a controlled manner.
+
+## 16. Fallback Chains Need Regular Re-Qualification
+
+A replacement model that handled the same tool suite three months ago may no longer be compatible after API or prompt changes. A fallback must therefore be not only configured but continuously **qualified**.
+
+```text
+Primary eval suite
+       ↓
+run against fallback weekly / on change
+       ↓
+capability matrix updated
+       ↓
+router may use only qualified fallback
+```
+
+This prevents “disaster recovery by configuration file”—fallbacks that are exercised for the first time during a real outage.
+
+## 17. Resilience Needs Clear Semantics for Users
+
+Not every recovery can or should be invisible. If a stronger model fails and only a restricted read-only assistant remains available, the product should communicate that state explicitly.
+
+This is not merely a UX improvement. It prevents downstream systems from treating a qualitatively degraded output as equivalent. Reliability therefore includes **semantic honesty about the current operating mode**.
+
+## Conclusion
+
+Agent systems must handle several kinds of failure: technical unavailability, rate limits, ambiguous side effects, and **domain-level quality degradation**. A multi-provider router solves only part of that problem.
+
+Robust systems combine failure classification, bounded retries, circuit breakers, checkpoints, idempotency, compensating actions, queues, and capability-aware fallbacks. Current Well-Architected guidance for GenAI and Agentic AI emphasizes exactly these forms of controlled recovery and explicit degradation.[^1][^2]
+
+This concludes the **“LLMOps & Platform Infrastructure”** series. The central insight is that an agent is not merely a model with tools. It is a long-lived distributed workload. Running it in production requires the same disciplines as other critical platforms—isolation, observability, FinOps, and resilience—extended to account for the uncertainty of probabilistic models.
+
+---
+
+## Literature & Primary Sources
+
+[^1]: AWS (2026). *Generative AI Lens – Reliability.* AWS Well-Architected Framework. https://docs.aws.amazon.com/wellarchitected/latest/generative-ai-lens/reliability.html
+[^2]: AWS (2026). *Agentic AI Lens – Reliability design principles.* https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/reliability-design-principles.html
+[^3]: Nygard, M. T. (2018). *Release It! Design and Deploy Production-Ready Software*, 2nd ed. Pragmatic Bookshelf.
+
+## Metadata
+
+**SEO Title:** Resilient AI Agents: Circuit Breakers, Fallbacks & Recovery  
+**Meta Description:** How agent systems survive provider and tool outages with retries, circuit breakers, multi-provider routing, checkpoints, idempotency, and degraded modes.  
+**Slug:** `resilienz-und-fallback-architekturen`

@@ -1,0 +1,463 @@
+---
+title: "Part 4: Advanced Search & Reranking – Reciprocal Rank Fusion and Cross-Encoders"
+description: "Part 4 of the 'Advanced RAG & Knowledge Systems' series: how lexical and dense search, Reciprocal Rank Fusion, candidate generation, and cross-encoder reranking are combined into robust retrieval pipelines."
+date: "2026-08-22"
+author: "dome"
+topics:
+  - ai-engineering
+  - software-architecture
+tags:
+  - Hybrid Search
+  - Reranking
+  - Cross-Encoder
+  - BM25
+draft: false
+series:
+  slug: "advanced-rag-knowledge-systems"
+  title: "Advanced RAG & Knowledge Systems: The Perfect Memory"
+  order: 4
+ai:
+  assisted: true
+  humanReviewed: true
+  reviewedBy: "Dominik Hahn"
+  reviewedAt: "2026-08-22"
+---
+
+A RAG system can work only with evidence its retrieval pipeline actually finds. This is precisely where many systems fail: they rely entirely on either keyword search or embeddings and treat the chosen retriever like a search engine that can measure “relevance” objectively.
+
+Relevance, however, depends on the query and the domain.
+
+- A ticket number such as `INC-2026-004812` requires an exact lexical match.
+- “Database connections are exhausted” and “Connection Pool Exhaustion” require semantic similarity.
+- An abbreviation may require both depending on the domain.
+
+The fourth part of **“Advanced RAG & Knowledge Systems”** therefore treats retrieval as a multi-stage ranking system: candidate generation, fusion, reranking, and context selection.
+
+---
+
+## 1. Lexical Search and Dense Retrieval See Different Worlds
+
+### BM25 / Lexical Search
+
+Classic information-retrieval systems rank documents using term frequency and document frequency. BM25 remains a widely used ranking family because it handles exact terminology very effectively.
+
+Strengths:
+
+- IDs,
+- product names,
+- rare domain terms,
+- error codes,
+- exact phrases.
+
+Weaknesses:
+
+- synonyms,
+- paraphrased questions,
+- semantically related wording without lexical overlap.
+
+### Dense Retrieval
+
+A bi-encoder creates separate vectors for the query and document. Sentence Transformers describes this pattern as an efficient first stage for semantic search.[^1]
+
+```text
+q → Encoder → vector(q)
+d → Encoder → vector(d)
+
+score = similarity(vector(q), vector(d))
+```
+
+Strengths:
+
+- synonyms,
+- paraphrases,
+- semantic similarity,
+- natural-language questions against technical text.
+
+Weaknesses:
+
+- IDs and exact strings,
+- numerical details,
+- domain terms outside the training distribution,
+- semantically similar but factually incorrect candidates.
+
+---
+
+## 2. Hybrid Search: Combining Independent Failure Modes
+
+If two retrievers make different mistakes, fusion can improve recall.
+
+```text
+Query
+├── BM25 → rank_lexical
+└── Dense → rank_dense
+            ↓
+       Rank Fusion
+            ↓
+      Candidate Set
+```
+
+The difficulty is that BM25 scores and vector similarities live on different scales. A direct weighted average requires normalization and careful calibration.
+
+**Reciprocal Rank Fusion (RRF)** avoids this problem by using only rank positions.
+
+Cormack, Clarke, and Büttcher published RRF in 2009.[^2]
+
+```text
+RRF(d) = Σ_m 1 / (k + rank_m(d))
+```
+
+Where:
+
+- \(m\): a retrieval system,
+- `rank_m(d)`: the position of document \(d\) in that system's result list,
+- \(k\): a damping parameter.
+
+A document that ranks highly in several lists receives a higher combined score.
+
+---
+
+## 3. Why `k = 60` Is Not a Law of Nature
+
+RRF is often implemented with a \(k\) value around 60. This is a common empirical default, not a mathematically required constant.
+
+A smaller \(k\) amplifies differences among the highest ranks. A larger \(k\) makes contributions from deeper positions more similar.
+
+Example:
+
+```text
+Document A:
+BM25 rank = 1
+Dense rank = 40
+
+Document B:
+BM25 rank = 6
+Dense rank = 5
+```
+
+RRF rewards Document B for ranking consistently high in **both** systems.
+
+The right setting depends, among other things, on:
+
+- candidate depth,
+- corpus size,
+- retrieval systems,
+- query distribution,
+- desired recall.
+
+---
+
+## 4. Candidate Generation and Reranking Are Different Tasks
+
+A strong pipeline separates two objectives.
+
+### Phase 1: Recall
+
+Find as many plausibly relevant candidates as possible.
+
+```text
+10,000,000 documents
+        ↓
+BM25 + ANN Dense Retrieval
+        ↓
+Top 50–500 candidates
+```
+
+### Phase 2: Precision
+
+Sort those candidates more accurately.
+
+```text
+Top 100
+   ↓
+Cross-Encoder
+   ↓
+Top 10
+```
+
+This separation matters because an expensive model cannot be run against millions of documents.
+
+---
+
+## 5. Bi-Encoder vs. Cross-Encoder: No O(1) Magic
+
+The simplified statement “bi-encoder = O(1), cross-encoder = accurate” is wrong.
+
+A bi-encoder's decisive advantage is that **document embeddings can be precomputed**. At query time, only the query vector has to be computed and searched against an index. The actual search complexity depends on the index; approximate-nearest-neighbor systems provide no universal O(1) guarantee.
+
+A cross-encoder processes query and document together:
+
+```text
+[CLS] Query [SEP] Document [SEP]
+            ↓
+       Transformer
+            ↓
+       relevance score
+```
+
+Sentence Transformers notes that cross-encoders often provide higher ranking quality, but incur computation for every query-document pair and are therefore typically used only to rerank Top-\(k\) candidates.[^3]
+
+---
+
+## 6. Why Cross-Encoders Can Be More Precise
+
+With separate embeddings, a bi-encoder must compress the entire meaning of a document into a fixed vector. Query and document interact only through a distance metric.
+
+With a cross-encoder, attention layers can relate query and document tokens directly.
+
+Example:
+
+> Query: “Which timeout applies exclusively to asynchronous uploads?”
+
+Two candidates:
+
+```text
+A: "Default request timeout: 30 seconds."
+B: "Asynchronous uploads use a dedicated timeout of 90 seconds."
+```
+
+Both can be semantically similar. The cross-encoder can give stronger weight to the constraint “exclusively to asynchronous uploads.”
+
+---
+
+## 7. Contextual Retrieval: Retrieval Quality Starts Before Ranking
+
+Reranking cannot fully repair missing context inside a chunk.
+
+Anthropic published a retrieval variant in 2024 that enriches chunks with additional document context before embedding and BM25 indexing, then applies hybrid search and reranking.[^4]
+
+The interesting architectural point is not the specific vendor number, but the chain:
+
+```text
+Chunk
+→ Contextualize
+→ Lexical + Dense Retrieval
+→ Candidate Fusion
+→ Reranking
+→ Context Packing
+```
+
+In Anthropic's own experiments, the combination with reranking substantially reduced measured retrieval failure rates.[^4] Such figures are domain-specific and should not be transferred unchanged to other corpora.
+
+---
+
+## 8. Query Transformation: The Query Itself Can Be the Failure
+
+A retriever can search only what the query represents.
+
+Example:
+
+```text
+User:
+"Why has checkout been hanging since the deploy?"
+
+Search Query:
+"checkout deploy hang"
+```
+
+A query-rewrite stage might produce:
+
+```text
+"checkout service timeout deployment incident connection pool regression"
+```
+
+Possible techniques include:
+
+- query expansion,
+- multi-query retrieval,
+- HyDE,
+- synonym expansion,
+- entity resolution,
+- acronym expansion,
+- decomposition for multi-hop questions.
+
+These methods can increase recall, but they can also cause query drift. An LLM-based rewrite should therefore not be treated uncritically as an “improvement.”
+
+---
+
+## 9. Metadata Filters: Semantics Does Not Replace Authorization
+
+Hard filters often have to apply before ranking:
+
+```text
+tenant_id = "bank-a"
+classification <= user_clearance
+valid_from <= now
+valid_to > now
+language = "en"
+product_version = "19.1"
+```
+
+Such conditions do not belong in the hope that the embedding space will “prefer” the right results. They belong in deterministic query and policy logic.
+
+This is especially important for multi-tenant RAG: an excellent semantic hit from another tenant is a security incident.
+
+---
+
+## 10. Context Packing After Reranking
+
+Even perfect Top-10 results can be packed poorly into a prompt:
+
+- redundant chunks,
+- contradictory versions,
+- missing parent context,
+- too many tokens,
+- multiple hits from the same document.
+
+A context-selection stage should therefore:
+
+1. Remove duplicates.
+2. Add parent/sibling context when needed.
+3. Prioritize versions.
+4. Consider source diversity.
+5. Respect the token budget.
+6. Preserve provenance.
+
+```text
+Reranked Candidates
+        ↓
+Dedup / Diversify / Expand
+        ↓
+Context Budgeter
+        ↓
+Final Evidence Set
+```
+
+---
+
+## 11. A Robust Production Pipeline
+
+```text
+User Query
+   ↓
+Query Normalization
+   ↓
+ACL / Metadata Filters
+   ↓
+┌───────────────────────────────┐
+│ BM25        Dense Retrieval   │
+└──────────────┬────────────────┘
+               ↓
+              RRF
+               ↓
+      Top-N Candidate Set
+               ↓
+         Cross-Encoder
+               ↓
+   Dedup / Parent Expansion
+               ↓
+       Context Budgeting
+               ↓
+              LLM
+```
+
+The important property is that every stage remains independently measurable.
+
+---
+
+## 12. What Should Actually Be Optimized
+
+Not “Top-5 looks good,” but measurable objectives.
+
+### Retrieval
+
+- Recall@k
+- Precision@k
+- MRR
+- nDCG
+- Hit Rate
+
+### Operations
+
+- p50/p95 latency,
+- index size,
+- reranking cost,
+- query cost,
+- cache-hit rate.
+
+### End-to-End
+
+- Faithfulness,
+- Answer Relevance,
+- Task Success,
+- source correctness.
+
+Only then can you determine whether an expensive reranker creates real business value.
+
+---
+
+## 13. Score Calibration and Thresholds
+
+A ranking provides an order, but not automatically a reliable statement that:
+
+> “This result is relevant.”
+
+Cross-encoder logits, cosine similarities, and BM25 scores cannot be interpreted directly as probabilities.
+
+If a system needs a hard no-answer threshold, it must be calibrated on a labeled dataset.
+
+```text
+score >= τ_high  → high confidence
+τ_low..τ_high    → maybe / more retrieval
+score < τ_low    → no-answer
+```
+
+Thresholds may need to differ by query class or domain.
+
+---
+
+## 14. Diversity Instead of Ten Nearly Identical Hits
+
+A reranker can place ten chunks from the same document at the top. For some questions that is useful; for others it is harmful.
+
+Diversity mechanisms such as Maximal Marginal Relevance or document-based quotas can ensure the context includes evidence from multiple sources.
+
+```text
+Top candidates:
+A1, A2, A3, A4, B1, C1
+
+Context selection:
+A1, A2, B1, C1
+```
+
+This reduces redundancy and can make contradictions more visible.
+
+---
+
+## 15. Retrieval Plans Instead of One Rigid Pipeline
+
+A production system can execute different plans depending on the query:
+
+```text
+Exact ID Query
+→ BM25 / keyword only
+
+Natural-language FAQ
+→ dense + BM25 + RRF
+
+Complex question
+→ multi-query + hybrid + rerank
+
+Relationship question
+→ graph route
+```
+
+Advanced retrieval thus becomes a **query-planning problem**. The pipeline should not automatically execute its most expensive stage for every request.
+
+## Conclusion
+
+Hybrid search and reranking are not decorative “Advanced RAG.” They solve two different problems:
+
+> **Candidate retrieval maximizes recall. Reranking maximizes precision within a bounded candidate set.**
+
+RRF is a robust mechanism for fusing heterogeneous rank lists because it avoids artificial score normalization. Cross-encoders often provide better relevance judgments, but intentionally serve as a second, more expensive stage.
+
+The final part of the series addresses the question above all optimizations: **How do we prove that our RAG system actually became better?**
+
+---
+
+## 📚 Literature & Scientific Sources
+
+[^1]: Sentence Transformers. *Sentence Transformer / Bi-Encoder Usage.* Current documentation, 2026. [https://www.sbert.net/docs/sentence_transformer/usage/usage.html](https://www.sbert.net/docs/sentence_transformer/usage/usage.html)
+[^2]: Cormack, G. V., Clarke, C. L. A., & Büttcher, S. (2009). *Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods.* SIGIR '09, 758–759. DOI: [10.1145/1571941.1572114](https://doi.org/10.1145/1571941.1572114)
+[^3]: Sentence Transformers. *Cross Encoder Usage / Retrieve & Re-Rank.* Current documentation, 2026. [https://www.sbert.net/docs/cross_encoder/usage/usage.html](https://www.sbert.net/docs/cross_encoder/usage/usage.html)
+[^4]: Anthropic (2024). *Contextual Retrieval.* [https://www.anthropic.com/engineering/contextual-retrieval](https://www.anthropic.com/engineering/contextual-retrieval)

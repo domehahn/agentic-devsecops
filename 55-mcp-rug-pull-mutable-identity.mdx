@@ -1,362 +1,182 @@
 ---
-title: "MCP Rug Pull / mutable identity bei Agentic Skills: Security Property, Detection und Nachweis"
-description: "MCP Rug Pull / mutable identity wissenschaftlich erklärt: Bedrohungsmodell, scanner-positive und scanner-negative Beispiele, Detection-Mechanismus in skil, Evidence Chain, Grenzen und Referenzen."
-date: "2026-07-30"
-author: "dome"
+title: 'MCP Rug Pulls and Mutable Identity: Securing the Time Between Review and Execution'
+description: A deep essay on mutable MCP server identity, version drift, metadata
+  fingerprints, lockfiles, provenance, approval-to-execution gaps, and revalidation.
+date: '2026-07-30'
+author: dome
 topics:
-  - agentic-engineering
-  - devsecops
+- agentic-engineering
+- devsecops
 tags:
-  - Security Property
-  - MCP Rug Pull / mutable identity
-  - Agentic Security
+- Security Property
+- MCP Rug Pull / mutable identity
+- Agentic Security
 featured: false
 draft: false
 series:
   slug: agentic-skill-security-properties
-  title: "Security Properties für Agentic Skills"
+  title: Security Properties for Agentic Skills
   order: 55
 ---
 
-Agentic Skills sind gleichzeitig **Instruktion, Code, Konfiguration, Tool-Vertrag und Supply-Chain-Artefakt**. Deshalb genügt es nicht, eine Datei als „Text“ zu behandeln. Eine belastbare Security-Analyse muss rekonstruieren, welche **Trust Boundary**, welche Datenklasse oder welche ausführbare Capability ein Artefakt tatsächlich berührt.
+## Security decisions decay over time
 
-Die Security Property **MCP Rug Pull / mutable identity** gehört zur Kategorie **MCP / Supply Chain**. Diese Property schützt die reviewte Identität eines MCP Servers oder Tools gegen mutable resolution und nachträgliche Metadata-Änderung.
+Security review happens at a point in time. MCP servers, npm packages, container images and tool metadata can change later. If the runtime resolves a mutable reference such as `latest`, the component executed tomorrow may not be the one approved today. That is the essence of a rug-pull problem.
 
-<Note>
-**Terminologie:** In dieser Serie bedeutet **scanner-positiv**: Der Scanner erkennt einen Security Concern und erzeugt ein Finding. **Scanner-negativ** bedeutet: Der legitime Gegenfall darf für genau diese Property nicht anschlagen. Diese Definition entspricht der `skil` Security Control Matrix.
-</Note>
+The invariant is temporal: reviewed identity at time t0 must equal resolved identity at execution time t1, or a new review decision must occur. Names are insufficient; version, digest, issuer and metadata fingerprint may all be part of the identity. The original `skil` control model expresses the same idea as `REVIEWED_IDENTITY(t0) != RESOLVED_IDENTITY(t1) without_review`. That relation is more useful than a label such as “suspicious” because it specifies what must be evidenced and what a legitimate counterexample must break.
 
-## Kurzfassung
+## Property at a glance
 
-| Dimension | Einordnung |
+| Dimension | Assessment |
 | --- | --- |
-| Security Property | **MCP Rug Pull / mutable identity** |
-| `skil` Controls | `SKIL-MCP-003`, `SKIL-MCP-005`, `SKIL-BOUNDARY-MUTABLE-IMAGE` |
-| Primärer Mechanismus | **identity pinning + reviewed lockfile diff** |
-| Aktueller Coverage-Charakter | **FULL für mutable refs; lock-diff für metadata changes** |
-| Security-Relation | `REVIEWED_IDENTITY(t0) != RESOLVED_IDENTITY(t1) without_review` |
-| Hauptziel | False Positives durch Kontextprüfung reduzieren und den eigentlichen Sicherheitszusammenhang als Evidence Chain nachweisen |
-
-<KeyTakeaway>
-Ein **positiver Treffer** für MCP Rug Pull / mutable identity ist nur dann belastbar, wenn die Property-spezifische Relation `REVIEWED_IDENTITY(t0) != RESOLVED_IDENTITY(t1) without_review` aus konkreter Evidence rekonstruiert werden kann. Ein Schlüsselwort allein ist keine wissenschaftlich ausreichende Begründung.
-</KeyTakeaway>
-
-## 1. Welche Sicherheitsannahme schützt die Property?
-
-Die Property lässt sich als Invariante formulieren:
-
-```text
-REVIEWED_IDENTITY(t0) != RESOLVED_IDENTITY(t1) without_review
-```
-
-Ein Scanner versucht damit nicht, „bösartige Wörter“ zu finden. Er prüft eine Hypothese über ein Systemartefakt:
-
-```text
-H0: Die Sicherheitsgrenze bleibt eingehalten.
-H1: Die Sicherheitsgrenze wird durch beobachtbare Evidence verletzt.
-```
-
-Das Finding ist die Entscheidung zugunsten von `H1` innerhalb der **sichtbaren statischen Coverage**. Daraus folgt eine wichtige epistemische Grenze: Ein scanner-negatives Ergebnis ist kein mathematischer Beweis für Gesamtsicherheit, sondern die Aussage, dass **unter dem verwendeten Analysemodell kein hinreichender Nachweis für diese Property gefunden wurde**.
-
-## 2. Bedrohungsmodell
-
-Für MCP Rug Pull / mutable identity sollte das Threat Model mindestens vier Elemente trennen:
-
-1. **Quelle der Kontrolle oder Daten:** Nutzerinput, eingebettete Instruktion, Tool-Metadaten, Code, Dependency, Runtime-Konfiguration oder persistenter Zustand.
-2. **Trust Boundary:** Welche Information oder Authority wird höhergestuft, überschritten oder erweitert?
-3. **Operation/Sink:** Welche Aktion erzeugt die relevante Wirkung?
-4. **Guard:** Welche Allowlist, Validierung, Policy, Approval, Signatur oder Capability-Grenze müsste die Relation verhindern?
+| Security property | MCP Rug Pulls and Mutable Identity |
+| Relevant `skil` controls | `SKIL-MCP-003`, `SKIL-MCP-005`, `SKIL-BOUNDARY-MUTABLE-IMAGE` |
+| Primary analysis mechanism | identity pinning + reviewed lockfile diff |
+| Declared coverage character | FULL for mutable references; lock diff for metadata changes |
+| Core security relation | `REVIEWED_IDENTITY(t0) != RESOLVED_IDENTITY(t1) without_review` |
 
 <Architecture>
 MCP command/artifact → version/digest parse → mutable-ref check → tool metadata canonicalization → reviewed lockfile diff → Finding
 </Architecture>
 
-Die Architektur ist bewusst mehrstufig. Candidate Generation und Finding Decision sind getrennt: Ein lexikalischer, syntaktischer oder struktureller Kandidat wird erst nach Kontext-, Scope- und Guard-Prüfung zu einem Security Finding.
+## Locator, identity, and behavior
 
-## 3. Scanner-positives Beispiel: Das Finding muss entstehen
+A package name or server URL tells the host where to look. It does not uniquely identify the bytes or behavior returned. Lockfiles should record immutable resolution details and the metadata relevant to policy decisions. In an agentic environment this distinction becomes operational because model-generated plans can select the relevant value or capability at runtime. The host therefore needs evidence that can survive from code review into execution policy.
+
+## Lockfiles and metadata fingerprints
+
+Tool descriptions, parameter schemas and defaults influence model behavior. A secure lock therefore may include canonicalized metadata fingerprints in addition to package or image digest. Changing the description can be a security-relevant event even if the executable artifact hash is unchanged. The design implication is that detection and authorization must remain separate: the scanner identifies the condition, while a policy layer decides whether the condition is permissible in this deployment context.
+
+## Approval has an expiry condition
+
+An approval tied only to a human click can outlive the facts the reviewer saw. Before execution, the host should revalidate tool identity, metadata fingerprint, authorization scope and high-impact arguments. If any security-relevant input changed, the approval should be invalidated or narrowed. This also improves explainability. Reviewers can see the specific security fact rather than receiving a generic severity label, and future tooling can compose that fact with independent findings without double-counting the same evidence.
+
+## Provenance strengthens identity
+
+Signatures and SLSA-style provenance can tie artifacts to expected publishers, repositories and build systems. They do not eliminate malicious updates from a trusted maintainer, but they make unauthorized substitution and opaque build drift harder. A useful implementation records both the positive observation and the guard that would have made the path safe. That makes remediation testable and turns false-positive handling into explicit logic instead of a collection of suppressions.
+
+## Caching must respect identity
+
+The 2026-07-28 MCP revision supports cache hints for list results. Caching improves efficiency, but security-sensitive hosts must bind cached tool catalogs to server identity and expiration semantics so stale metadata does not silently authorize a changed server. The same model supports change detection: when identity, configuration or code changes, the platform can recompute the relation and show exactly which part of the previously reviewed assumption no longer holds.
+
+## Approval-to-execution drift
+
+A deliberately small positive fixture from the source property illustrates the boundary:
 
 ```json
 {"command":"npx","args":["some-mcp-server@latest"]}
 ```
 
-### Warum ist das ein positiver Treffer?
-
-Positiv ist eine Identität, die sich beim nächsten Resolve ändern kann, oder eine Abweichung vom zuletzt reviewten Tool-Metadaten-Fingerprint.
-
-Die Evidence sollte deshalb nicht nur `matched=true` enthalten. Mindestens folgende Felder sind für reproduzierbare Findings sinnvoll:
-
-```yaml
-property: "mcp-rug-pull-mutable-identity"
-rules: ["SKIL-MCP-003", "SKIL-MCP-005", "SKIL-BOUNDARY-MUTABLE-IMAGE"]
-analysis: "identity pinning + reviewed lockfile diff"
-coverage: "FULL für mutable refs; lock-diff für metadata changes"
-security_relation: "REVIEWED_IDENTITY(t0) != RESOLVED_IDENTITY(t1) without_review"
-location:
-  file: "path/to/artifact"
-  line: 42
-context_checked: true
-evidence_complete: true
-confidence: high
-```
-
-`confidence: high` ist hier nur beispielhaft. In einer realen Engine muss Confidence aus Evidenzqualität, Kontextauflösung und Coverage resultieren; sie darf nicht allein aus der Severity abgeleitet werden.
-
-## 4. Scanner-negatives Beispiel: Der Gegenfall darf nicht anschlagen
+The safe counterexample changes the semantics rather than merely deleting a suspicious token:
 
 ```json
 {"command":"npx","args":["some-mcp-server@1.4.2"]}
 // plus reviewed .skil/mcp-tools.lock.json metadata fingerprint
 ```
 
-### Warum muss dieser Fall scanner-negativ bleiben?
+The purpose of pairing them is not to teach exploitation. It is to force the detector to explain which relation changes between the two cases. A scanner that fires on both has learned vocabulary; a scanner that can explain the difference has begun to model the security property.
 
-Der Negativfall bindet Version/Identity und besitzt eine überprüfbare Baseline.
+## Caching without stale trust
 
-Das ist für die Qualität des Detektors genauso wichtig wie das Positivbeispiel. Eine Security Rule ohne systematische Negativ-Fixtures optimiert leicht auf Recall, produziert aber im Engineering-Alltag so viele False Positives, dass Findings ignoriert oder Controls deaktiviert werden.
+A useful finding is a compact proof obligation. It should answer: where did the evidence originate, what intermediate representation did identity pinning + reviewed lockfile diff derive, why does that evidence satisfy `REVIEWED_IDENTITY(t0) != RESOLVED_IDENTITY(t1) without_review`, and what uncertainty remains? `skil` maps this property to `SKIL-MCP-003`, `SKIL-MCP-005`, `SKIL-BOUNDARY-MUTABLE-IMAGE`. The declared coverage is FULL for mutable references; lock diff for metadata changes, which means any unresolved runtime identity, dynamic dispatch, provider failure, or semantic ambiguity should be represented explicitly instead of being converted into an artificial 'safe' result.
 
-## 5. Wie `skil` die Property technisch ermittelt
-
-Aktuell relevante Controls: `SKIL-MCP-003`, `SKIL-MCP-005`, `SKIL-BOUNDARY-MUTABLE-IMAGE`.
-
-Der MCP-Analyzer parst Tool-/Permission-/Parameter-Metadaten strukturiert und wendet Feld-spezifische Checks an. Für Freitextfelder kann das gemeinsame Intent-Regelwerk wiederverwendet werden, ohne eine zweite semantisch abweichende Regex-Engine zu schaffen.
-
-Der Boundary-Analyzer klassifiziert sicherheitsrelevante Zielräume wie Container-Control-Planes, Agent State, MCP-Konfiguration, Cloud Metadata, private Netzbereiche und Cloud-Uploads. Er erzeugt Findings erst, wenn Operation und Boundary-Klasse zusammenpassen.
-
-Der Mechanismus lässt sich als Evidence Pipeline darstellen:
-
-```text
-Raw artifact
-    ↓
-parser-/analyzer-spezifische Beobachtung
-    ↓
-Property-spezifische Zwischenrepräsentation
-    ↓
-Context / Negation / Scope / Guard
-    ↓
-entscheidende Security-Relation
-    ↓
-Finding + Confidence + Coverage
-```
-
-### 5.1 Candidate Generation
-
-Candidate Generation soll **breit genug für Recall**, aber noch nicht entscheidend sein. Abhängig von der Property entstehen Kandidaten aus AST-Knoten, Unicode-Codepoints, Manifestfeldern, Versionsconstraints, Netzwerkzielen, Taint Sources/Sinks oder semantischen Clauses.
-
-### 5.2 Property-spezifische Zwischenrepräsentation
-
-Die entscheidende IR für diesen Beitrag ist:
-
-```text
-REVIEWED_IDENTITY(t0) != RESOLVED_IDENTITY(t1) without_review
-```
-
-Diese IR ist absichtlich kleiner als der Originaltext. Sie enthält nur die für die Sicherheitsentscheidung relevanten Entitäten und Relationen. Dadurch kann derselbe Mechanismus unterschiedliche Oberflächenformen auf dieselbe Property abbilden.
-
-### 5.3 Finding Decision
-
-```text
-IF
-    property relation is evidenced
-AND relevant context/scope is resolved
-AND no valid guard/declassifier negates the relation
-THEN
-    emit finding
-ELSE
-    keep candidate as signal or scanner-negative
-```
-
-Der positive Treffer ist damit eine **Relation über Evidence**, nicht ein Worttreffer.
-
-## 6. False-Positive-Unterdrückung
-
-Version-Pinning allein schützt nicht vor retagged/mutated artifacts, wenn Registry-Semantik das erlaubt. Digest/signature ist stärker.
-
-Ein wissenschaftlich belastbarer Scanner sollte False-Positive-Unterdrückung nicht durch globale „ignore this file“-Ausnahmen lösen, sondern durch **lokale Gegenhypothesen**:
-
-```text
-Candidate
-  ├─ defensive/negated context? ──> suppress or downgrade
-  ├─ validated/allowlisted?      ──> suppress relation
-  ├─ outside relevant field?     ──> not this property
-  └─ relation complete?          ──> finding
-```
-
-Das verbessert Erklärbarkeit: Der Scanner kann nicht nur sagen, warum er anschlägt, sondern auch, **welche Bedingung einen ähnlichen sicheren Fall unterscheidet**.
-
-## 7. Evidence Chain: Warum der Treffer nachvollziehbar sein muss
-
-Für MCP Rug Pull / mutable identity sollte ein Finding mindestens diese Nachweise verbinden:
-
-```text
-Fundstelle
-  ↓
-parser-/analyzer-spezifische Beobachtung
-  ↓
-Security-Relation: REVIEWED_IDENTITY(t0) != RESOLVED_IDENTITY(t1) without_review
-  ↓
-Scope-/Guard-Entscheidung
-  ↓
-potenzielle Wirkung
-```
-
-Eine geeignete interne Repräsentation könnte so aussehen:
+A compact machine-readable evidence record can retain the essentials without pretending to encode the entire analysis:
 
 ```yaml
-finding:
-  property: mcp-rug-pull-mutable-identity
-  rule_ids: ["SKIL-MCP-003", "SKIL-MCP-005", "SKIL-BOUNDARY-MUTABLE-IMAGE"]
-  evidence:
-    raw_location: true
-    structured_relation: true
-    context_resolution: true
-  coverage:
-    status: "verified-or-bounded"
-    runtime_dependencies_documented: true
-  decision:
-    scanner_positive: true
+property_order: 55
+property: "mcp-rug-pulls-and-mutable-identity"
+controls: "SKIL-MCP-003, SKIL-MCP-005, SKIL-BOUNDARY-MUTABLE-IMAGE"
+mechanism: "identity pinning + reviewed lockfile diff"
+security_relation: "REVIEWED_IDENTITY(t0) != RESOLVED_IDENTITY(t1) without_review"
+coverage: "FULL for mutable references; lock diff for metadata changes"
+evidence:
+  raw_location: true
+  structured_observation: true
+  context_resolved: true
+  safe_countercase_tested: true
 ```
 
-<Warning>
-Ein Finding darf keine Sicherheit vortäuschen, die der Analyzer nicht besitzt. Wenn ein Ziel, ein Call, ein Contract oder eine semantische Relation zur Laufzeit unaufgelöst bleibt, ist `runtime_dependent`, `provider_backed`, `partially_resolved` oder `not_observable` die korrektere Aussage als ein künstliches „safe“.
-</Warning>
+## False positives, ambiguity, and safe counterexamples
 
-## 8. Mechanismus im Hintergrund: Aufbau und Designprinzipien
+Not every version change is malicious. The detector should report mutable identity and unreviewed drift, not label an ordinary upgrade a “rug pull.” The security decision is whether the change bypassed the expected review and verification path.
 
-Die Detektion folgt fünf allgemeinen Prinzipien:
+No static property is a complete verdict on the artifact. The detector can establish local evidence about syntax, identity, data flow or declared authority; it cannot guarantee what an external registry, remote server or model will do later. Engineering decisions should therefore compose static findings with contract verification, supply-chain attestation and runtime policy rather than demanding impossible certainty from one layer.
 
-### 8.1 Deterministische Evidenz vor semantischer Vermutung
+## Legitimate upgrades versus bypassed review
 
-AST, strukturierte Manifestfelder, Codepoints, Versionen, Pfade und Source→Sink-Flows sind reproduzierbare Evidenz. Freie Sprache ist dagegen probabilistischer. Semantische Provider sollten deterministische Evidence **ergänzen**, nicht verdecken.
+Resolve immutable versions/digests, maintain a reviewed MCP tool lock, verify issuer/server identity, compare canonical metadata at call time, and require new approval when the reviewed security context changes.
 
-### 8.2 Parser vor Regex, wenn Syntax existiert
+Defense in depth is intentionally redundant. Authoring lint, static analysis, contract verification, supply-chain verification, runtime policy and audit telemetry answer different questions. A strong result from one layer should never be used as a reason to remove the others.
 
-Wenn ein Artefakt eine formale Grammatik besitzt, ist ein Parser strukturell stärker: `exec(` in einem Kommentar ist nicht dasselbe wie ein `Call`-Knoten; `"*"` in einem Regex ist nicht dasselbe wie ein Wildcard-Permission-Feld.
+## Revalidation at runtime
 
-### 8.3 Context Guards sind Teil der Rule
+Evaluation should measure more than raw detection count. Precision matters because noisy controls are disabled; recall matters because adversarial variants are the point of the exercise. For structural properties, report supported syntax classes and unresolved constructs. For provider-backed checks, include provider-availability and freshness tests. Differential comparisons are useful, but property equivalence is more meaningful than finding-count parity. For **MCP Rug Pulls and Mutable Identity**, the most valuable tests are those that preserve the surface appearance while changing the underlying security relation; that is how the suite verifies semantics instead of vocabulary.
 
-Eine Security Rule besteht konzeptionell aus:
+For `skil`, implementation claims should be checked against the repository’s control matrix, external-control crosswalk, analyzer tests and any provider-specific tests. Provider-backed coverage—such as OSV or external rule packs—must state whether the provider actually ran.
 
-```text
-positive evidence
-+ scope constraints
-+ negative evidence / safe context
-+ decision rule
-```
+## Architecture drill-down: from finding to enforceable boundary
 
-Ohne den dritten Teil werden Security-Dokumentation, Tests und sichere Gegenregeln regelmäßig zu False Positives.
+The architectural question behind **MCP Rug Pulls and Mutable Identity** is where interpretation and authority meet. Start with the reviewed artifact and follow the relevant identity, value, or capability through every transformation until the policy decision or side effect occurs. `REVIEWED_IDENTITY(t0) != RESOLVED_IDENTITY(t1) without_review` is the compact invariant that should remain stable even when implementation syntax changes. identity pinning + reviewed lockfile diff supplies static evidence, but the design should also specify what happens when analysis cannot resolve a value. High-assurance systems fail closed for high-impact operations, expose a bounded approval path for exceptional cases, and log the final resolved identity or target. The review is incomplete if it only proves that today's fixture is detected; it should also show how a future variant is constrained by architecture rather than by the exact spelling in the test corpus.
 
-### 8.4 Composition erst nach Einzelbefund
+The paired fixtures also serve as an architectural regression test. The unsafe example begins with `{"command":"npx","args":["some-mcp-server@latest"]}` while the safe example begins with `{"command":"npx","args":["some-mcp-server@1.4.2"]}`. The important difference is the security relation, not the cosmetic text. If a refactor causes both to produce the same result, the detector or policy has lost a meaningful distinction.
 
-Die Property sollte mit benachbarten Findings nur dann zu einer höheren Severity komponiert werden, wenn ein gemeinsamer Daten-, Kontroll- oder Trust-Pfad nachweisbar ist.
+## Common implementation traps
 
-### 8.5 Coverage ist ein First-Class-Result
+Several implementation mistakes recur around **MCP Rug Pulls and Mutable Identity**, even when the high-level policy is correct:
 
-Das System sollte mindestens zwischen folgenden Zuständen unterscheiden:
+**1. Trusting model-visible metadata as if it were authorization policy.** Descriptions and schemas can guide planning, but deterministic host policy must own credentials, capability scope and approvals. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
 
-```text
-verified
-partially_resolved
-provider_backed
-runtime_dependent
-semantic_only
-not_observable
-```
+**2. Binding policy only to a display name.** Tool identity, server identity, metadata fingerprint and issuer relationships may need to be pinned so review survives catalog changes. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
 
-Damit bleibt sichtbar, **was** der Scanner tatsächlich gemessen hat.
+**3. Validating only at discovery time.** Cached catalogs, changed defaults, mutable packages and long-lived approvals create time-of-check/time-of-use gaps unless the host revalidates before high-impact calls. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
 
-## 9. Wissenschaftliche Validierung des Detektors
+A useful review discipline is to turn every exception into a scoped, expiring artifact with an owner and rationale. Permanent blanket suppressions hide whether the architecture improved; narrow exceptions preserve the signal and make technical debt measurable.
 
-Für eine belastbare Evaluation reichen einzelne Demo-Files nicht. Pro Property sollte die Testsuite mindestens enthalten:
+## How this property composes with adjacent findings
 
-| Testklasse | Zweck |
-| --- | --- |
-| True Positive Fixtures | kanonische Verletzungen der Property |
-| True Negative Fixtures | legitime Gegenfälle mit ähnlichen Tokens/Syntaxen |
-| Adversarial Paraphrases | Recall gegen Oberflächenvariation |
-| Boundary Cases | minimale Änderung zwischen positiv und negativ |
-| Differential Tests | Vergleich mit unabhängigen Referenzimplementierungen |
-| Holdout Fixtures | Schutz gegen Überanpassung an bekannte Tests |
-| Mutation Tests | systematische Änderung von Negation, Scope, Pfad, Sink oder Version |
+**Identity drift plus retained approval.** The critical composition is a changed artifact or metadata fingerprint combined with an approval that remains valid. Either fact alone may be legitimate; together they show an approval-to-execution gap. Revalidation should revoke or narrow the approval before the new identity receives authority.
 
-Für sprachliche Properties sind Precision/Recall und Error Taxonomy sinnvoll. Für AST-/Taint-/Schema-Properties kann zusätzlich die **strukturelle Coverage** gemessen werden: Welche Source-, Sink-, Call-, Manifest- oder Codepoint-Klassen unterstützt der Analyzer tatsächlich?
+This composition model is deliberately graph-like: each detector contributes a typed fact and shared evidence identifiers allow a higher-level policy engine to connect them. That prevents one rule from becoming an overloaded catch-all and makes severity escalation explainable.
 
-## 10. Grenzen der Erkennung
+## Operational signals and measurable assurance
 
-Ein Lock-Diff erkennt nur Felder, die canonicalisiert und gespeichert werden. Permission-/Trigger-Diffs gegen beliebige historische Manifeste können eine separate Vergleichsoberfläche erfordern.
+Measure mutable MCP references, identity/fingerprint changes between review and call, approvals invalidated by drift, lockfile freshness, provenance verification failures, and cache entries rejected because server identity changed.
 
-Generell gelten drei Grenzen:
+Metrics should be tied to an explicit denominator and deployment profile. A low finding count may mean strong controls, weak coverage, or simply little exposure; telemetry and coverage state are needed to tell those cases apart. Trend the data over time and review unexpected changes in both positive findings and scanner-negative regression behavior.
 
-1. **Static visibility:** Laufzeitwerte, DNS, Reflection, dynamische Downloads oder externe Policies können fehlen.
-2. **Semantic ambiguity:** Zweck, Legitimität und manche Trust-Entscheidungen sind nicht vollständig aus Syntax ableitbar.
-3. **Authority mismatch:** Ein gefährlicher Text kann technisch machtlos sein; ein harmlos formulierter Skill kann durch Runtime-Konfiguration enorme Authority erhalten.
+## Engineering implications beyond the scanner
 
-Deshalb ist die Zielgröße nicht „malicious / benign“, sondern eine nachvollziehbare Aussage über **Property, Evidence, Coverage und mögliche Wirkung**.
+MCP security is split between protocol mechanics and host policy. The 2026-07-28 revision improves routability, caching semantics and authorization hardening, but it deliberately does not make tool descriptions trusted or grant least privilege automatically. Hosts still own capability selection, token scope, approval, identity pinning and the decision about what model-visible metadata may influence planning.
 
-## 11. Technische Controls und Remediation
+The broader lesson is that an agentic skill is simultaneously text, code, configuration, a tool contract and a supply-chain artifact. Security review should follow the boundary that is actually crossed—data, authority, identity, execution, or control-plane visibility—rather than forcing every risk into the same detection template.
 
-- immutable versions/digests
-- tool metadata lock
-- review on identity changes
-- provenance/signatures
+## Change-focused testing
 
-Defense in Depth bleibt zentral:
+A reviewer should be able to answer four questions before accepting this property as controlled:
 
-```text
-Authoring lint
-    +
-static scan
-    +
-contract verification
-    +
-supply-chain verification
-    +
-runtime policy
-    +
-audit / telemetry
-```
+1. **What exact security relation is being asserted?** Here it is `REVIEWED_IDENTITY(t0) != RESOLVED_IDENTITY(t1) without_review`.
+2. **What concrete evidence supports the relation?** The evidence must come from identity pinning + reviewed lockfile diff, not from a keyword alone.
+3. **What near-neighbor safe case has been tested?** The paired negative fixture should differ in the property, not merely in spelling.
+4. **What remains outside static visibility?** Runtime identity, dynamic values, provider state and policy decisions must be named explicitly.
 
-Kein einzelner Layer ersetzt die anderen.
+## Implementation evidence in `skil`
 
-## 12. Einordnung in DevSecOps
+- [Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – native control identifiers and scanner-positive/scanner-negative coverage.
+- [External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – property-level equivalence and coverage states.
+- [External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – implementation differences, mechanisms, and documented gaps.
 
-Die Property sollte an mehreren Punkten des Lifecycles geprüft werden:
-
-1. **Authoring:** schneller lokaler Scan und IDE-/pre-commit Feedback.
-2. **Pull/Merge Request:** reproduzierbarer Scan mit diff-basierter Evidence.
-3. **Registry/Katalog:** Scan des veröffentlichten, digest-adressierten Artefakts.
-4. **Installation:** Verification gegen Capability Contract, Lockfiles und Provenance.
-5. **Runtime:** technische Enforcement-Schicht für Netzwerk, Filesystem, Tools, Secrets, Approval und Ressourcen.
-6. **Change Detection:** erneute Bewertung, wenn Tool-Metadaten, Dependencies, Runtime Policy oder Identitäten wechseln.
-
-Damit wird verhindert, dass eine saubere statische Analyse auf Artefakt A durchgeführt wird, während später Artefakt B oder eine breitere Runtime-Konfiguration tatsächlich ausgeführt wird.
-
-## 13. Implementierungsnachweise in `skil`
-
-- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – definiert scanner-positive/scanner-negative Control Coverage und die nativen `SKIL-*` Controls.
-- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – dokumentiert property-level Äquivalenz, Analyzer und Coverage-State.
-- [`docs/external-scanner-feature-parity.md`](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – beschreibt Detektionslogik, Lücken und Unterschiede der Mechanismen.
-- [`internal/analyzer/mcp.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/mcp.go) – Implementierungsquelle für `mcp`.
-- [`internal/analyzer/boundary.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/boundary.go) – Implementierungsquelle für `boundary`.
-
-## 14. Standards, Forschung und Referenzen
+## Standards, research, and references
 
 1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
 2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
 3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
-4. [Model Context Protocol – Specification 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25)
+4. [Model Context Protocol – Specification 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28)
 5. [Model Context Protocol – Security Best Practices](https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices)
 6. [SLSA – Specification v1.2](https://slsa.dev/spec/v1.2/)
 7. [SLSA – Provenance v1.2](https://slsa.dev/spec/v1.2/provenance)
 8. [OWASP GenAI – LLM03:2025 Supply Chain](https://genai.owasp.org/llmrisk/llm032025-supply-chain/)
+9. [Model Context Protocol Blog – The 2026-07-28 Specification](https://blog.modelcontextprotocol.io/posts/2026-07-28/)
 
-## Fazit
+## Conclusion
 
-**MCP Rug Pull / mutable identity** ist als Security Property dann nützlich, wenn sie nicht als Checklistenwort, sondern als **überprüfbare Relation** implementiert wird. Für `skil` bedeutet das: identity pinning + reviewed lockfile diff, klar ausgewiesene Coverage, reproduzierbare Evidence und scanner-negative Gegenfälle mit ähnlicher Oberfläche.
-
-Die entscheidende Review-Frage lautet deshalb nicht:
-
-> „Kommt ein verdächtiges Wort vor?“
-
-sondern:
-
-> **Welche Sicherheitsannahme wird verletzt, welche Evidence belegt genau diese Relation, welcher sichere Gegenfall wurde ausgeschlossen und welche Teile der Aussage sind statisch tatsächlich beobachtbar?**
+**MCP Rug Pulls and Mutable Identity** is valuable only when it is treated as a falsifiable security property rather than a checklist term. The goal is not to declare an entire skill “malicious” or “safe.” The goal is to state what boundary may be crossed, show the evidence that supports that statement, preserve the coverage limits, and make the safe countercondition explicit. That produces findings engineers can test, reviewers can reproduce, and runtime policy can enforce.

@@ -1,0 +1,385 @@
+---
+title: "Part 2: Agent Observability & Tracing – From Model Calls to Distributed Decision Graphs"
+description: "A technical essay on observability for AI agents: OpenTelemetry, trace models, tool calls, cost, evals, privacy, quality signals, and the boundary between telemetry and hidden reasoning."
+date: "2026-08-22"
+author: "dome"
+topics:
+  - platform-engineering
+  - devsecops
+  - ai-engineering
+tags:
+  - Observability
+  - OpenTelemetry
+  - Tracing
+  - LLMOps
+draft: false
+series:
+  slug: "llmops-platform-infrastructure"
+  title: "LLMOps & Platform Infrastructure: The Agent Runtime"
+  order: 2
+ai:
+  assisted: true
+  humanReviewed: true
+  reviewedBy: "Dominik Hahn"
+  reviewedAt: "2026-08-22"
+---
+
+A classic web service can often be operated surprisingly well with request rate, error rate, and duration. An agent, however, can end with HTTP 200 and still fail functionally: it chooses the wrong tool, enters a retry loop, reads irrelevant documents, or spends five minutes producing a plausible but useless answer.
+
+**Agent observability** therefore has to capture more than infrastructure metrics. It connects technical telemetry with the execution graph: model calls, tool calls, retrieval, state transitions, cost, evaluations, and external side effects.
+
+OpenTelemetry is an attractive foundation for this. At the same time, as of August 2026 it is important to describe its maturity accurately: GenAI/agent semantics are still evolving and are being moved into dedicated GenAI semantic-convention structures. Implementations should pin versions and avoid treating experimental attribute names as immutable industry standards.[^1][^2]
+
+---
+
+## 1. The Trace Is an Execution Graph, Not a Chat Export
+
+A useful structure looks like this:
+
+```text
+Trace: feature-implementation
+│
+├─ Span: agent.plan
+├─ Span: retrieval.search
+├─ Span: model.inference
+├─ Span: tool.git.read
+├─ Span: tool.file.write
+├─ Span: tool.test.run
+│   └─ logs: 2 failed tests
+├─ Span: model.inference
+└─ Span: verification.complete
+```
+
+The trace answers:
+
+- Where was time spent?
+- Which tool call failed?
+- How often was a model called again?
+- Which dependency dominated latency?
+- How expensive was the successful run?
+
+It does not need to contain the full natural-language content of every intermediate stage.
+
+---
+
+## 2. Hidden Reasoning Is Not an Observability Requirement
+
+A common misconception is:
+
+> “For debugging, we need the complete chain of thought.”
+
+That is neither necessary nor, for many modern models, available as a raw artifact. Instead of requiring internal reasoning text, the platform should log **observable decisions and evidence**:
+
+```json
+{
+  "decision": "call_tool",
+  "tool": "run_tests",
+  "reason_category": "verification_required",
+  "input_ref": "workspace:abc123",
+  "result": "failed"
+}
+```
+
+Operationally, “which action was chosen from which visible state?” is usually more useful than a long free-form reasoning transcript.
+
+---
+
+## 3. Four Signal Layers
+
+### Infrastructure
+
+- CPU/GPU,
+- memory,
+- queue depth,
+- network,
+- endpoint errors.
+
+### Model
+
+- model/version,
+- input/output tokens,
+- latency,
+- rate limits,
+- finish/error reasons.
+
+### Agent
+
+- iterations,
+- tool calls,
+- routing,
+- retrieval,
+- retry counts,
+- budget consumption.
+
+### Outcome
+
+- task success,
+- tests passed,
+- reviewer acceptance,
+- security findings,
+- business KPI.
+
+Only the final layer answers whether the system was actually **useful**.
+
+---
+
+## 4. Trace Context Must Survive Tool Boundaries
+
+Agents often call services that have their own processes or queues.
+
+```text
+Agent -> MCP Tool -> CI Service -> Build Worker
+```
+
+Trace context should be propagated so the tool call and backend execution remain connected.
+
+```text
+trace_id = 7f...
+span(agent.tool_call)
+  └─ span(ci.submit)
+      └─ span(build.worker)
+```
+
+Where an external system does not support trace propagation, at minimum a correlatable `operation_id` can be stored.
+
+---
+
+## 5. Tool Calls Need Semantic Telemetry
+
+A generic `http.request` span says too little.
+
+For agents, telemetry such as the following is more useful:
+
+```json
+{
+  "operation": "tool.call",
+  "tool.name": "git.apply_patch",
+  "tool.risk": "workspace-write",
+  "tool.result": "success",
+  "duration_ms": 83
+}
+```
+
+Sensitive arguments should not be copied blindly into attributes. Telemetry backends are often broadly accessible and retain data for long periods.
+
+---
+
+## 6. Privacy and Secrets: Prompt Capture Should Be Opt-In, Not Default
+
+Complete prompts can contain:
+
+- personal data,
+- source code,
+- secrets,
+- internal documents,
+- customer information.
+
+A tiered model is therefore useful:
+
+```text
+Level 0: metadata only
+Level 1: hashes / references
+Level 2: redacted samples
+Level 3: full payload for approved debug session
+```
+
+Payload capture needs its own access controls and retention. Observability must not become a second ungoverned data lake.
+
+---
+
+## 7. Cost Is a First-Class Signal
+
+An agent can be functionally correct and still economically unusable.
+
+Each trace should connect the relevant cost factors:
+
+```text
+model input tokens
+model output tokens
+cached tokens
+embedding calls
+reranker calls
+tool infrastructure time
+GPU seconds
+external API cost
+```
+
+This makes it possible to calculate metrics such as:
+
+```text
+Cost per Run
+Cost per Successful Run
+Tokens per Accepted PR
+Tool Cost per Resolved Incident
+```
+
+These are far more informative than aggregate monthly spend.
+
+---
+
+## 8. Evals and Observability Must Be Connected
+
+Online telemetry shows what happens in production. Evals show how a new version behaves on controlled tasks.
+
+```text
+Production Trace
+   ↓ failure cluster
+New Eval Case
+   ↓
+Regression Suite
+   ↓
+Agent / Prompt / Model Change
+   ↓
+Canary
+```
+
+A production failure thus becomes a permanent quality criterion.
+
+---
+
+## 9. Agent-Specific SLOs
+
+`99.9% API availability` alone is not enough.
+
+Possible SLOs include:
+
+```text
+Task Completion Rate >= X
+p95 Successful Task Latency <= Y
+Tool Failure Recovery Rate >= Z
+Human Escalation Rate within target band
+Cost per Successful Task <= Budget
+Unauthorized Tool Calls = 0
+```
+
+For nondeterministic systems, thresholds should be evaluated statistically and across representative workloads.
+
+---
+
+## 10. OpenTelemetry as Transport, Your Own Domain Model as the Stability Layer
+
+Because GenAI semantic conventions continue to evolve, it is risky to tie an internal data model directly to every experimental attribute name.[^1][^2]
+
+A better design is:
+
+```text
+Internal Agent Event Schema
+        ↓ adapter
+OpenTelemetry Spans / Logs / Metrics
+        ↓
+Collector
+        ↓
+Backend
+```
+
+The internal schema remains under your own governance, while export adapters can be updated alongside OTel versions.
+
+In 2026, OpenTelemetry is also moving events more strongly toward log-based events correlated with spans.[^3] This provides another reason for an abstraction layer.
+
+---
+
+## 11. Example of an Operationally Useful Trace
+
+```json
+{
+  "trace_id": "tr_4812",
+  "agent.version": "4.8.1",
+  "task.type": "code-change",
+  "outcome": "success",
+  "iterations": 4,
+  "model_calls": 7,
+  "tool_calls": 14,
+  "tests": {
+    "passed": 412,
+    "failed": 0
+  },
+  "security": {
+    "new_high_findings": 0
+  },
+  "cost_units": 1.37,
+  "payload_capture": "redacted"
+}
+```
+
+This is not a complete audit record, but it is a strong operational starting point.
+
+---
+
+## 12. Cardinality Is the Silent Cost Killer of Telemetry
+
+Agents generate many IDs: conversation, run, tool call, document chunk, repository commit, model request. If all of them are exported unchecked as metric labels, cardinality—and often observability cost—explodes.
+
+Good signal design separates:
+
+```text
+Metrics:
+low-cardinality dimensions
+(model family, task type, status, environment)
+
+Traces / Logs:
+high-cardinality identifiers
+(trace_id, run_id, commit, tool_call_id)
+```
+
+Time series remain aggregatable while individual runs remain discoverable for forensic investigation.
+
+---
+
+## 13. Sampling Must Not Hide Failures
+
+Classic head sampling may keep only one percent of traces. For agents, this is risky if rare, expensive, or security-relevant outliers disappear.
+
+Tail-based sampling can decide after the trace finishes:
+
+```text
+keep if:
+- error
+- unauthorized action attempted
+- cost > threshold
+- latency > p99 target
+- human escalation
+- random baseline sample
+```
+
+Normal successful runs can be sampled aggressively while problematic executions are retained in full. Privacy still applies: “in full” should mean complete structured telemetry, not automatically every prompt payload.
+
+---
+
+## 14. Trace-to-Evidence: Do Not Build Operations and Audit Twice
+
+Observability and audit evidence have different goals, but they can share stable identifiers. A deployment approval can reference a `trace_id` and `artifact_digest`; the trace can in turn reference a signed evidence record.
+
+```text
+Operational Trace <---- IDs ----> Audit Record
+       |                              |
+short retention                  controlled retention
+broad SRE use                    restricted compliance use
+```
+
+This prevents two parallel versions of truth for the same agent run.
+
+---
+
+## Conclusion
+
+Agent observability means observing a probabilistic, multi-step workflow as a **distributed system with a functional outcome**. Model latency and token counts matter, but without the tool graph, iteration data, and success metrics they remain context-free telemetry.
+
+OpenTelemetry provides a valuable ecosystem, but GenAI and agent conventions continue to evolve. Teams should acknowledge that status explicitly and place a stable internal domain schema between the agent runtime and telemetry export.[^1][^2]
+
+Above all, observability should not be confused with collecting internal reasoning text. What needs to be measurable are actions, states, evidence, cost, and outcomes.
+
+The next part uses exactly this data to answer the economic question: **How do we optimize token, model, and tool costs without destroying the agent’s success rate?**
+
+---
+
+## Literature & Primary Sources
+
+[^1]: OpenTelemetry. *Semantic Conventions – Status: Development.* https://opentelemetry.io/docs/specs/otel/semantic-conventions/
+[^2]: OpenTelemetry. *Generative AI semantic conventions.* https://opentelemetry.io/docs/specs/semconv/gen-ai/
+[^3]: OpenTelemetry (2026). *Deprecating Span Events API.* https://opentelemetry.io/blog/2026/deprecating-span-events/
+
+## Metadata
+
+**SEO Title:** Agent Observability: OpenTelemetry, Tracing & Evals for AI Agents  
+**Meta Description:** How to observe agents correctly: traces, tool calls, token cost, outcome SLOs, privacy, OpenTelemetry, and evals instead of blind chain-of-thought logging.  
+**Slug:** `agent-observability-und-tracing`

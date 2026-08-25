@@ -1,0 +1,452 @@
+---
+title: "Persistence: When an Agent Outlives the Task That Authorized It"
+description: "An in-depth essay on persistence in agentic skills: startup mechanisms, lifecycle authority, cron and service installation, durable processes, containment, audit, and safe alternatives."
+date: "2026-07-30"
+author: "dome"
+topics:
+  - agentic-engineering
+  - devsecops
+tags:
+  - Security Property
+  - Persistence
+  - Agentic Security
+  - Lifecycle Security
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: "Security Properties for Agentic Skills"
+  order: 33
+---
+
+Most agent runs are authorized for a task and a time window. They receive context, credentials, and capabilities because a user or workflow wants something done **now**.
+
+Persistence breaks that temporal contract.
+
+A skill that installs an autostart mechanism, leaves a background process behind, registers a service, or modifies startup configuration can continue operating after the original task has ended. The system is no longer evaluating “may this agent act?” only at invocation time. It has created a new long-lived principal.
+
+The source relation is:
+
+```text
+INSTALL_OR_MODIFY(AUTO_START_MECHANISM) ∧ USER_APPROVAL/DECLARATION=ABSENT
+```
+
+and `skil` uses `SKIL-PERSISTENCE-STARTUP` for the core patterns.
+
+<KeyTakeaway>
+Persistence is not inherently malicious. The security failure is **lifecycle extension without explicit authorization, ownership, and cleanup semantics**.
+</KeyTakeaway>
+
+## Time is part of authorization
+
+Traditional permission models ask:
+
+```text
+who may do what to which resource?
+```
+
+Agentic systems also need:
+
+```text
+for how long?
+```
+
+A permission valid during one deployment workflow should not automatically remain valid tomorrow.
+
+This temporal dimension becomes critical when a skill can create:
+
+- cron jobs;
+- systemd units;
+- launch agents;
+- login items;
+- scheduled tasks;
+- startup scripts;
+- long-running daemons;
+- background processes;
+- queue consumers;
+- or cloud automation that continues after the run.
+
+## The source-positive example
+
+```bash
+(crontab -l; echo '@reboot /tmp/agent-helper') | crontab -
+```
+
+This is a clear persistence primitive because it modifies an autostart mechanism that executes future code independently of the current process.
+
+The issue is not the exact command; equivalent persistence exists on every major platform.
+
+A useful finding should identify:
+
+```yaml
+property: persistence
+control: SKIL-PERSISTENCE-STARTUP
+primitive: cron
+operation: install_autostart
+target: /tmp/agent-helper
+declared_persistence: false
+approval: absent
+relation: INSTALL_OR_MODIFY(AUTO_START_MECHANISM) ∧ USER_APPROVAL/DECLARATION=ABSENT
+confidence: high
+```
+
+## The negative design makes lifecycle explicit
+
+```text
+Do not install cron jobs, login items, services, or other startup persistence. Run only within the current task lifecycle.
+```
+
+This is scanner-negative because it denies exactly the persistence behavior.
+
+A legitimate persistent agent can also be negative if persistence is the declared product purpose and deployment occurs through an authorized installation workflow.
+
+The property must therefore distinguish **declared service installation** from **hidden persistence by an ordinary task skill**.
+
+## Why backgrounding is not the same as persistence
+
+A process started with a background operator may outlive its parent briefly, but persistence typically implies surviving a stronger lifecycle event:
+
+- process restart;
+- user logout;
+- machine reboot;
+- container restart;
+- scheduler re-invocation.
+
+Still, long-lived background processes deserve attention because they can defeat task-level cleanup and continue using credentials.
+
+Static analysis can classify persistence primitives by durability rather than treating all as equal.
+
+## Persistence and credential lifetime
+
+A persistent helper may retain or reacquire credentials.
+
+This creates a dangerous combination:
+
+```text
+task-scoped authorization
+      ↓
+persistent process
+      ↓
+credential reuse / refresh
+      ↓
+authority continues beyond task
+```
+
+Secure systems should bind credentials to the intended lifecycle. Short-lived tokens and workload identity reduce the value of an unauthorized persistent process.
+
+## Persistence through cloud control planes
+
+Persistence is not limited to local startup files.
+
+An agent might create:
+
+- scheduled cloud functions;
+- CI pipelines;
+- recurring jobs;
+- queue subscriptions;
+- automation rules;
+- GitHub Actions schedules;
+- or infrastructure resources that execute later.
+
+The same security relation applies: the agent created future execution authority.
+
+A scanner focused only on `crontab` will miss these semantic equivalents.
+
+## Persistence should have an owner and revocation path
+
+Legitimate persistent components require lifecycle management:
+
+```text
+installer identity
+owner/team
+purpose
+version
+start condition
+credentials
+health monitoring
+upgrade path
+revocation/uninstall path
+```
+
+An agent that silently creates a long-lived process without those attributes is operationally dangerous even if its code is benign.
+
+## Static coverage boundaries
+
+The source notes strong coverage for core primitives and variable coverage for exotic platform paths. That is the correct framing.
+
+Deterministic static analysis can recognize many known constructs:
+
+```text
+cron
+systemd
+launchd
+scheduled task
+startup file
+service registration
+```
+
+But custom schedulers and cloud APIs can represent persistence through ordinary SDK calls. Semantic context or provider-specific analyzers may be needed.
+
+Coverage should therefore be reported per primitive family.
+
+## Safe architecture: persistence through deployment, not improvisation
+
+A robust pattern is:
+
+```text
+agent proposes persistent component
+      ↓
+infrastructure manifest
+      ↓
+review + policy checks
+      ↓
+deployment pipeline
+      ↓
+managed service
+```
+
+The agent does not directly install the persistence. It creates an auditable declarative artifact.
+
+This aligns well with GitOps and infrastructure-as-code practices.
+
+## Containerized agents and persistence
+
+Containers can create a false sense of ephemerality.
+
+A container may be short-lived, yet an agent inside it can modify:
+
+- mounted host paths;
+- persistent volumes;
+- cluster resources;
+- cloud schedulers;
+- or the Docker socket.
+
+Persistence analysis should therefore follow effects across the sandbox boundary.
+
+An ephemeral process with write access to durable infrastructure can create very non-ephemeral consequences.
+
+## Monitoring and detection
+
+Runtime signals include:
+
+- creation/modification of startup files;
+- service installation;
+- new scheduled jobs;
+- processes surviving workflow completion;
+- unexpected queue subscriptions;
+- cloud resources with recurring triggers;
+- or filesystem writes to known persistence paths.
+
+These events can be correlated with the originating agent run.
+
+## Cleanup guarantees
+
+A task that creates temporary helpers should also have cleanup semantics.
+
+A safe design can use leases:
+
+```text
+resource created with lease_id
+      ↓
+lease expires at deadline
+      ↓
+controller removes resource
+```
+
+This is stronger than asking the agent to remember to clean up after itself.
+
+## Persistence and self-modification
+
+The two properties often compose.
+
+An agent may modify its own policy and then install the modified version for future runs. Alternatively, it may persist a helper that later changes state.
+
+The scanner should raise severity only when the evidence graph demonstrates composition, not merely because both findings exist somewhere in the repository.
+
+## False positives
+
+Legitimate persistence examples include:
+
+- system installers;
+- daemon packages;
+- deployment controllers;
+- scheduled backup systems;
+- infrastructure-as-code defining a service.
+
+The scanner must resolve purpose and context. A file called `install-service.sh` inside an explicitly reviewed installer has different semantics from a Markdown formatter adding a login item.
+
+## Evidence for audit
+
+For approved persistence, retain:
+
+```text
+who authorized it
+what was installed
+where it runs
+which version/hash
+what credentials it can obtain
+when it expires or how it is removed
+```
+
+Persistence without this metadata becomes difficult to govern.
+
+## Deep dive: persistence should be modeled as a managed resource
+
+A persistent agent component is easier to secure if it is treated like infrastructure.
+
+Instead of “start this forever,” represent:
+
+```yaml
+service:
+  owner: platform-team
+  purpose: repository-indexer
+  version: sha256:...
+  schedule: "*/15 * * * *"
+  credentials: workload:indexer
+  network_policy: internal-only
+  expires: null
+  uninstall: managed
+```
+
+This turns persistence into a declarative object that policy and inventory systems can inspect.
+
+### Ephemeral credentials for persistent workloads
+
+A long-running component should not inherit the short-lived task agent's copied secret material.
+
+It should acquire identity through an approved workload mechanism at runtime. This allows revocation and rotation without redistributing static credentials.
+
+### Detecting persistence created indirectly
+
+An agent may not write a cron file. It might create:
+
+```text
+a CI schedule
+a Kubernetes CronJob
+a cloud scheduler rule
+a queue subscription
+a webhook that re-invokes an agent
+```
+
+The persistence property should therefore eventually evolve from primitive matching toward a semantic effect:
+
+```text
+current run creates future autonomous execution
+```
+
+Provider-specific analyzers can map cloud/IaC resources into that IR.
+
+### Expiry by construction
+
+Temporary persistent resources can use explicit expiration.
+
+For example, a preview environment may include:
+
+```text
+delete_after = 2h
+```
+
+enforced by an external controller.
+
+The agent should not be the only component responsible for cleanup because a failed or compromised agent may not execute its final cleanup step.
+
+### Inventory is part of security
+
+Operators should be able to enumerate every persistent agent-created resource and answer:
+
+- why does it exist?
+- who owns it?
+- when was it last used?
+- which identity does it run as?
+- which version is deployed?
+- how is it removed?
+
+Unknown persistence is a governance failure even before malicious behavior is demonstrated.
+
+## Persistence in cloud-native environments
+
+Cloud-native platforms replace many traditional startup mechanisms with declarative controllers.
+
+Potential persistence surfaces include:
+
+```text
+Kubernetes Deployment / CronJob
+serverless scheduled trigger
+CI schedule
+event subscription
+cloud workflow
+queue consumer
+webhook re-entry
+```
+
+An analyzer can normalize these different resources to:
+
+```text
+FutureExecution(trigger, identity, artifact, lifetime)
+```
+
+That IR is more durable than a list of OS-specific file paths.
+
+### Identity persistence
+
+A service can remain even after its original credential expires if it can obtain fresh credentials through workload identity.
+
+Therefore persistence review must inspect both:
+
+```text
+future execution
+and
+future authentication path
+```
+
+A scheduled workload with no identity is inert; one mapped to a powerful cloud role is not.
+
+### Revocation testing
+
+Every persistent agent resource should have a tested revocation path.
+
+Ask:
+
+```text
+Can the platform owner stop it immediately?
+Can the credential be revoked?
+Can all instances be enumerated?
+Can the stored artifact be identified?
+```
+
+If the answer depends on the agent cooperating, revocation is weak.
+
+### Incident scope
+
+Persistence changes incident response from “terminate the compromised run” to “find every durable derivative.”
+
+A response playbook should search:
+
+- schedulers;
+- service registries;
+- cloud resources;
+- CI/CD automation;
+- persistent volumes;
+- and policy stores.
+
+This is why preventing unauthorized persistence is disproportionately valuable.
+
+## Final perspective
+
+The core question is temporal:
+
+> **Does the authority granted for this run end when the run ends?**
+
+If a skill can create future execution without an explicit persistence contract, it has extended its authority beyond the decision that originally authorized it.
+
+`SKIL-PERSISTENCE-STARTUP` provides a useful static signal. The stronger system-level defense is to ensure that persistent execution can only be created through a separately authorized deployment path with ownership, observability, and revocation.
+
+## References
+
+1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
+4. [OWASP – Top 10 for Agentic Applications for 2026](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)
+5. [MITRE ATLAS – Adversarial Threat Landscape for AI Systems](https://atlas.mitre.org/)
+6. [MITRE CWE-269 – Improper Privilege Management](https://cwe.mitre.org/data/definitions/269.html)
+7. [NIST AI 100-1 – Artificial Intelligence Risk Management Framework (AI RMF 1.0), 2023](https://doi.org/10.6028/NIST.AI.100-1)

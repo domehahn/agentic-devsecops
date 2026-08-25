@@ -1,340 +1,172 @@
 ---
-title: "Unicode/Bidi/Confusables bei Agentic Skills: Security Property, Detection und Nachweis"
-description: "Unicode/Bidi/Confusables wissenschaftlich erklärt: Bedrohungsmodell, scanner-positive und scanner-negative Beispiele, Detection-Mechanismus in skil, Evidence Chain, Grenzen und Referenzen."
-date: "2026-07-30"
-author: "dome"
+title: 'Unicode, Bidirectional Text, and Confusables: When What Reviewers See Is Not
+  What Machines Parse'
+description: 'A deep dive into Unicode security for agentic skills: bidi controls,
+  invisible characters, confusable identifiers, Unicode tags, normalization, evidence
+  preservation, and identifier policy.'
+date: '2026-07-30'
+author: dome
 topics:
-  - agentic-engineering
-  - devsecops
+- agentic-engineering
+- devsecops
 tags:
-  - Security Property
-  - Unicode/Bidi/Confusables
-  - Agentic Security
+- Security Property
+- Unicode/Bidi/Confusables
+- Agentic Security
 featured: false
 draft: false
 series:
   slug: agentic-skill-security-properties
-  title: "Security Properties für Agentic Skills"
+  title: Security Properties for Agentic Skills
   order: 43
 ---
 
-Agentic Skills sind gleichzeitig **Instruktion, Code, Konfiguration, Tool-Vertrag und Supply-Chain-Artefakt**. Deshalb genügt es nicht, eine Datei als „Text“ zu behandeln. Eine belastbare Security-Analyse muss rekonstruieren, welche **Trust Boundary**, welche Datenklasse oder welche ausführbare Capability ein Artefakt tatsächlich berührt.
+## The rendering gap
 
-Die Security Property **Unicode/Bidi/Confusables** gehört zur Kategorie **Text Integrity**. Diese Property schützt Parser-/Renderer-Differenzen und visuelle Mehrdeutigkeit auf Unicode- und Identifier-Ebene.
+Security review assumes that humans and machines are looking at the same program. Unicode breaks that assumption in subtle ways. The bytes may encode one sequence of identifiers while an editor renders another visual order; two tool names may appear identical while using code points from different scripts; invisible characters may alter matching without changing what a reviewer notices.
 
-<Note>
-**Terminologie:** In dieser Serie bedeutet **scanner-positiv**: Der Scanner erkennt einen Security Concern und erzeugt ein Finding. **Scanner-negativ** bedeutet: Der legitime Gegenfall darf für genau diese Property nicht anschlagen. Diese Definition entspricht der `skil` Security Control Matrix.
-</Note>
+Unicode security is fundamentally a representation-consistency problem. A trustworthy scanner must preserve raw code points, compute security-oriented normal forms, and reason differently about prose, identifiers, hostnames, tool names and hidden control characters. The original `skil` control model expresses the same idea as `IDENTIFIER_OR_TEXT contains security-relevant invisible/bidi/tag/confusable transformation`. That relation is more useful than a label such as “suspicious” because it specifies what must be evidenced and what a legitimate counterexample must break.
 
-## Kurzfassung
+## Property at a glance
 
-| Dimension | Einordnung |
+| Dimension | Assessment |
 | --- | --- |
-| Security Property | **Unicode/Bidi/Confusables** |
-| `skil` Controls | `SKIL-UNI-001`, `SKIL-UNI-002`, `SKIL-UNI-003` |
-| Primärer Mechanismus | **Unicode codepoint + mixed-script/confusable analysis** |
-| Aktueller Coverage-Charakter | **FULL für dokumentierte Klassen** |
-| Security-Relation | `IDENTIFIER_OR_TEXT contains security-relevant invisible/bidi/tag/confusable transformation` |
-| Hauptziel | False Positives durch Kontextprüfung reduzieren und den eigentlichen Sicherheitszusammenhang als Evidence Chain nachweisen |
-
-<KeyTakeaway>
-Ein **positiver Treffer** für Unicode/Bidi/Confusables ist nur dann belastbar, wenn die Property-spezifische Relation `IDENTIFIER_OR_TEXT contains security-relevant invisible/bidi/tag/confusable transformation` aus konkreter Evidence rekonstruiert werden kann. Ein Schlüsselwort allein ist keine wissenschaftlich ausreichende Begründung.
-</KeyTakeaway>
-
-## 1. Welche Sicherheitsannahme schützt die Property?
-
-Die Property lässt sich als Invariante formulieren:
-
-```text
-IDENTIFIER_OR_TEXT contains security-relevant invisible/bidi/tag/confusable transformation
-```
-
-Ein Scanner versucht damit nicht, „bösartige Wörter“ zu finden. Er prüft eine Hypothese über ein Systemartefakt:
-
-```text
-H0: Die Sicherheitsgrenze bleibt eingehalten.
-H1: Die Sicherheitsgrenze wird durch beobachtbare Evidence verletzt.
-```
-
-Das Finding ist die Entscheidung zugunsten von `H1` innerhalb der **sichtbaren statischen Coverage**. Daraus folgt eine wichtige epistemische Grenze: Ein scanner-negatives Ergebnis ist kein mathematischer Beweis für Gesamtsicherheit, sondern die Aussage, dass **unter dem verwendeten Analysemodell kein hinreichender Nachweis für diese Property gefunden wurde**.
-
-## 2. Bedrohungsmodell
-
-Für Unicode/Bidi/Confusables sollte das Threat Model mindestens vier Elemente trennen:
-
-1. **Quelle der Kontrolle oder Daten:** Nutzerinput, eingebettete Instruktion, Tool-Metadaten, Code, Dependency, Runtime-Konfiguration oder persistenter Zustand.
-2. **Trust Boundary:** Welche Information oder Authority wird höhergestuft, überschritten oder erweitert?
-3. **Operation/Sink:** Welche Aktion erzeugt die relevante Wirkung?
-4. **Guard:** Welche Allowlist, Validierung, Policy, Approval, Signatur oder Capability-Grenze müsste die Relation verhindern?
+| Security property | Unicode, Bidirectional Text, and Confusables |
+| Relevant `skil` controls | `SKIL-UNI-001`, `SKIL-UNI-002`, `SKIL-UNI-003` |
+| Primary analysis mechanism | Unicode codepoint + mixed-script/confusable analysis |
+| Declared coverage character | FULL for documented classes |
+| Core security relation | `IDENTIFIER_OR_TEXT contains security-relevant invisible/bidi/tag/confusable transformation` |
 
 <Architecture>
 Raw Unicode → codepoint scan → Bidi/zero-width/tag decode → script detection → confusable skeleton/mixed-script token → context carve-outs → Finding
 </Architecture>
 
-Die Architektur ist bewusst mehrstufig. Candidate Generation und Finding Decision sind getrennt: Ein lexikalischer, syntaktischer oder struktureller Kandidat wird erst nach Kontext-, Scope- und Guard-Prüfung zu einem Security Finding.
+## Raw code points, normalized text, and skeletons
 
-## 3. Scanner-positives Beispiel: Das Finding muss entstehen
+Forensics needs the original byte/code-point sequence, developers need a rendered form, and detection often needs a normalized or skeleton representation. Replacing the raw text with a normalized string destroys evidence. Conversely, scanning only raw text misses collisions that become obvious only after script and confusable analysis. A useful implementation records both the positive observation and the guard that would have made the path safe. That makes remediation testable and turns false-positive handling into explicit logic instead of a collection of suppressions.
+
+## Bidi controls and visual ordering
+
+Bidi controls are legitimate in international text, but in source-like identifiers and metadata they can make visual order diverge from logical order. Security policy should therefore be context-sensitive: prose can permit language-appropriate bidi behavior, whereas command names, permission fields and tool identifiers should use a much stricter profile. The same model supports change detection: when identity, configuration or code changes, the platform can recompute the relation and show exactly which part of the previously reviewed assumption no longer holds.
+
+## Confusables are an identity problem
+
+Latin “a” and a visually similar Cyrillic character are distinct identifiers. The risk grows when names authorize tools or select packages. UTS #39 skeletons and mixed-script analysis help detect collisions, but policy still needs a namespace model: not every multilingual sentence is suspicious, while a privileged identifier generally should be canonical and reviewable. In an agentic environment this distinction becomes operational because model-generated plans can select the relevant value or capability at runtime. The host therefore needs evidence that can survive from code review into execution policy.
+
+## Invisible and tag characters create covert channels
+
+Zero-width characters and Unicode Tag characters can carry hidden distinctions or even encode instruction-like content. A scanner should classify the code-point class, decode bounded tag payloads where appropriate, and retain exact offsets. The analysis must also carve out legitimate emoji and language cases to avoid turning Unicode support into a false-positive factory. The design implication is that detection and authorization must remain separate: the scanner identifies the condition, while a policy layer decides whether the condition is permissible in this deployment context.
+
+## Normalization is not authorization
+
+NFC/NFKC normalization can reduce accidental variation, but it cannot decide whether two identities should share authority. Security-sensitive names should be registered in a canonical namespace and compared using explicit identity rules. Normalization is an input to authorization, not a replacement for it. This also improves explainability. Reviewers can see the specific security fact rather than receiving a generic severity label, and future tooling can compose that fact with independent findings without double-counting the same evidence.
+
+## Confusable identities and mixed scripts
+
+A deliberately small positive fixture from the source property illustrates the boundary:
 
 ```text
 Tool identifier visually resembles "admin" but contains a Cyrillic lookalike character.
 ```
 
-### Warum ist das ein positiver Treffer?
-
-Positiv ist eine sicherheitsrelevante Abweichung zwischen visueller Wahrnehmung und Codepoint-/Identifier-Identität. Besonders stark ist Evidenz in Tool-/Parameter-Namen.
-
-Die Evidence sollte deshalb nicht nur `matched=true` enthalten. Mindestens folgende Felder sind für reproduzierbare Findings sinnvoll:
-
-```yaml
-property: "unicode-bidi-confusables"
-rules: ["SKIL-UNI-001", "SKIL-UNI-002", "SKIL-UNI-003"]
-analysis: "Unicode codepoint + mixed-script/confusable analysis"
-coverage: "FULL für dokumentierte Klassen"
-security_relation: "IDENTIFIER_OR_TEXT contains security-relevant invisible/bidi/tag/confusable transformation"
-location:
-  file: "path/to/artifact"
-  line: 42
-context_checked: true
-evidence_complete: true
-confidence: high
-```
-
-`confidence: high` ist hier nur beispielhaft. In einer realen Engine muss Confidence aus Evidenzqualität, Kontextauflösung und Coverage resultieren; sie darf nicht allein aus der Severity abgeleitet werden.
-
-## 4. Scanner-negatives Beispiel: Der Gegenfall darf nicht anschlagen
+The safe counterexample changes the semantics rather than merely deleting a suspicious token:
 
 ```text
 Internationalized prose may legitimately contain multiple scripts, while security-sensitive identifiers remain ASCII-restricted.
 ```
 
-### Warum muss dieser Fall scanner-negativ bleiben?
+The purpose of pairing them is not to teach exploitation. It is to force the detector to explain which relation changes between the two cases. A scanner that fires on both has learned vocabulary; a scanner that can explain the difference has begun to model the security property.
 
-Mehrsprachiger Fließtext ist kein Confusable-Angriff. Scope auf Identifier und Unicode-Sicherheitsprofile reduziert False Positives.
+## Identifiers deserve stricter policy than prose
 
-Das ist für die Qualität des Detektors genauso wichtig wie das Positivbeispiel. Eine Security Rule ohne systematische Negativ-Fixtures optimiert leicht auf Recall, produziert aber im Engineering-Alltag so viele False Positives, dass Findings ignoriert oder Controls deaktiviert werden.
+A useful finding is a compact proof obligation. It should answer: where did the evidence originate, what intermediate representation did Unicode codepoint + mixed-script/confusable analysis derive, why does that evidence satisfy `IDENTIFIER_OR_TEXT contains security-relevant invisible/bidi/tag/confusable transformation`, and what uncertainty remains? `skil` maps this property to `SKIL-UNI-001`, `SKIL-UNI-002`, `SKIL-UNI-003`. The declared coverage is FULL for documented classes, which means any unresolved runtime identity, dynamic dispatch, provider failure, or semantic ambiguity should be represented explicitly instead of being converted into an artificial 'safe' result.
 
-## 5. Wie `skil` die Property technisch ermittelt
-
-Aktuell relevante Controls: `SKIL-UNI-001`, `SKIL-UNI-002`, `SKIL-UNI-003`.
-
-Die Unicode-Schicht arbeitet auf Codepoint-Ebene, erkennt Bidi-/Invisible-Klassen, mixed-script/confusable Tokens und Unicode-Tag-Payloads. Raw Evidence bleibt erhalten, damit Normalisierung die forensische Aussage nicht zerstört.
-
-Der Mechanismus lässt sich als Evidence Pipeline darstellen:
-
-```text
-Raw artifact
-    ↓
-parser-/analyzer-spezifische Beobachtung
-    ↓
-Property-spezifische Zwischenrepräsentation
-    ↓
-Context / Negation / Scope / Guard
-    ↓
-entscheidende Security-Relation
-    ↓
-Finding + Confidence + Coverage
-```
-
-### 5.1 Candidate Generation
-
-Candidate Generation soll **breit genug für Recall**, aber noch nicht entscheidend sein. Abhängig von der Property entstehen Kandidaten aus AST-Knoten, Unicode-Codepoints, Manifestfeldern, Versionsconstraints, Netzwerkzielen, Taint Sources/Sinks oder semantischen Clauses.
-
-### 5.2 Property-spezifische Zwischenrepräsentation
-
-Die entscheidende IR für diesen Beitrag ist:
-
-```text
-IDENTIFIER_OR_TEXT contains security-relevant invisible/bidi/tag/confusable transformation
-```
-
-Diese IR ist absichtlich kleiner als der Originaltext. Sie enthält nur die für die Sicherheitsentscheidung relevanten Entitäten und Relationen. Dadurch kann derselbe Mechanismus unterschiedliche Oberflächenformen auf dieselbe Property abbilden.
-
-### 5.3 Finding Decision
-
-```text
-IF
-    property relation is evidenced
-AND relevant context/scope is resolved
-AND no valid guard/declassifier negates the relation
-THEN
-    emit finding
-ELSE
-    keep candidate as signal or scanner-negative
-```
-
-Der positive Treffer ist damit eine **Relation über Evidence**, nicht ein Worttreffer.
-
-## 6. False-Positive-Unterdrückung
-
-Emoji-ZWJ und legitime Script-Mischung brauchen Carve-outs. Normalisierung darf originale Codepoints für Forensik nicht verlieren.
-
-Ein wissenschaftlich belastbarer Scanner sollte False-Positive-Unterdrückung nicht durch globale „ignore this file“-Ausnahmen lösen, sondern durch **lokale Gegenhypothesen**:
-
-```text
-Candidate
-  ├─ defensive/negated context? ──> suppress or downgrade
-  ├─ validated/allowlisted?      ──> suppress relation
-  ├─ outside relevant field?     ──> not this property
-  └─ relation complete?          ──> finding
-```
-
-Das verbessert Erklärbarkeit: Der Scanner kann nicht nur sagen, warum er anschlägt, sondern auch, **welche Bedingung einen ähnlichen sicheren Fall unterscheidet**.
-
-## 7. Evidence Chain: Warum der Treffer nachvollziehbar sein muss
-
-Für Unicode/Bidi/Confusables sollte ein Finding mindestens diese Nachweise verbinden:
-
-```text
-Fundstelle
-  ↓
-parser-/analyzer-spezifische Beobachtung
-  ↓
-Security-Relation: IDENTIFIER_OR_TEXT contains security-relevant invisible/bidi/tag/confusable transformation
-  ↓
-Scope-/Guard-Entscheidung
-  ↓
-potenzielle Wirkung
-```
-
-Eine geeignete interne Repräsentation könnte so aussehen:
+A compact machine-readable evidence record can retain the essentials without pretending to encode the entire analysis:
 
 ```yaml
-finding:
-  property: unicode-bidi-confusables
-  rule_ids: ["SKIL-UNI-001", "SKIL-UNI-002", "SKIL-UNI-003"]
-  evidence:
-    raw_location: true
-    structured_relation: true
-    context_resolution: true
-  coverage:
-    status: "verified-or-bounded"
-    runtime_dependencies_documented: true
-  decision:
-    scanner_positive: true
+property_order: 43
+property: "unicode,-bidirectional-text,-and-confusables"
+controls: "SKIL-UNI-001, SKIL-UNI-002, SKIL-UNI-003"
+mechanism: "Unicode codepoint + mixed-script/confusable analysis"
+security_relation: "IDENTIFIER_OR_TEXT contains security-relevant invisible/bidi/tag/confusable transformation"
+coverage: "FULL for documented classes"
+evidence:
+  raw_location: true
+  structured_observation: true
+  context_resolved: true
+  safe_countercase_tested: true
 ```
 
-<Warning>
-Ein Finding darf keine Sicherheit vortäuschen, die der Analyzer nicht besitzt. Wenn ein Ziel, ein Call, ein Contract oder eine semantische Relation zur Laufzeit unaufgelöst bleibt, ist `runtime_dependent`, `provider_backed`, `partially_resolved` oder `not_observable` die korrektere Aussage als ein künstliches „safe“.
-</Warning>
+## False positives, ambiguity, and safe counterexamples
 
-## 8. Mechanismus im Hintergrund: Aufbau und Designprinzipien
+The main false-positive trap is treating multilingual text as inherently suspicious. Restrict identifiers and protocol keys much more strongly than human-facing prose, and report the exact suspicious code points with rendered and escaped views side by side.
 
-Die Detektion folgt fünf allgemeinen Prinzipien:
+No static property is a complete verdict on the artifact. The detector can establish local evidence about syntax, identity, data flow or declared authority; it cannot guarantee what an external registry, remote server or model will do later. Engineering decisions should therefore compose static findings with contract verification, supply-chain attestation and runtime policy rather than demanding impossible certainty from one layer.
 
-### 8.1 Deterministische Evidenz vor semantischer Vermutung
+## Forensic evidence without destructive normalization
 
-AST, strukturierte Manifestfelder, Codepoints, Versionen, Pfade und Source→Sink-Flows sind reproduzierbare Evidenz. Freie Sprache ist dagegen probabilistischer. Semantische Provider sollten deterministische Evidence **ergänzen**, nicht verdecken.
+At registration time, enforce canonical tool and skill identifiers, reject bidi controls in security-sensitive fields, store confusable skeletons for collision checks, and require review when a new identifier is visually close to an existing privileged name.
 
-### 8.2 Parser vor Regex, wenn Syntax existiert
+Defense in depth is intentionally redundant. Authoring lint, static analysis, contract verification, supply-chain verification, runtime policy and audit telemetry answer different questions. A strong result from one layer should never be used as a reason to remove the others.
 
-Wenn ein Artefakt eine formale Grammatik besitzt, ist ein Parser strukturell stärker: `exec(` in einem Kommentar ist nicht dasselbe wie ein `Call`-Knoten; `"*"` in einem Regex ist nicht dasselbe wie ein Wildcard-Permission-Feld.
+## Validation and internationalization trade-offs
 
-### 8.3 Context Guards sind Teil der Rule
+Evaluation should measure more than raw detection count. Precision matters because noisy controls are disabled; recall matters because adversarial variants are the point of the exercise. For structural properties, report supported syntax classes and unresolved constructs. For provider-backed checks, include provider-availability and freshness tests. Differential comparisons are useful, but property equivalence is more meaningful than finding-count parity. For **Unicode, Bidirectional Text, and Confusables**, the most valuable tests are those that preserve the surface appearance while changing the underlying security relation; that is how the suite verifies semantics instead of vocabulary.
 
-Eine Security Rule besteht konzeptionell aus:
+For `skil`, implementation claims should be checked against the repository’s control matrix, external-control crosswalk, analyzer tests and any provider-specific tests. Provider-backed coverage—such as OSV or external rule packs—must state whether the provider actually ran.
 
-```text
-positive evidence
-+ scope constraints
-+ negative evidence / safe context
-+ decision rule
-```
+## Architecture drill-down: from finding to enforceable boundary
 
-Ohne den dritten Teil werden Security-Dokumentation, Tests und sichere Gegenregeln regelmäßig zu False Positives.
+The architectural question behind **Unicode, Bidirectional Text, and Confusables** is where interpretation and authority meet. Start with the reviewed artifact and follow the relevant identity, value, or capability through every transformation until the policy decision or side effect occurs. `IDENTIFIER_OR_TEXT contains security-relevant invisible/bidi/tag/confusable transformation` is the compact invariant that should remain stable even when implementation syntax changes. Unicode codepoint + mixed-script/confusable analysis supplies static evidence, but the design should also specify what happens when analysis cannot resolve a value. High-assurance systems fail closed for high-impact operations, expose a bounded approval path for exceptional cases, and log the final resolved identity or target. The review is incomplete if it only proves that today's fixture is detected; it should also show how a future variant is constrained by architecture rather than by the exact spelling in the test corpus.
 
-### 8.4 Composition erst nach Einzelbefund
+The paired fixtures also serve as an architectural regression test. The unsafe example begins with `Tool identifier visually resembles "admin" but contains a Cyrillic lookalike character.` while the safe example begins with `Internationalized prose may legitimately contain multiple scripts, while security-sensitiv`. The important difference is the security relation, not the cosmetic text. If a refactor causes both to produce the same result, the detector or policy has lost a meaningful distinction.
 
-Die Property sollte mit benachbarten Findings nur dann zu einer höheren Severity komponiert werden, wenn ein gemeinsamer Daten-, Kontroll- oder Trust-Pfad nachweisbar ist.
+## Common implementation traps
 
-### 8.5 Coverage ist ein First-Class-Result
+Several implementation mistakes recur around **Unicode, Bidirectional Text, and Confusables**, even when the high-level policy is correct:
 
-Das System sollte mindestens zwischen folgenden Zuständen unterscheiden:
+**1. Treating strings as equivalent to syntax.** Comments, literals and generated text can contain dangerous-looking tokens without being executable, while benign-looking wrappers can hide a real interpreter boundary. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
 
-```text
-verified
-partially_resolved
-provider_backed
-runtime_dependent
-semantic_only
-not_observable
-```
+**2. Conflating detection with remediation.** Quoting, normalization or encoding changes are not universally valid sanitizers; the guard must be proven appropriate for the specific sink and language semantics. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
 
-Damit bleibt sichtbar, **was** der Scanner tatsächlich gemessen hat.
+**3. Dropping derived-artifact provenance.** If a decoder, parser or data-flow pass produces a second representation, reviewers need to know exactly which original bytes and transformation produced it. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
 
-## 9. Wissenschaftliche Validierung des Detektors
+A useful review discipline is to turn every exception into a scoped, expiring artifact with an owner and rationale. Permanent blanket suppressions hide whether the architecture improved; narrow exceptions preserve the signal and make technical debt measurable.
 
-Für eine belastbare Evaluation reichen einzelne Demo-Files nicht. Pro Property sollte die Testsuite mindestens enthalten:
+## How this property composes with adjacent findings
 
-| Testklasse | Zweck |
-| --- | --- |
-| True Positive Fixtures | kanonische Verletzungen der Property |
-| True Negative Fixtures | legitime Gegenfälle mit ähnlichen Tokens/Syntaxen |
-| Adversarial Paraphrases | Recall gegen Oberflächenvariation |
-| Boundary Cases | minimale Änderung zwischen positiv und negativ |
-| Differential Tests | Vergleich mit unabhängigen Referenzimplementierungen |
-| Holdout Fixtures | Schutz gegen Überanpassung an bekannte Tests |
-| Mutation Tests | systematische Änderung von Negation, Scope, Pfad, Sink oder Version |
+**Confusable identity plus authorization.** A visually deceptive identifier is most dangerous when that identifier selects authority: an MCP tool, package, skill, hostname, or permission subject. Unicode evidence should therefore compose with identity and authorization findings. A confusable token in prose is low signal; the same token in a privileged namespace can redirect a decision.
 
-Für sprachliche Properties sind Precision/Recall und Error Taxonomy sinnvoll. Für AST-/Taint-/Schema-Properties kann zusätzlich die **strukturelle Coverage** gemessen werden: Welche Source-, Sink-, Call-, Manifest- oder Codepoint-Klassen unterstützt der Analyzer tatsächlich?
+This composition model is deliberately graph-like: each detector contributes a typed fact and shared evidence identifiers allow a higher-level policy engine to connect them. That prevents one rule from becoming an overloaded catch-all and makes severity escalation explainable.
 
-## 10. Grenzen der Erkennung
+## Operational signals and measurable assurance
 
-Fontabhängige visuelle Ähnlichkeit ist nicht vollständig deterministisch. UTS #39 liefert standardisierte Skeleton-/Restriction-Mechanismen, aber Domänenprofile bleiben nötig.
+Measure suspicious code points by field class, confusable collisions in security-sensitive namespaces, bidi/tag findings confirmed by review, and false positives in legitimate international text. Precision should be reported separately for identifiers and prose.
 
-Generell gelten drei Grenzen:
+Metrics should be tied to an explicit denominator and deployment profile. A low finding count may mean strong controls, weak coverage, or simply little exposure; telemetry and coverage state are needed to tell those cases apart. Trend the data over time and review unexpected changes in both positive findings and scanner-negative regression behavior.
 
-1. **Static visibility:** Laufzeitwerte, DNS, Reflection, dynamische Downloads oder externe Policies können fehlen.
-2. **Semantic ambiguity:** Zweck, Legitimität und manche Trust-Entscheidungen sind nicht vollständig aus Syntax ableitbar.
-3. **Authority mismatch:** Ein gefährlicher Text kann technisch machtlos sein; ein harmlos formulierter Skill kann durch Runtime-Konfiguration enorme Authority erhalten.
+## Engineering implications beyond the scanner
 
-Deshalb ist die Zielgröße nicht „malicious / benign“, sondern eine nachvollziehbare Aussage über **Property, Evidence, Coverage und mögliche Wirkung**.
+Code-oriented properties benefit from a two-stage architecture: parser or byte-level analyzers first produce deterministic facts, then a composition layer connects those facts to data flow, execution or supply-chain context. This keeps the core detector reproducible and makes semantic enrichment optional rather than authoritative. When code is generated or fetched dynamically, the runtime should rescan the materialized artifact before execution instead of assuming the build-time scan still describes it.
 
-## 11. Technische Controls und Remediation
+The broader lesson is that an agentic skill is simultaneously text, code, configuration, a tool contract and a supply-chain artifact. Security review should follow the boundary that is actually crossed—data, authority, identity, execution, or control-plane visibility—rather than forcing every risk into the same detection template.
 
-- ASCII/restricted profile for identifiers
-- UTS #39 skeleton
-- Bidi control policy
-- raw+normalized evidence
+## A safer namespace model
 
-Defense in Depth bleibt zentral:
+A reviewer should be able to answer four questions before accepting this property as controlled:
 
-```text
-Authoring lint
-    +
-static scan
-    +
-contract verification
-    +
-supply-chain verification
-    +
-runtime policy
-    +
-audit / telemetry
-```
+1. **What exact security relation is being asserted?** Here it is `IDENTIFIER_OR_TEXT contains security-relevant invisible/bidi/tag/confusable transformation`.
+2. **What concrete evidence supports the relation?** The evidence must come from Unicode codepoint + mixed-script/confusable analysis, not from a keyword alone.
+3. **What near-neighbor safe case has been tested?** The paired negative fixture should differ in the property, not merely in spelling.
+4. **What remains outside static visibility?** Runtime identity, dynamic values, provider state and policy decisions must be named explicitly.
 
-Kein einzelner Layer ersetzt die anderen.
+## Implementation evidence in `skil`
 
-## 12. Einordnung in DevSecOps
+- [Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – native control identifiers and scanner-positive/scanner-negative coverage.
+- [External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – property-level equivalence and coverage states.
+- [External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – implementation differences, mechanisms, and documented gaps.
 
-Die Property sollte an mehreren Punkten des Lifecycles geprüft werden:
-
-1. **Authoring:** schneller lokaler Scan und IDE-/pre-commit Feedback.
-2. **Pull/Merge Request:** reproduzierbarer Scan mit diff-basierter Evidence.
-3. **Registry/Katalog:** Scan des veröffentlichten, digest-adressierten Artefakts.
-4. **Installation:** Verification gegen Capability Contract, Lockfiles und Provenance.
-5. **Runtime:** technische Enforcement-Schicht für Netzwerk, Filesystem, Tools, Secrets, Approval und Ressourcen.
-6. **Change Detection:** erneute Bewertung, wenn Tool-Metadaten, Dependencies, Runtime Policy oder Identitäten wechseln.
-
-Damit wird verhindert, dass eine saubere statische Analyse auf Artefakt A durchgeführt wird, während später Artefakt B oder eine breitere Runtime-Konfiguration tatsächlich ausgeführt wird.
-
-## 13. Implementierungsnachweise in `skil`
-
-- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – definiert scanner-positive/scanner-negative Control Coverage und die nativen `SKIL-*` Controls.
-- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – dokumentiert property-level Äquivalenz, Analyzer und Coverage-State.
-- [`docs/external-scanner-feature-parity.md`](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – beschreibt Detektionslogik, Lücken und Unterschiede der Mechanismen.
-- [`internal/analyzer/unicode.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/unicode.go) – Implementierungsquelle für `unicode`.
-
-## 14. Standards, Forschung und Referenzen
+## Standards, research, and references
 
 1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
 2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
@@ -342,16 +174,8 @@ Damit wird verhindert, dass eine saubere statische Analyse auf Artefakt A durchg
 4. [Unicode Consortium – UTS #39: Unicode Security Mechanisms, Version 17.0.0](https://www.unicode.org/reports/tr39/)
 5. [Unicode Consortium – UTS #55: Unicode Source Code Handling](https://www.unicode.org/reports/tr55/)
 6. [OWASP GenAI – LLM01:2025 Prompt Injection](https://genai.owasp.org/llmrisk/llm01-prompt-injection/)
-7. [Model Context Protocol – Tools, Specification 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
+7. [Model Context Protocol – Tools, Specification 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)
 
-## Fazit
+## Conclusion
 
-**Unicode/Bidi/Confusables** ist als Security Property dann nützlich, wenn sie nicht als Checklistenwort, sondern als **überprüfbare Relation** implementiert wird. Für `skil` bedeutet das: Unicode codepoint + mixed-script/confusable analysis, klar ausgewiesene Coverage, reproduzierbare Evidence und scanner-negative Gegenfälle mit ähnlicher Oberfläche.
-
-Die entscheidende Review-Frage lautet deshalb nicht:
-
-> „Kommt ein verdächtiges Wort vor?“
-
-sondern:
-
-> **Welche Sicherheitsannahme wird verletzt, welche Evidence belegt genau diese Relation, welcher sichere Gegenfall wurde ausgeschlossen und welche Teile der Aussage sind statisch tatsächlich beobachtbar?**
+**Unicode, Bidirectional Text, and Confusables** is valuable only when it is treated as a falsifiable security property rather than a checklist term. The goal is not to declare an entire skill “malicious” or “safe.” The goal is to state what boundary may be crossed, show the evidence that supports that statement, preserve the coverage limits, and make the safe countercondition explicit. That produces findings engineers can test, reviewers can reproduce, and runtime policy can enforce.

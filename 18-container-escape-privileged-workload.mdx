@@ -1,6 +1,6 @@
 ---
-title: "Container Escape / privileged workload bei Agentic Skills: Security Property, Detection und Nachweis"
-description: "Container Escape / privileged workload wissenschaftlich erklärt: Bedrohungsmodell, scanner-positive und scanner-negative Beispiele, Detection-Mechanismus in skil, Evidence Chain, Grenzen und Referenzen."
+title: "Privileged Workloads and Container-Escape Risk: Preserving Isolation for Agentic Execution"
+description: "A deep technical essay on privileged workloads and container-escape risk in agentic systems: namespaces, capabilities, host mounts, admission policy, sandbox design, evidence modeling, and least-privilege enforcement."
 date: "2026-07-30"
 author: "dome"
 topics:
@@ -8,358 +8,325 @@ topics:
   - devsecops
 tags:
   - Security Property
-  - Container Escape / privileged workload
+  - Container Escape
   - Agentic Security
 featured: false
 draft: false
 series:
   slug: agentic-skill-security-properties
-  title: "Security Properties für Agentic Skills"
+  title: "Security Properties for Agentic Skills"
   order: 18
 ---
 
-Agentic Skills sind gleichzeitig **Instruktion, Code, Konfiguration, Tool-Vertrag und Supply-Chain-Artefakt**. Deshalb genügt es nicht, eine Datei als „Text“ zu behandeln. Eine belastbare Security-Analyse muss rekonstruieren, welche **Trust Boundary**, welche Datenklasse oder welche ausführbare Capability ein Artefakt tatsächlich berührt.
+Containers are often used as the final safety boundary around an AI agent that can execute generated code. That makes container configuration part of the agent's security model, not merely an operations detail. A workload that is nominally “sandboxed” but runs privileged, shares host namespaces, mounts sensitive host paths, or receives broad Linux capabilities can lose much of the isolation the surrounding architecture assumes.
 
-Die Security Property **Container Escape / privileged workload** gehört zur Kategorie **Agency / Privilege**. Diese Property begrenzt die **effektive Agency** des Agenten. Maßgeblich ist nicht nur, was der Skill behauptet zu dürfen, sondern welche privilegierten Aktionen technisch erreichbar sind.
-
-<Note>
-**Terminologie:** In dieser Serie bedeutet **scanner-positiv**: Der Scanner erkennt einen Security Concern und erzeugt ein Finding. **Scanner-negativ** bedeutet: Der legitime Gegenfall darf für genau diese Property nicht anschlagen. Diese Definition entspricht der `skil` Security Control Matrix.
-</Note>
-
-## Kurzfassung
-
-| Dimension | Einordnung |
-| --- | --- |
-| Security Property | **Container Escape / privileged workload** |
-| `skil` Controls | `SKIL-BOUNDARY-CONTAINER-ESCAPE` |
-| Primärer Mechanismus | **Boundary-/Manifest-Erkennung für Escape-Primitiven** |
-| Aktueller Coverage-Charakter | **FULL** |
-| Security-Relation | `CONTAINER_CONFIG -> WEAKEN_ISOLATION(host namespaces|privileged|dangerous caps|host root mount)` |
-| Hauptziel | False Positives durch Kontextprüfung reduzieren und den eigentlichen Sicherheitszusammenhang als Evidence Chain nachweisen |
-
-<KeyTakeaway>
-Ein **positiver Treffer** für Container Escape / privileged workload ist nur dann belastbar, wenn die Property-spezifische Relation `CONTAINER_CONFIG -> WEAKEN_ISOLATION(host namespaces|privileged|dangerous caps|host root mount)` aus konkreter Evidence rekonstruiert werden kann. Ein Schlüsselwort allein ist keine wissenschaftlich ausreichende Begründung.
-</KeyTakeaway>
-
-## 1. Welche Sicherheitsannahme schützt die Property?
-
-Die Property lässt sich als Invariante formulieren:
+The property addressed here is not a claim that every privileged container is already escaped. It is a more precise relation:
 
 ```text
-CONTAINER_CONFIG -> WEAKEN_ISOLATION(host namespaces|privileged|dangerous caps|host root mount)
+CONTAINER_CONFIG
+  -> WEAKEN_ISOLATION(
+       privileged |
+       host_namespaces |
+       dangerous_capabilities |
+       sensitive_host_mounts
+     )
 ```
 
-Ein Scanner versucht damit nicht, „bösartige Wörter“ zu finden. Er prüft eine Hypothese über ein Systemartefakt:
+The security concern is **precondition creation**. Unsafe configuration can turn a subsequent software bug, malicious dependency, prompt injection, or agent mistake into host-level impact that would otherwise have been contained.
+
+## Isolation is a stack of boundaries
+
+A container is not one security mechanism. Its isolation emerges from multiple layers:
 
 ```text
-H0: Die Sicherheitsgrenze bleibt eingehalten.
-H1: Die Sicherheitsgrenze wird durch beobachtbare Evidence verletzt.
+application process
+      ↓
+UID / GID and capabilities
+      ↓
+seccomp / AppArmor / SELinux policy
+      ↓
+mount namespace
+      ↓
+PID / IPC / network namespaces
+      ↓
+cgroups and resource limits
+      ↓
+container runtime
+      ↓
+host kernel
 ```
 
-Das Finding ist die Entscheidung zugunsten von `H1` innerhalb der **sichtbaren statischen Coverage**. Daraus folgt eine wichtige epistemische Grenze: Ein scanner-negatives Ergebnis ist kein mathematischer Beweis für Gesamtsicherheit, sondern die Aussage, dass **unter dem verwendeten Analysemodell kein hinreichender Nachweis für diese Property gefunden wurde**.
+Weakening several layers at once can collapse the effective boundary even if the workload is still technically “inside a container.” Kubernetes' Pod Security Standards make this explicit: the Restricted profile disallows privileged containers, requires privilege-escalation controls, restricts host namespaces and hostPath volumes, and requires dropping broad capabilities.[^k8s-pss]
 
-## 2. Bedrohungsmodell
+For agentic execution, this is especially important because the workload may intentionally run code that did not exist when the platform was deployed.
 
-Für Container Escape / privileged workload sollte das Threat Model mindestens vier Elemente trennen:
+## A safe scanner-positive configuration fixture
 
-1. **Quelle der Kontrolle oder Daten:** Nutzerinput, eingebettete Instruktion, Tool-Metadaten, Code, Dependency, Runtime-Konfiguration oder persistenter Zustand.
-2. **Trust Boundary:** Welche Information oder Authority wird höhergestuft, überschritten oder erweitert?
-3. **Operation/Sink:** Welche Aktion erzeugt die relevante Wirkung?
-4. **Guard:** Welche Allowlist, Validierung, Policy, Approval, Signatur oder Capability-Grenze müsste die Relation verhindern?
-
-<Architecture>
-Docker/Kubernetes/Shell → structured fields/flags → privilege primitive taxonomy → co-occurrence/context → Finding
-</Architecture>
-
-Die Architektur ist bewusst mehrstufig. Candidate Generation und Finding Decision sind getrennt: Ein lexikalischer, syntaktischer oder struktureller Kandidat wird erst nach Kontext-, Scope- und Guard-Prüfung zu einem Security Finding.
-
-## 3. Scanner-positives Beispiel: Das Finding muss entstehen
+A static test does not need an exploit. It only needs to express the dangerous authority configuration:
 
 ```yaml
 securityContext:
   privileged: true
   capabilities:
-    add: ["SYS_ADMIN"]
+    add:
+      - SYS_ADMIN
 hostPID: true
 ```
 
-### Warum ist das ein positiver Treffer?
+Each element weakens a distinct isolation mechanism. A finding should explain those elements separately rather than collapsing them into an opaque “container escape” label.
 
-Privileged Mode, Host-Namespaces oder besonders starke Linux Capabilities reduzieren Container-Isolation. Mehrere unabhängige Signale erhöhen Confidence und Severity.
-
-Die Evidence sollte deshalb nicht nur `matched=true` enthalten. Mindestens folgende Felder sind für reproduzierbare Findings sinnvoll:
-
-```yaml
-property: "container-escape-privileged-workload"
-rules: ["SKIL-BOUNDARY-CONTAINER-ESCAPE"]
-analysis: "Boundary-/Manifest-Erkennung für Escape-Primitiven"
-coverage: "FULL"
-security_relation: "CONTAINER_CONFIG -> WEAKEN_ISOLATION(host namespaces|privileged|dangerous caps|host root mount)"
-location:
-  file: "path/to/artifact"
-  line: 42
-context_checked: true
-evidence_complete: true
-confidence: high
-```
-
-`confidence: high` ist hier nur beispielhaft. In einer realen Engine muss Confidence aus Evidenzqualität, Kontextauflösung und Coverage resultieren; sie darf nicht allein aus der Severity abgeleitet werden.
-
-## 4. Scanner-negatives Beispiel: Der Gegenfall darf nicht anschlagen
+A safer counterpart is structural:
 
 ```yaml
 securityContext:
   runAsNonRoot: true
   allowPrivilegeEscalation: false
   capabilities:
-    drop: ["ALL"]
+    drop:
+      - ALL
 ```
 
-### Warum muss dieser Fall scanner-negativ bleiben?
+That configuration is not a complete sandbox by itself, but it demonstrates the polarity the detector must understand.
 
-Der Negativfall macht die Isolation explizit: non-root, kein privilege escalation, keine zusätzlichen Capabilities.
+## `SKIL-BOUNDARY-CONTAINER-ESCAPE` should report the precondition, not an invented exploit
 
-Das ist für die Qualität des Detektors genauso wichtig wie das Positivbeispiel. Eine Security Rule ohne systematische Negativ-Fixtures optimiert leicht auf Recall, produziert aber im Engineering-Alltag so viele False Positives, dass Findings ignoriert oder Controls deaktiviert werden.
+The current `skil` matrix maps privileged workload / container-escape conditions to `SKIL-BOUNDARY-CONTAINER-ESCAPE`.[^skil-matrix] The strongest interpretation is architectural: the analyzer observes configuration that reduces the separation between agent workload and host.
 
-## 5. Wie `skil` die Property technisch ermittelt
-
-Aktuell relevante Controls: `SKIL-BOUNDARY-CONTAINER-ESCAPE`.
-
-Der Boundary-Analyzer klassifiziert sicherheitsrelevante Zielräume wie Container-Control-Planes, Agent State, MCP-Konfiguration, Cloud Metadata, private Netzbereiche und Cloud-Uploads. Er erzeugt Findings erst, wenn Operation und Boundary-Klasse zusammenpassen.
-
-Der Mechanismus lässt sich als Evidence Pipeline darstellen:
-
-```text
-Raw artifact
-    ↓
-parser-/analyzer-spezifische Beobachtung
-    ↓
-Property-spezifische Zwischenrepräsentation
-    ↓
-Context / Negation / Scope / Guard
-    ↓
-entscheidende Security-Relation
-    ↓
-Finding + Confidence + Coverage
-```
-
-### 5.1 Candidate Generation
-
-Candidate Generation soll **breit genug für Recall**, aber noch nicht entscheidend sein. Abhängig von der Property entstehen Kandidaten aus AST-Knoten, Unicode-Codepoints, Manifestfeldern, Versionsconstraints, Netzwerkzielen, Taint Sources/Sinks oder semantischen Clauses.
-
-### 5.2 Property-spezifische Zwischenrepräsentation
-
-Die entscheidende IR für diesen Beitrag ist:
-
-```text
-CONTAINER_CONFIG -> WEAKEN_ISOLATION(host namespaces|privileged|dangerous caps|host root mount)
-```
-
-Diese IR ist absichtlich kleiner als der Originaltext. Sie enthält nur die für die Sicherheitsentscheidung relevanten Entitäten und Relationen. Dadurch kann derselbe Mechanismus unterschiedliche Oberflächenformen auf dieselbe Property abbilden.
-
-### 5.3 Finding Decision
-
-```text
-IF
-    property relation is evidenced
-AND relevant context/scope is resolved
-AND no valid guard/declassifier negates the relation
-THEN
-    emit finding
-ELSE
-    keep candidate as signal or scanner-negative
-```
-
-Der positive Treffer ist damit eine **Relation über Evidence**, nicht ein Worttreffer.
-
-## 6. False-Positive-Unterdrückung
-
-Nicht jede `hostPath`-Nutzung ist Escape, aber Root-/Control-Plane-Mounts sind hochkritisch. Dokumentationsbeispiele müssen vom aktiven Manifest unterschieden werden.
-
-Ein wissenschaftlich belastbarer Scanner sollte False-Positive-Unterdrückung nicht durch globale „ignore this file“-Ausnahmen lösen, sondern durch **lokale Gegenhypothesen**:
-
-```text
-Candidate
-  ├─ defensive/negated context? ──> suppress or downgrade
-  ├─ validated/allowlisted?      ──> suppress relation
-  ├─ outside relevant field?     ──> not this property
-  └─ relation complete?          ──> finding
-```
-
-Das verbessert Erklärbarkeit: Der Scanner kann nicht nur sagen, warum er anschlägt, sondern auch, **welche Bedingung einen ähnlichen sicheren Fall unterscheidet**.
-
-## 7. Evidence Chain: Warum der Treffer nachvollziehbar sein muss
-
-Für Container Escape / privileged workload sollte ein Finding mindestens diese Nachweise verbinden:
-
-```text
-Fundstelle
-  ↓
-parser-/analyzer-spezifische Beobachtung
-  ↓
-Security-Relation: CONTAINER_CONFIG -> WEAKEN_ISOLATION(host namespaces|privileged|dangerous caps|host root mount)
-  ↓
-Scope-/Guard-Entscheidung
-  ↓
-potenzielle Wirkung
-```
-
-Eine geeignete interne Repräsentation könnte so aussehen:
+A useful intermediate representation can be modeled as:
 
 ```yaml
-finding:
-  property: container-escape-privileged-workload
-  rule_ids: ["SKIL-BOUNDARY-CONTAINER-ESCAPE"]
-  evidence:
-    raw_location: true
-    structured_relation: true
-    context_resolution: true
-  coverage:
-    status: "verified-or-bounded"
-    runtime_dependencies_documented: true
-  decision:
-    scanner_positive: true
+isolation_effects:
+  privileged_container: true
+  host_pid: true
+  host_network: false
+  host_ipc: false
+  added_capabilities:
+    - SYS_ADMIN
+  host_root_mount: false
+assessment:
+  isolation_weakened: true
+  successful_escape_observed: false
 ```
 
-<Warning>
-Ein Finding darf keine Sicherheit vortäuschen, die der Analyzer nicht besitzt. Wenn ein Ziel, ein Call, ein Contract oder eine semantische Relation zur Laufzeit unaufgelöst bleibt, ist `runtime_dependent`, `provider_backed`, `partially_resolved` oder `not_observable` die korrektere Aussage als ein künstliches „safe“.
-</Warning>
+This distinction avoids a common security-reporting error: describing a dangerous precondition as if exploitation had already occurred.
 
-## 8. Mechanismus im Hintergrund: Aufbau und Designprinzipien
+## Why `privileged: true` is qualitatively different from ordinary container execution
 
-Die Detektion folgt fünf allgemeinen Prinzipien:
+Privileged mode is not just “more permissions.” It changes the relationship between the container and the host's security mechanisms. Docker's security documentation and Kubernetes' privileged-container guidance both treat privileged execution as a substantial weakening of confinement.[^docker-security][^k8s-pss]
 
-### 8.1 Deterministische Evidenz vor semantischer Vermutung
+For an agentic runtime, that creates two separate risks:
 
-AST, strukturierte Manifestfelder, Codepoints, Versionen, Pfade und Source→Sink-Flows sind reproduzierbare Evidenz. Freie Sprache ist dagegen probabilistischer. Semantische Provider sollten deterministische Evidence **ergänzen**, nicht verdecken.
+1. **generated code gains unnecessary authority**, and
+2. **the model may be able to request or preserve that authority through configuration changes**.
 
-### 8.2 Parser vor Regex, wenn Syntax existiert
+The second risk is important. A CI pipeline that allows an agent to edit its own deployment manifest can convert a code-generation task into an infrastructure-policy mutation unless admission controls enforce independent constraints.
 
-Wenn ein Artefakt eine formale Grammatik besitzt, ist ein Parser strukturell stärker: `exec(` in einem Kommentar ist nicht dasselbe wie ein `Call`-Knoten; `"*"` in einem Regex ist nicht dasselbe wie ein Wildcard-Permission-Feld.
+## Linux capabilities: avoid both extremes
 
-### 8.3 Context Guards sind Teil der Rule
+Containers normally operate with a bounded set of Linux capabilities rather than full root authority. The security mistake is often not simply “running as root” but granting a capability set that enables operations unrelated to the task.
 
-Eine Security Rule besteht konzeptionell aus:
+`SYS_ADMIN` is particularly broad and should receive strong scrutiny. Yet the correct policy is not “all capabilities are malicious.” Network diagnostics, low-level observability, or specialized system workloads may legitimately require individual capabilities.
+
+A capability-aware decision should ask:
 
 ```text
-positive evidence
-+ scope constraints
-+ negative evidence / safe context
-+ decision rule
+required capability set
+      vs.
+requested capability set
+      vs.
+effective capability set at runtime
 ```
 
-Ohne den dritten Teil werden Security-Dokumentation, Tests und sichere Gegenregeln regelmäßig zu False Positives.
+If the requested set exceeds the requirement, this article's property composes naturally with **Excessive Permissions**.
 
-### 8.4 Composition erst nach Einzelbefund
+## Host namespaces reduce separation in different ways
 
-Die Property sollte mit benachbarten Findings nur dann zu einer höheren Severity komponiert werden, wenn ein gemeinsamer Daten-, Kontroll- oder Trust-Pfad nachweisbar ist.
+Sharing host namespaces changes what the container can observe or interact with.
 
-### 8.5 Coverage ist ein First-Class-Result
+### Host PID namespace
 
-Das System sollte mindestens zwischen folgenden Zuständen unterscheiden:
+The process boundary becomes more transparent because the workload can see host processes. That may expose metadata and can interact with other privilege mechanisms.
+
+### Host network namespace
+
+Network isolation is reduced. Services bound only to host-local interfaces may become reachable from the workload.
+
+### Host IPC namespace
+
+IPC resources can cross a boundary that the platform may have assumed was isolated.
+
+These settings are not interchangeable. Findings should preserve exactly which boundary was weakened instead of assigning one generic severity.
+
+## Host mounts can invalidate an otherwise strong sandbox
+
+A container may be non-root and still receive a dangerous host mount. The effective security boundary depends on **what data and control objects enter the mount namespace**.
+
+Examples of high-risk classes include:
+
+- container runtime control-plane sockets,
+- host root or broad host filesystem trees,
+- credential directories,
+- orchestration credentials,
+- sensitive device nodes.
+
+The scanner should reason about mount source, mount target, read/write mode, and intended purpose. A read-only project source mount is materially different from a writable broad host mount.
+
+<Architecture>
+Agent request → deployment manifest → admission policy → hardened sandbox → restricted mounts/capabilities → execution
+</Architecture>
+
+## Admission control is stronger than asking the model to preserve isolation
+
+Agentic infrastructure needs a non-model authority that decides which workload configurations are admissible.
+
+A strong policy can enforce:
+
+- `privileged: false`,
+- `allowPrivilegeEscalation: false`,
+- non-root identities,
+- no host PID/IPC/network unless explicitly approved,
+- a minimal capability allowlist,
+- restricted volume types and paths,
+- seccomp and LSM policies,
+- resource limits,
+- read-only root filesystems where compatible.
+
+Kubernetes' Pod Security Standards provide a practical baseline vocabulary for these controls.[^k8s-pss]
+
+The crucial principle is independence. The same agent that generates a deployment should not be able to waive the platform policy that constrains the deployment.
+
+## Sandboxing generated code requires defense in depth
+
+No single container setting should be treated as sufficient for hostile or uncertain code. Depending on the threat model, stronger isolation may involve:
+
+- dedicated worker nodes,
+- microVMs or VM-backed sandboxes,
+- user namespaces,
+- rootless container engines,
+- kernel hardening and mandatory access control,
+- strict egress filtering,
+- ephemeral filesystems,
+- no production credentials,
+- per-run identities and quotas.
+
+This is an engineering trade-off between isolation strength, startup latency, density, observability, and developer experience. The correct choice depends on the authority available to the agent and the sensitivity of the surrounding infrastructure.
+
+## Configuration provenance matters
+
+In agentic workflows, the dangerous manifest may be assembled from multiple sources:
 
 ```text
-verified
-partially_resolved
-provider_backed
-runtime_dependent
-semantic_only
-not_observable
+base chart
+  + environment overlay
+  + generated patch
+  + CI variables
+  + admission mutation
+  = effective workload
 ```
 
-Damit bleibt sichtbar, **was** der Scanner tatsächlich gemessen hat.
+Static analysis of one YAML file may therefore be insufficient. A mature control should record whether it inspected source configuration or the fully rendered deployment representation.
 
-## 9. Wissenschaftliche Validierung des Detektors
+Evidence can include:
 
-Für eine belastbare Evaluation reichen einzelne Demo-Files nicht. Pro Property sollte die Testsuite mindestens enthalten:
+```yaml
+property: privileged-workload
+controls:
+  - SKIL-BOUNDARY-CONTAINER-ESCAPE
+observations:
+  privileged: true
+  host_namespaces:
+    pid: true
+  added_capabilities:
+    - SYS_ADMIN
+configuration_stage: rendered_manifest
+runtime_state: not_observed
+```
 
-| Testklasse | Zweck |
-| --- | --- |
-| True Positive Fixtures | kanonische Verletzungen der Property |
-| True Negative Fixtures | legitime Gegenfälle mit ähnlichen Tokens/Syntaxen |
-| Adversarial Paraphrases | Recall gegen Oberflächenvariation |
-| Boundary Cases | minimale Änderung zwischen positiv und negativ |
-| Differential Tests | Vergleich mit unabhängigen Referenzimplementierungen |
-| Holdout Fixtures | Schutz gegen Überanpassung an bekannte Tests |
-| Mutation Tests | systematische Änderung von Negation, Scope, Pfad, Sink oder Version |
+This avoids pretending that source-level configuration is identical to runtime state.
 
-Für sprachliche Properties sind Precision/Recall und Error Taxonomy sinnvoll. Für AST-/Taint-/Schema-Properties kann zusätzlich die **strukturelle Coverage** gemessen werden: Welche Source-, Sink-, Call-, Manifest- oder Codepoint-Klassen unterstützt der Analyzer tatsächlich?
+## Interaction with Docker-socket access
 
-## 10. Grenzen der Erkennung
+The previous property and this one should remain distinct:
 
-Kernel-/Runtime-Härtung ist statisch nicht vollständig sichtbar. Ein Finding beschreibt eine gefährliche Konfiguration, nicht einen garantiert ausnutzbaren Exploit.
+- **Docker Socket Access**: the agent can reach a container-management control plane.
+- **Privileged Workload / Escape Preconditions**: a workload is configured with weakened isolation.
 
-Generell gelten drei Grenzen:
+When both occur on the same execution path, the risk model can raise the priority. But a scanner should not infer one merely from the other.
 
-1. **Static visibility:** Laufzeitwerte, DNS, Reflection, dynamische Downloads oder externe Policies können fehlen.
-2. **Semantic ambiguity:** Zweck, Legitimität und manche Trust-Entscheidungen sind nicht vollständig aus Syntax ableitbar.
-3. **Authority mismatch:** Ein gefährlicher Text kann technisch machtlos sein; ein harmlos formulierter Skill kann durch Runtime-Konfiguration enorme Authority erhalten.
+## False-positive discipline
 
-Deshalb ist die Zielgröße nicht „malicious / benign“, sondern eine nachvollziehbare Aussage über **Property, Evidence, Coverage und mögliche Wirkung**.
+Security documentation, policy tests, and Kubernetes admission rules will naturally contain strings such as `privileged: true`. Context is therefore essential.
 
-## 11. Technische Controls und Remediation
-
-- Pod Security Standards/Admission
-- drop ALL capabilities
-- read-only root filesystem
-- seccomp/AppArmor/SELinux
-- keine Host-Namespaces/Root-Mounts
-
-Defense in Depth bleibt zentral:
+The analyzer should distinguish:
 
 ```text
-Authoring lint
-    +
-static scan
-    +
-contract verification
-    +
-supply-chain verification
-    +
-runtime policy
-    +
-audit / telemetry
+policy denies privileged=true     → defensive context
+unit test asserts rejection       → test context
+deployment requests privileged    → strong candidate
+comment explains privileged risk  → documentation context
 ```
 
-Kein einzelner Layer ersetzt die anderen.
+The same literal can mean opposite things depending on its syntax and role.
 
-## 12. Einordnung in DevSecOps
+## Runtime telemetry and drift
 
-Die Property sollte an mehreren Punkten des Lifecycles geprüft werden:
+Deployment-time policy does not eliminate the need for runtime observability. Useful signals include:
 
-1. **Authoring:** schneller lokaler Scan und IDE-/pre-commit Feedback.
-2. **Pull/Merge Request:** reproduzierbarer Scan mit diff-basierter Evidence.
-3. **Registry/Katalog:** Scan des veröffentlichten, digest-adressierten Artefakts.
-4. **Installation:** Verification gegen Capability Contract, Lockfiles und Provenance.
-5. **Runtime:** technische Enforcement-Schicht für Netzwerk, Filesystem, Tools, Secrets, Approval und Ressourcen.
-6. **Change Detection:** erneute Bewertung, wenn Tool-Metadaten, Dependencies, Runtime Policy oder Identitäten wechseln.
+- workloads launched with unexpected capabilities,
+- namespace-sharing changes,
+- new sensitive host mounts,
+- changes to seccomp/LSM profiles,
+- execution on nodes outside the approved sandbox pool,
+- admission-policy bypass or break-glass events.
 
-Damit wird verhindert, dass eine saubere statische Analyse auf Artefakt A durchgeführt wird, während später Artefakt B oder eine breitere Runtime-Konfiguration tatsächlich ausgeführt wird.
+Drift detection is particularly important when agentic automation can modify infrastructure continuously.
 
-## 13. Implementierungsnachweise in `skil`
+## Validation should use a matrix, not one manifest
 
-- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – definiert scanner-positive/scanner-negative Control Coverage und die nativen `SKIL-*` Controls.
-- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – dokumentiert property-level Äquivalenz, Analyzer und Coverage-State.
-- [`docs/external-scanner-feature-parity.md`](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – beschreibt Detektionslogik, Lücken und Unterschiede der Mechanismen.
-- [`internal/analyzer/boundary.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/boundary.go) – Implementierungsquelle für `boundary`.
+A serious regression corpus should include:
 
-## 14. Standards, Forschung und Referenzen
+- privileged workload enabled/disabled,
+- individual capability additions,
+- `drop: [ALL]` with narrow add-backs,
+- host PID/network/IPC independently,
+- sensitive versus project-scoped mounts,
+- read-only versus writable mounts,
+- rootless/non-root contexts,
+- defensive policy documents,
+- rendered versus source manifests,
+- combinations with runtime-socket exposure.
 
-1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
-2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
-3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
-4. [MITRE CWE-269 – Improper Privilege Management](https://cwe.mitre.org/data/definitions/269.html)
-5. [OWASP GenAI – LLM06:2025 Excessive Agency](https://genai.owasp.org/llmrisk/llm062025-excessive-agency/)
-6. [NIST AI 100-1 – Artificial Intelligence Risk Management Framework (AI RMF 1.0), 2023](https://doi.org/10.6028/NIST.AI.100-1)
+The oracle should check both the finding and the reason it was emitted.
 
-## Fazit
+## Limits of static analysis
 
-**Container Escape / privileged workload** ist als Security Property dann nützlich, wenn sie nicht als Checklistenwort, sondern als **überprüfbare Relation** implementiert wird. Für `skil` bedeutet das: Boundary-/Manifest-Erkennung für Escape-Primitiven, klar ausgewiesene Coverage, reproduzierbare Evidence und scanner-negative Gegenfälle mit ähnlicher Oberfläche.
+A repository scan cannot normally prove:
 
-Die entscheidende Review-Frage lautet deshalb nicht:
+- the effective kernel configuration,
+- whether seccomp or LSM enforcement is active,
+- what a dynamically provisioned mount points to,
+- whether the host runtime is rootless,
+- whether an admission controller will mutate or reject the workload,
+- whether a kernel/runtime vulnerability exists or is exploitable.
 
-> „Kommt ein verdächtiges Wort vor?“
+Accordingly, the correct finding is **isolation weakened by configuration**, not “container escaped.”
 
-sondern:
+<KeyTakeaway>
+A container is useful as an agent sandbox only while the configuration preserves the boundaries the architecture relies on. Privileged mode, host namespaces, broad capabilities, and sensitive host mounts should be treated as explicit reductions of isolation and enforced by an independent admission layer rather than by model instructions.
+</KeyTakeaway>
 
-> **Welche Sicherheitsannahme wird verletzt, welche Evidence belegt genau diese Relation, welcher sichere Gegenfall wurde ausgeschlossen und welche Teile der Aussage sind statisch tatsächlich beobachtbar?**
+## Implementation references
+
+- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+
+## References
+
+[^skil-matrix]: [domehahn/skil — Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+[^k8s-pss]: [Kubernetes Documentation — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+[^docker-security]: [Docker Docs — Docker Engine security](https://docs.docker.com/engine/security/)
+[^cwe269]: [MITRE CWE-269 — Improper Privilege Management](https://cwe.mitre.org/data/definitions/269.html)
+
+## Conclusion
+
+Privileged workload detection is a control over the *preconditions of escape*, not a claim that exploitation has occurred. A precise implementation identifies exactly which isolation layers are weakened, compares them with the task's capability requirements, and preserves runtime uncertainty. The platform should then enforce hardened execution independently through admission policy, sandbox architecture, constrained mounts, minimal capabilities, and dedicated identities.

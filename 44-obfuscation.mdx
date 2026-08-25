@@ -1,347 +1,173 @@
 ---
-title: "Obfuscation bei Agentic Skills: Security Property, Detection und Nachweis"
-description: "Obfuscation wissenschaftlich erklärt: Bedrohungsmodell, scanner-positive und scanner-negative Beispiele, Detection-Mechanismus in skil, Evidence Chain, Grenzen und Referenzen."
-date: "2026-07-30"
-author: "dome"
+title: 'Obfuscation in Agentic Skills: From Concealed Representation to Executable
+  Meaning'
+description: An in-depth essay on detecting obfuscation as a transformation chain,
+  safely decoding content, composing signals with execution and network sinks, and
+  avoiding entropy-driven false positives.
+date: '2026-07-30'
+author: dome
 topics:
-  - agentic-engineering
-  - devsecops
+- agentic-engineering
+- devsecops
 tags:
-  - Security Property
-  - Obfuscation
-  - Agentic Security
+- Security Property
+- Obfuscation
+- Agentic Security
 featured: false
 draft: false
 series:
   slug: agentic-skill-security-properties
-  title: "Security Properties für Agentic Skills"
+  title: Security Properties for Agentic Skills
   order: 44
 ---
 
-Agentic Skills sind gleichzeitig **Instruktion, Code, Konfiguration, Tool-Vertrag und Supply-Chain-Artefakt**. Deshalb genügt es nicht, eine Datei als „Text“ zu behandeln. Eine belastbare Security-Analyse muss rekonstruieren, welche **Trust Boundary**, welche Datenklasse oder welche ausführbare Capability ein Artefakt tatsächlich berührt.
+## Opacity is not the same as malice
 
-Die Security Property **Obfuscation** gehört zur Kategorie **Code / Supply Chain**. Diese Property erkennt Verschleierung als Transformationskette und komponiert sie mit nachgelagerten sicherheitsrelevanten Sinks.
+Encoding is normal. Compression is normal. Minification is normal. Encryption is normal. None of these is equivalent to malicious obfuscation. The security signal appears when concealment is combined with a transformation path that hides behavior from review and then feeds the recovered content into a sensitive sink.
 
-<Note>
-**Terminologie:** In dieser Serie bedeutet **scanner-positiv**: Der Scanner erkennt einen Security Concern und erzeugt ein Finding. **Scanner-negativ** bedeutet: Der legitime Gegenfall darf für genau diese Property nicht anschlagen. Diese Definition entspricht der `skil` Security Control Matrix.
-</Note>
+A useful obfuscation detector must reason over a chain—concealed representation → bounded decode or reconstruction → security-relevant semantics—rather than treating Base64, hex strings, entropy, or Unicode tricks as malware labels. The original `skil` control model expresses the same idea as `CONCEALED_REPRESENTATION -> DECODE/DEOBFUSCATE -> SECURITY_RELEVANT_SINK`. That relation is more useful than a label such as “suspicious” because it specifies what must be evidenced and what a legitimate counterexample must break.
 
-## Kurzfassung
+## Property at a glance
 
-| Dimension | Einordnung |
+| Dimension | Assessment |
 | --- | --- |
-| Security Property | **Obfuscation** |
-| `skil` Controls | `SKIL-OBF-001`, `SKIL-UNI-001`, `SKIL-UNI-003` |
-| Primärer Mechanismus | **decoded-content/concealment heuristics + execution composition** |
-| Aktueller Coverage-Charakter | **FULL für Kernmuster** |
-| Security-Relation | `CONCEALED_REPRESENTATION -> DECODE/DEOBFUSCATE -> SECURITY_RELEVANT_SINK` |
-| Hauptziel | False Positives durch Kontextprüfung reduzieren und den eigentlichen Sicherheitszusammenhang als Evidence Chain nachweisen |
-
-<KeyTakeaway>
-Ein **positiver Treffer** für Obfuscation ist nur dann belastbar, wenn die Property-spezifische Relation `CONCEALED_REPRESENTATION -> DECODE/DEOBFUSCATE -> SECURITY_RELEVANT_SINK` aus konkreter Evidence rekonstruiert werden kann. Ein Schlüsselwort allein ist keine wissenschaftlich ausreichende Begründung.
-</KeyTakeaway>
-
-## 1. Welche Sicherheitsannahme schützt die Property?
-
-Die Property lässt sich als Invariante formulieren:
-
-```text
-CONCEALED_REPRESENTATION -> DECODE/DEOBFUSCATE -> SECURITY_RELEVANT_SINK
-```
-
-Ein Scanner versucht damit nicht, „bösartige Wörter“ zu finden. Er prüft eine Hypothese über ein Systemartefakt:
-
-```text
-H0: Die Sicherheitsgrenze bleibt eingehalten.
-H1: Die Sicherheitsgrenze wird durch beobachtbare Evidence verletzt.
-```
-
-Das Finding ist die Entscheidung zugunsten von `H1` innerhalb der **sichtbaren statischen Coverage**. Daraus folgt eine wichtige epistemische Grenze: Ein scanner-negatives Ergebnis ist kein mathematischer Beweis für Gesamtsicherheit, sondern die Aussage, dass **unter dem verwendeten Analysemodell kein hinreichender Nachweis für diese Property gefunden wurde**.
-
-## 2. Bedrohungsmodell
-
-Für Obfuscation sollte das Threat Model mindestens vier Elemente trennen:
-
-1. **Quelle der Kontrolle oder Daten:** Nutzerinput, eingebettete Instruktion, Tool-Metadaten, Code, Dependency, Runtime-Konfiguration oder persistenter Zustand.
-2. **Trust Boundary:** Welche Information oder Authority wird höhergestuft, überschritten oder erweitert?
-3. **Operation/Sink:** Welche Aktion erzeugt die relevante Wirkung?
-4. **Guard:** Welche Allowlist, Validierung, Policy, Approval, Signatur oder Capability-Grenze müsste die Relation verhindern?
+| Security property | Obfuscation in Agentic Skills |
+| Relevant `skil` controls | `SKIL-OBF-001`, `SKIL-UNI-001`, `SKIL-UNI-003` |
+| Primary analysis mechanism | decoded-content/concealment heuristics + execution composition |
+| Declared coverage character | FULL for core patterns |
+| Core security relation | `CONCEALED_REPRESENTATION -> DECODE/DEOBFUSCATE -> SECURITY_RELEVANT_SINK` |
 
 <Architecture>
 Text/Code → high-entropy/base64/hex/unicode concealment candidates → bounded decode → decoded semantics → execution/network sink composition → Finding
 </Architecture>
 
-Die Architektur ist bewusst mehrstufig. Candidate Generation und Finding Decision sind getrennt: Ein lexikalischer, syntaktischer oder struktureller Kandidat wird erst nach Kontext-, Scope- und Guard-Prüfung zu einem Security Finding.
+## When concealment becomes execution risk
 
-## 3. Scanner-positives Beispiel: Das Finding muss entstehen
+A deliberately small positive fixture from the source property illustrates the boundary:
 
 ```python
 exec(base64.b64decode(encoded_payload))
 ```
 
-### Warum ist das ein positiver Treffer?
-
-Positiv ist nicht Base64 an sich, sondern Decode→Execution beziehungsweise concealment mit sicherheitsrelevantem Zweck.
-
-Die Evidence sollte deshalb nicht nur `matched=true` enthalten. Mindestens folgende Felder sind für reproduzierbare Findings sinnvoll:
-
-```yaml
-property: "obfuscation"
-rules: ["SKIL-OBF-001", "SKIL-UNI-001", "SKIL-UNI-003"]
-analysis: "decoded-content/concealment heuristics + execution composition"
-coverage: "FULL für Kernmuster"
-security_relation: "CONCEALED_REPRESENTATION -> DECODE/DEOBFUSCATE -> SECURITY_RELEVANT_SINK"
-location:
-  file: "path/to/artifact"
-  line: 42
-context_checked: true
-evidence_complete: true
-confidence: high
-```
-
-`confidence: high` ist hier nur beispielhaft. In einer realen Engine muss Confidence aus Evidenzqualität, Kontextauflösung und Coverage resultieren; sie darf nicht allein aus der Severity abgeleitet werden.
-
-## 4. Scanner-negatives Beispiel: Der Gegenfall darf nicht anschlagen
+The safe counterexample changes the semantics rather than merely deleting a suspicious token:
 
 ```python
 logo_bytes = base64.b64decode(embedded_png)
 write_asset(logo_bytes)
 ```
 
-### Warum muss dieser Fall scanner-negativ bleiben?
+The purpose of pairing them is not to teach exploitation. It is to force the detector to explain which relation changes between the two cases. A scanner that fires on both has learned vocabulary; a scanner that can explain the difference has begun to model the security property.
 
-Binärassets werden legitim kodiert; ohne gefährlichen Sink soll Base64 nicht als Malware interpretiert werden.
+## Modeling transformation chains
 
-Das ist für die Qualität des Detektors genauso wichtig wie das Positivbeispiel. Eine Security Rule ohne systematische Negativ-Fixtures optimiert leicht auf Recall, produziert aber im Engineering-Alltag so viele False Positives, dass Findings ignoriert oder Controls deaktiviert werden.
+A Base64-encoded PNG is an asset; Base64 that is decoded and immediately executed is a control-flow boundary. The same representation can therefore be benign or critical depending on where the decoded bytes go. Composition with AST, taint and malware signatures gives the signal meaning. The same model supports change detection: when identity, configuration or code changes, the platform can recompute the relation and show exactly which part of the previously reviewed assumption no longer holds.
 
-## 5. Wie `skil` die Property technisch ermittelt
+## Bounded decoding as a scanner-safety requirement
 
-Aktuell relevante Controls: `SKIL-OBF-001`, `SKIL-UNI-001`, `SKIL-UNI-003`.
+Security scanners can be attacked with decompression bombs, recursive encodings and extremely large payloads. Decoding should be depth-bounded, size-bounded and time-bounded, with provenance recorded at each stage. The scanner should never “helpfully” execute decoded content to discover what it does. In an agentic environment this distinction becomes operational because model-generated plans can select the relevant value or capability at runtime. The host therefore needs evidence that can survive from code review into execution policy.
 
-Die Unicode-Schicht arbeitet auf Codepoint-Ebene, erkennt Bidi-/Invisible-Klassen, mixed-script/confusable Tokens und Unicode-Tag-Payloads. Raw Evidence bleibt erhalten, damit Normalisierung die forensische Aussage nicht zerstört.
+## Multi-stage transformations hide semantics
 
-Die Registry-/Verification-Schicht normalisiert Findings und Capability Observations und erlaubt set-basierte Contract-Vergleiche sowie Control-Mappings.
+Real concealment may use concatenation, character-code construction, Unicode tags, XOR-like transforms, compressed blobs or generated scripts. A practical analyzer does not need to solve arbitrary program equivalence; it needs to recognize common transformation families, recover bounded artifacts, and hand them to the appropriate semantic analyzer. The design implication is that detection and authorization must remain separate: the scanner identifies the condition, while a policy layer decides whether the condition is permissible in this deployment context.
 
-Die Taint-Schicht modelliert Sources, Propagation und Sinks. Assignments und ausgewählte Funktionspfade erhalten Herkunftslabels; ein Finding entsteht, wenn Taint einen sink-spezifisch relevanten Endpunkt ohne anerkannten Declassifier erreicht.
+## Intent and effect are separate signals
 
-Der Mechanismus lässt sich als Evidence Pipeline darstellen:
+High entropy or unusual encoding indicates opacity, not intent. A downstream process call, network egress, credential read or persistence primitive raises the security significance. Keeping these as separate findings allows a risk engine to compose them without pretending that every encoded file is malicious. This also improves explainability. Reviewers can see the specific security fact rather than receiving a generic severity label, and future tooling can compose that fact with independent findings without double-counting the same evidence.
 
-```text
-Raw artifact
-    ↓
-parser-/analyzer-spezifische Beobachtung
-    ↓
-Property-spezifische Zwischenrepräsentation
-    ↓
-Context / Negation / Scope / Guard
-    ↓
-entscheidende Security-Relation
-    ↓
-Finding + Confidence + Coverage
-```
+## Evidence must survive deobfuscation
 
-### 5.1 Candidate Generation
+Reviewers need both the original location and the derived representation. The finding should say what transformation was applied, how many layers were decoded, what bytes or syntax were recovered, and which downstream rule consumed that derived artifact. Otherwise the result cannot be independently reproduced. A useful implementation records both the positive observation and the guard that would have made the path safe. That makes remediation testable and turns false-positive handling into explicit logic instead of a collection of suppressions.
 
-Candidate Generation soll **breit genug für Recall**, aber noch nicht entscheidend sein. Abhängig von der Property entstehen Kandidaten aus AST-Knoten, Unicode-Codepoints, Manifestfeldern, Versionsconstraints, Netzwerkzielen, Taint Sources/Sinks oder semantischen Clauses.
+## Evidence across derived artifacts
 
-### 5.2 Property-spezifische Zwischenrepräsentation
+Detection quality depends on traceability. The scanner should preserve the raw location, the property-specific observation produced by decoded-content/concealment heuristics + execution composition, and the reasoning that turns it into `CONCEALED_REPRESENTATION -> DECODE/DEOBFUSCATE -> SECURITY_RELEVANT_SINK`. The native control surface is `SKIL-OBF-001`, `SKIL-UNI-001`, `SKIL-UNI-003`. Because the stated coverage is FULL for core patterns, confidence must follow evidence completeness—not severity labels or lexical suspicion.
 
-Die entscheidende IR für diesen Beitrag ist:
-
-```text
-CONCEALED_REPRESENTATION -> DECODE/DEOBFUSCATE -> SECURITY_RELEVANT_SINK
-```
-
-Diese IR ist absichtlich kleiner als der Originaltext. Sie enthält nur die für die Sicherheitsentscheidung relevanten Entitäten und Relationen. Dadurch kann derselbe Mechanismus unterschiedliche Oberflächenformen auf dieselbe Property abbilden.
-
-### 5.3 Finding Decision
-
-```text
-IF
-    property relation is evidenced
-AND relevant context/scope is resolved
-AND no valid guard/declassifier negates the relation
-THEN
-    emit finding
-ELSE
-    keep candidate as signal or scanner-negative
-```
-
-Der positive Treffer ist damit eine **Relation über Evidence**, nicht ein Worttreffer.
-
-## 6. False-Positive-Unterdrückung
-
-Entropy-/Length-Heuristiken müssen Dateityp und Sink beachten. Mehrstufige Decodes sollten bounded sein, um Scanner-DoS zu vermeiden.
-
-Ein wissenschaftlich belastbarer Scanner sollte False-Positive-Unterdrückung nicht durch globale „ignore this file“-Ausnahmen lösen, sondern durch **lokale Gegenhypothesen**:
-
-```text
-Candidate
-  ├─ defensive/negated context? ──> suppress or downgrade
-  ├─ validated/allowlisted?      ──> suppress relation
-  ├─ outside relevant field?     ──> not this property
-  └─ relation complete?          ──> finding
-```
-
-Das verbessert Erklärbarkeit: Der Scanner kann nicht nur sagen, warum er anschlägt, sondern auch, **welche Bedingung einen ähnlichen sicheren Fall unterscheidet**.
-
-## 7. Evidence Chain: Warum der Treffer nachvollziehbar sein muss
-
-Für Obfuscation sollte ein Finding mindestens diese Nachweise verbinden:
-
-```text
-Fundstelle
-  ↓
-parser-/analyzer-spezifische Beobachtung
-  ↓
-Security-Relation: CONCEALED_REPRESENTATION -> DECODE/DEOBFUSCATE -> SECURITY_RELEVANT_SINK
-  ↓
-Scope-/Guard-Entscheidung
-  ↓
-potenzielle Wirkung
-```
-
-Eine geeignete interne Repräsentation könnte so aussehen:
+A compact machine-readable evidence record can retain the essentials without pretending to encode the entire analysis:
 
 ```yaml
-finding:
-  property: obfuscation
-  rule_ids: ["SKIL-OBF-001", "SKIL-UNI-001", "SKIL-UNI-003"]
-  evidence:
-    raw_location: true
-    structured_relation: true
-    context_resolution: true
-  coverage:
-    status: "verified-or-bounded"
-    runtime_dependencies_documented: true
-  decision:
-    scanner_positive: true
+property_order: 44
+property: "obfuscation-in-agentic-skills"
+controls: "SKIL-OBF-001, SKIL-UNI-001, SKIL-UNI-003"
+mechanism: "decoded-content/concealment heuristics + execution composition"
+security_relation: "CONCEALED_REPRESENTATION -> DECODE/DEOBFUSCATE -> SECURITY_RELEVANT_SINK"
+coverage: "FULL for core patterns"
+evidence:
+  raw_location: true
+  structured_observation: true
+  context_resolved: true
+  safe_countercase_tested: true
 ```
 
-<Warning>
-Ein Finding darf keine Sicherheit vortäuschen, die der Analyzer nicht besitzt. Wenn ein Ziel, ein Call, ein Contract oder eine semantische Relation zur Laufzeit unaufgelöst bleibt, ist `runtime_dependent`, `provider_backed`, `partially_resolved` oder `not_observable` die korrektere Aussage als ein künstliches „safe“.
-</Warning>
+## False positives, ambiguity, and safe counterexamples
 
-## 8. Mechanismus im Hintergrund: Aufbau und Designprinzipien
+Common benign sources include embedded images, test vectors, hashes, certificates and compact serialized data. File type, size, sink and transformation chain should all contribute to the decision; entropy alone is too weak for a high-severity finding.
 
-Die Detektion folgt fünf allgemeinen Prinzipien:
+Static analysis has an epistemic boundary: it can only reason about the representation it sees. Dynamic DNS, runtime-generated code, reflection, remote configuration, credential brokers and policy decisions may exist outside that view. The correct result vocabulary therefore includes states such as `verified`, `partially_resolved`, `provider_backed`, `runtime_dependent`, and `not_observable`. This is not bureaucratic metadata; it prevents a consumer from interpreting an absent finding as proof that no risk exists.
 
-### 8.1 Deterministische Evidenz vor semantischer Vermutung
+## Composition with AST, taint, and YARA
 
-AST, strukturierte Manifestfelder, Codepoints, Versionen, Pfade und Source→Sink-Flows sind reproduzierbare Evidenz. Freie Sprache ist dagegen probabilistischer. Semantische Provider sollten deterministische Evidence **ergänzen**, nicht verdecken.
+Do not permit an agent to execute arbitrary decoded payloads. Separate retrieval, decoding, verification and execution into distinct policy checkpoints, and preserve hashes of every intermediate artifact for audit.
 
-### 8.2 Parser vor Regex, wenn Syntax existiert
+Defense in depth is intentionally redundant. Authoring lint, static analysis, contract verification, supply-chain verification, runtime policy and audit telemetry answer different questions. A strong result from one layer should never be used as a reason to remove the others.
 
-Wenn ein Artefakt eine formale Grammatik besitzt, ist ein Parser strukturell stärker: `exec(` in einem Kommentar ist nicht dasselbe wie ein `Call`-Knoten; `"*"` in einem Regex ist nicht dasselbe wie ein Wildcard-Permission-Feld.
+## Runtime gates around decoded content
 
-### 8.3 Context Guards sind Teil der Rule
+A serious regression suite needs paired examples. Each positive fixture should have a near-neighbor negative case, and each new false positive should become a permanent test. Where the property depends on identity or time, tests should also change the resolved artifact or metadata between review and execution. Where it depends on data flow, fixtures should exercise aliases, wrappers and valid sanitizers. For **Obfuscation in Agentic Skills**, the most valuable tests are those that preserve the surface appearance while changing the underlying security relation; that is how the suite verifies semantics instead of vocabulary.
 
-Eine Security Rule besteht konzeptionell aus:
+For `skil`, implementation claims should be checked against the repository’s control matrix, external-control crosswalk, analyzer tests and any provider-specific tests. Provider-backed coverage—such as OSV or external rule packs—must state whether the provider actually ran.
 
-```text
-positive evidence
-+ scope constraints
-+ negative evidence / safe context
-+ decision rule
-```
+## Architecture drill-down: from finding to enforceable boundary
 
-Ohne den dritten Teil werden Security-Dokumentation, Tests und sichere Gegenregeln regelmäßig zu False Positives.
+For **Obfuscation in Agentic Skills**, think in terms of a chain of custody for security meaning. The artifact creates an observation, decoded-content/concealment heuristics + execution composition converts that observation into a structured fact, contract or policy logic interprets the fact, and runtime enforcement decides whether the operation can proceed. Each handoff can lose context. The relation `CONCEALED_REPRESENTATION -> DECODE/DEOBFUSCATE -> SECURITY_RELEVANT_SINK` should therefore be represented explicitly in evidence rather than reconstructed from a human-readable message after the fact. Reviewers should inspect whether normalization is reversible for forensics, whether identity is immutable between review and use, whether policy is scoped to the task, and whether provider failures are visible. This turns a static finding into an assurance argument that can survive deployment changes.
 
-### 8.4 Composition erst nach Einzelbefund
+The paired fixtures also serve as an architectural regression test. The unsafe example begins with `exec(base64.b64decode(encoded_payload))` while the safe example begins with `logo_bytes = base64.b64decode(embedded_png)`. The important difference is the security relation, not the cosmetic text. If a refactor causes both to produce the same result, the detector or policy has lost a meaningful distinction.
 
-Die Property sollte mit benachbarten Findings nur dann zu einer höheren Severity komponiert werden, wenn ein gemeinsamer Daten-, Kontroll- oder Trust-Pfad nachweisbar ist.
+## Common implementation traps
 
-### 8.5 Coverage ist ein First-Class-Result
+Several implementation mistakes recur around **Obfuscation in Agentic Skills**, even when the high-level policy is correct:
 
-Das System sollte mindestens zwischen folgenden Zuständen unterscheiden:
+**1. Treating strings as equivalent to syntax.** Comments, literals and generated text can contain dangerous-looking tokens without being executable, while benign-looking wrappers can hide a real interpreter boundary. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
 
-```text
-verified
-partially_resolved
-provider_backed
-runtime_dependent
-semantic_only
-not_observable
-```
+**2. Conflating detection with remediation.** Quoting, normalization or encoding changes are not universally valid sanitizers; the guard must be proven appropriate for the specific sink and language semantics. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
 
-Damit bleibt sichtbar, **was** der Scanner tatsächlich gemessen hat.
+**3. Dropping derived-artifact provenance.** If a decoder, parser or data-flow pass produces a second representation, reviewers need to know exactly which original bytes and transformation produced it. The remediation should be encoded in tests or runtime policy so the same mistake cannot quietly return in a later refactor.
 
-## 9. Wissenschaftliche Validierung des Detektors
+A useful review discipline is to turn every exception into a scoped, expiring artifact with an owner and rationale. Permanent blanket suppressions hide whether the architecture improved; narrow exceptions preserve the signal and make technical debt measurable.
 
-Für eine belastbare Evaluation reichen einzelne Demo-Files nicht. Pro Property sollte die Testsuite mindestens enthalten:
+## How this property composes with adjacent findings
 
-| Testklasse | Zweck |
-| --- | --- |
-| True Positive Fixtures | kanonische Verletzungen der Property |
-| True Negative Fixtures | legitime Gegenfälle mit ähnlichen Tokens/Syntaxen |
-| Adversarial Paraphrases | Recall gegen Oberflächenvariation |
-| Boundary Cases | minimale Änderung zwischen positiv und negativ |
-| Differential Tests | Vergleich mit unabhängigen Referenzimplementierungen |
-| Holdout Fixtures | Schutz gegen Überanpassung an bekannte Tests |
-| Mutation Tests | systematische Änderung von Negation, Scope, Pfad, Sink oder Version |
+**Obfuscation plus downstream behavior.** Concealment should raise severity when the decoded representation contains execution, persistence, secret access, or network transfer. This is why deobfuscation should emit a derived artifact that can be rescanned by other analyzers. The composition graph should retain the transformation edge so reviewers can trace the behavior back to the original opaque bytes.
 
-Für sprachliche Properties sind Precision/Recall und Error Taxonomy sinnvoll. Für AST-/Taint-/Schema-Properties kann zusätzlich die **strukturelle Coverage** gemessen werden: Welche Source-, Sink-, Call-, Manifest- oder Codepoint-Klassen unterstützt der Analyzer tatsächlich?
+This composition model is deliberately graph-like: each detector contributes a typed fact and shared evidence identifiers allow a higher-level policy engine to connect them. That prevents one rule from becoming an overloaded catch-all and makes severity escalation explainable.
 
-## 10. Grenzen der Erkennung
+## Operational signals and measurable assurance
 
-Custom encodings und encrypted payloads können semantisch opaque bleiben. Detection signalisiert Verdacht; Sandbox/Runtime kann zusätzliche Evidence liefern.
+Track decode depth, decoded-byte volume, timeout/size-limit events, the percentage of opaque candidates that lead to a sensitive sink, and false positives by file type. This helps distinguish useful semantic recovery from noisy entropy heuristics.
 
-Generell gelten drei Grenzen:
+Metrics should be tied to an explicit denominator and deployment profile. A low finding count may mean strong controls, weak coverage, or simply little exposure; telemetry and coverage state are needed to tell those cases apart. Trend the data over time and review unexpected changes in both positive findings and scanner-negative regression behavior.
 
-1. **Static visibility:** Laufzeitwerte, DNS, Reflection, dynamische Downloads oder externe Policies können fehlen.
-2. **Semantic ambiguity:** Zweck, Legitimität und manche Trust-Entscheidungen sind nicht vollständig aus Syntax ableitbar.
-3. **Authority mismatch:** Ein gefährlicher Text kann technisch machtlos sein; ein harmlos formulierter Skill kann durch Runtime-Konfiguration enorme Authority erhalten.
+## Engineering implications beyond the scanner
 
-Deshalb ist die Zielgröße nicht „malicious / benign“, sondern eine nachvollziehbare Aussage über **Property, Evidence, Coverage und mögliche Wirkung**.
+Code-oriented properties benefit from a two-stage architecture: parser or byte-level analyzers first produce deterministic facts, then a composition layer connects those facts to data flow, execution or supply-chain context. This keeps the core detector reproducible and makes semantic enrichment optional rather than authoritative. When code is generated or fetched dynamically, the runtime should rescan the materialized artifact before execution instead of assuming the build-time scan still describes it.
 
-## 11. Technische Controls und Remediation
+The broader lesson is that an agentic skill is simultaneously text, code, configuration, a tool contract and a supply-chain artifact. Security review should follow the boundary that is actually crossed—data, authority, identity, execution, or control-plane visibility—rather than forcing every risk into the same detection template.
 
-- decode safely with limits
-- compose with AST/Taint/YARA
-- archive/encoded content size limits
-- preserve provenance
+## Testing deobfuscation coverage
 
-Defense in Depth bleibt zentral:
+A reviewer should be able to answer four questions before accepting this property as controlled:
 
-```text
-Authoring lint
-    +
-static scan
-    +
-contract verification
-    +
-supply-chain verification
-    +
-runtime policy
-    +
-audit / telemetry
-```
+1. **What exact security relation is being asserted?** Here it is `CONCEALED_REPRESENTATION -> DECODE/DEOBFUSCATE -> SECURITY_RELEVANT_SINK`.
+2. **What concrete evidence supports the relation?** The evidence must come from decoded-content/concealment heuristics + execution composition, not from a keyword alone.
+3. **What near-neighbor safe case has been tested?** The paired negative fixture should differ in the property, not merely in spelling.
+4. **What remains outside static visibility?** Runtime identity, dynamic values, provider state and policy decisions must be named explicitly.
 
-Kein einzelner Layer ersetzt die anderen.
+## Implementation evidence in `skil`
 
-## 12. Einordnung in DevSecOps
+- [Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – native control identifiers and scanner-positive/scanner-negative coverage.
+- [External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – property-level equivalence and coverage states.
+- [External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – implementation differences, mechanisms, and documented gaps.
 
-Die Property sollte an mehreren Punkten des Lifecycles geprüft werden:
-
-1. **Authoring:** schneller lokaler Scan und IDE-/pre-commit Feedback.
-2. **Pull/Merge Request:** reproduzierbarer Scan mit diff-basierter Evidence.
-3. **Registry/Katalog:** Scan des veröffentlichten, digest-adressierten Artefakts.
-4. **Installation:** Verification gegen Capability Contract, Lockfiles und Provenance.
-5. **Runtime:** technische Enforcement-Schicht für Netzwerk, Filesystem, Tools, Secrets, Approval und Ressourcen.
-6. **Change Detection:** erneute Bewertung, wenn Tool-Metadaten, Dependencies, Runtime Policy oder Identitäten wechseln.
-
-Damit wird verhindert, dass eine saubere statische Analyse auf Artefakt A durchgeführt wird, während später Artefakt B oder eine breitere Runtime-Konfiguration tatsächlich ausgeführt wird.
-
-## 13. Implementierungsnachweise in `skil`
-
-- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – definiert scanner-positive/scanner-negative Control Coverage und die nativen `SKIL-*` Controls.
-- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – dokumentiert property-level Äquivalenz, Analyzer und Coverage-State.
-- [`docs/external-scanner-feature-parity.md`](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – beschreibt Detektionslogik, Lücken und Unterschiede der Mechanismen.
-- [`internal/analyzer/unicode.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/unicode.go) – Implementierungsquelle für `unicode`.
-- [`internal/analyzer/rules.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/rules.go) – Implementierungsquelle für `rules`.
-- [`internal/analyzer/taint.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/taint.go) – Implementierungsquelle für `taint`.
-
-## 14. Standards, Forschung und Referenzen
+## Standards, research, and references
 
 1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
 2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
@@ -351,14 +177,6 @@ Damit wird verhindert, dass eine saubere statische Analyse auf Artefakt A durchg
 6. [MITRE CWE-94 – Improper Control of Generation of Code](https://cwe.mitre.org/data/definitions/94.html)
 7. [SLSA – Specification v1.2](https://slsa.dev/spec/v1.2/)
 
-## Fazit
+## Conclusion
 
-**Obfuscation** ist als Security Property dann nützlich, wenn sie nicht als Checklistenwort, sondern als **überprüfbare Relation** implementiert wird. Für `skil` bedeutet das: decoded-content/concealment heuristics + execution composition, klar ausgewiesene Coverage, reproduzierbare Evidence und scanner-negative Gegenfälle mit ähnlicher Oberfläche.
-
-Die entscheidende Review-Frage lautet deshalb nicht:
-
-> „Kommt ein verdächtiges Wort vor?“
-
-sondern:
-
-> **Welche Sicherheitsannahme wird verletzt, welche Evidence belegt genau diese Relation, welcher sichere Gegenfall wurde ausgeschlossen und welche Teile der Aussage sind statisch tatsächlich beobachtbar?**
+**Obfuscation in Agentic Skills** is valuable only when it is treated as a falsifiable security property rather than a checklist term. The goal is not to declare an entire skill “malicious” or “safe.” The goal is to state what boundary may be crossed, show the evidence that supports that statement, preserve the coverage limits, and make the safe countercondition explicit. That produces findings engineers can test, reviewers can reproduce, and runtime policy can enforce.

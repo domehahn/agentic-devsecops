@@ -1,0 +1,420 @@
+---
+title: "Missing Resource Bounds: Why Agent Autonomy Needs a Budget"
+description: "An in-depth essay on unbounded agent execution: timeouts, retries, token and cost budgets, recursion limits, static analysis, runtime enforcement, and resilient failure semantics."
+date: "2026-07-30"
+author: "dome"
+topics:
+  - agentic-engineering
+  - devsecops
+tags:
+  - Security Property
+  - Resource Bounds
+  - Agentic Security
+  - Reliability
+featured: false
+draft: false
+series:
+  slug: agentic-skill-security-properties
+  title: "Security Properties for Agentic Skills"
+  order: 22
+---
+
+An autonomous agent is not only a reasoning system. It is also a **resource consumer**. Every model call consumes tokens and accelerator time; every tool call can consume CPU, memory, I/O, rate-limit quota, money, database connections, and human attention. Once the agent is allowed to loop, retry, delegate, or wait for external events, the security question becomes inseparable from reliability engineering.
+
+This is the core of the **Missing Resource Bounds** property.
+
+The protected invariant is straightforward to state:
+
+```text
+RESOURCE_CONSUMPTION ∧ LIMIT(timeout|rate|budget|retries)=ABSENT_OR_DISABLED
+```
+
+The implementation challenge is not straightforward at all. Bounds can exist at several layers, and the absence of one literal `timeout=` parameter does not necessarily mean the system is unbounded. Kubernetes may kill the workload. An API gateway may enforce a request deadline. The agent runtime may cap tokens globally. Conversely, code can contain a nominal timeout while still retrying forever.
+
+`skil` therefore treats `SKIL-AGENCY-BOUNDS` as a property with **partial static visibility**: strong when an artifact explicitly requests unlimited behavior or hard-codes an obviously unbounded loop, but necessarily incomplete for resource policies enforced elsewhere.
+
+<Architecture>
+goal
+ │
+ ▼
+planner ──► model call ──► tool call ──► observation
+ ▲                                   │
+ └──────────── retry / replan ◄──────┘
+          │
+          ├─ wall-clock deadline
+          ├─ model/token budget
+          ├─ tool-call budget
+          ├─ retry/backoff policy
+          ├─ concurrency ceiling
+          └─ monetary / quota budget
+</Architecture>
+
+## The security problem hides inside a control loop
+
+Consider the source-positive example:
+
+```python
+while True:
+    call_model_without_budget()
+```
+
+The problem is not Python’s `while` keyword. There are valid daemons and event loops that run indefinitely. The security concern comes from the combination of:
+
+- repeated expensive or side-effectful work,
+- no visible termination condition,
+- no budget accounting,
+- and no external lifecycle boundary represented in the artifact.
+
+That is enough to create a high-value candidate for review.
+
+The source-negative example illustrates the opposite design:
+
+```python
+for _ in range(3):
+    result = call_model(timeout=15)
+    if result.ok:
+        break
+```
+
+This code establishes two different controls: a **per-attempt deadline** and a **retry bound**. In production one would still want global cost and wall-clock limits, but the local loop already expresses a fundamentally safer execution model.
+
+## Why “timeout” is too small a concept
+
+Resource safety in agentic systems is multidimensional. A robust architecture distinguishes at least six budgets.
+
+### Wall-clock budget
+
+A run that lasts indefinitely can retain locks, sessions, credentials, temporary data, and compute allocations. Deadlines should normally propagate through nested calls rather than being reset at every layer.
+
+### Model-compute budget
+
+Reasoning models may deliberately spend more test-time compute on hard tasks. That makes a token or inference budget a first-class control, not merely a billing concern. “Try harder” must not mean “consume indefinitely.”
+
+### Tool-call budget
+
+A bounded number of model tokens does not bound API side effects. A short plan can trigger thousands of object reads, queue messages, or repository operations unless tool invocation is metered separately.
+
+### Retry budget
+
+Retries are a common amplification mechanism. If a child call retries three times and its parent also retries three times, an apparently small policy can multiply into nine calls. Nested agents can magnify that again.
+
+### Concurrency budget
+
+An orchestrator that fans out work to many workers may respect per-worker limits while violating global capacity. The budget therefore needs a hierarchy:
+
+```text
+organization
+  └─ tenant
+      └─ workflow
+          └─ agent
+              └─ tool
+```
+
+### Monetary and quota budget
+
+A run may stay within CPU and time limits while exhausting a paid API quota. Cost is therefore a legitimate security and availability dimension.
+
+## Failure amplification: why agents need global rather than local limits
+
+Traditional application code often handles one request at a time. Agentic code composes loops:
+
+```text
+planner retries
+   ×
+worker retries
+   ×
+tool retries
+   ×
+provider retries
+```
+
+If each layer chooses a limit of five without coordination, the theoretical number of attempts can grow rapidly. Backoff reduces load but does not solve the absence of a global ceiling.
+
+The safer model is a **budget ledger**. Every operation debits from shared state:
+
+```yaml
+budget:
+  deadline_at: 2026-08-24T15:30:00Z
+  model_tokens_remaining: 24000
+  tool_calls_remaining: 40
+  parallel_workers_remaining: 4
+  estimated_cost_remaining_usd: 2.50
+```
+
+A child agent receives an attenuated sub-budget rather than a fresh unlimited allowance.
+
+## Static detection: what can actually be proven?
+
+Static analysis can identify useful signals:
+
+- `while True` loops around model/tool calls;
+- recursion without visible depth limits;
+- retry settings such as `retries: -1`, `unlimited`, or `null`;
+- output settings with no maximum;
+- high fan-out constants;
+- explicit instructions such as “continue until success no matter how long it takes”;
+- disabled request timeouts;
+- queue consumers with no task/run boundary.
+
+But a static scanner cannot know all effective runtime policies. A container may have `activeDeadlineSeconds`; a serverless runtime may enforce its own ceiling; an upstream gateway may terminate requests; billing controls may reject further calls.
+
+The finding should therefore separate **evidence** from **coverage**:
+
+```yaml
+property: missing-resource-bounds
+control: SKIL-AGENCY-BOUNDS
+evidence:
+  loop: unbounded
+  model_call_inside_loop: true
+  local_timeout: absent
+coverage:
+  local_code: verified
+  orchestration_policy: not_observable
+  infrastructure_limits: not_observable
+confidence: medium
+```
+
+This is more useful than pretending that static analysis has proven an operational outage.
+
+## A bounded system can still be unsafe
+
+A common mistake is to treat any numeric limit as sufficient.
+
+```python
+for _ in range(1_000_000):
+    call_model(timeout=3600)
+```
+
+Technically bounded, operationally absurd.
+
+Bounds need to be **proportionate to the task and resource class**. A better design uses policy ceilings and task-specific allocations. Security review should ask whether the limit is meaningfully protective, not just syntactically finite.
+
+The same applies to output size. A one-million-token maximum is a limit but may still create denial-of-wallet risk, downstream parser pressure, and storage amplification.
+
+## Backoff, cancellation, and circuit breaking
+
+Good resource governance includes more than ceilings.
+
+**Backoff** reduces repeated pressure when a provider or dependency is failing.  
+**Jitter** prevents synchronized retry storms across many agents.  
+**Cancellation propagation** ensures that child operations stop when the parent run is abandoned.  
+**Circuit breakers** prevent the agent from repeatedly hitting a dependency that is already known to be unhealthy.  
+**Idempotency keys** prevent retries from duplicating side effects.
+
+These mechanisms interact. A retry policy without idempotency can turn a transient timeout into duplicate deployments or repeated purchases. A timeout without cancellation can leave abandoned work running in the background.
+
+## Resource bounds and adversarial input
+
+The property is not only about programming mistakes. An attacker may intentionally create tasks that are expensive to resolve:
+
+- inputs that trigger very large retrieval sets;
+- instructions that induce repeated self-critique;
+- documents that cause tool fan-out;
+- dependency graphs with extreme breadth;
+- or prompts that ask the agent never to stop until an impossible condition is satisfied.
+
+OWASP’s “Unbounded Consumption” framing is useful here because it moves the issue from mere performance into abuse resistance. The defensive system should ensure that user-controlled complexity cannot directly set resource ceilings.
+
+## How to test `SKIL-AGENCY-BOUNDS`
+
+A high-quality rule suite should contain more than one positive and one negative fixture.
+
+Positive families should include:
+
+- explicit unlimited intent;
+- unbounded loop plus expensive sink;
+- retry count disabled;
+- recursive agent delegation without depth limit;
+- unlimited output;
+- worker fan-out derived from untrusted input.
+
+Negative families should include:
+
+- infinite event loops with external lifecycle control clearly declared;
+- bounded retries with timeouts;
+- queues where each task has a deadline;
+- code that mentions “unlimited” only in documentation explaining that it is forbidden;
+- tests that intentionally simulate an infinite loop inside a harness.
+
+The purpose of these negative fixtures is to prevent the control from degenerating into a lexical rule.
+
+## Runtime enforcement is the real safety boundary
+
+Static findings are preventive evidence. Runtime accounting is the hard control.
+
+A production agent runtime should ideally enforce:
+
+```text
+run starts
+   │
+   ├── reserve budget
+   │
+   ├── propagate deadline/cancellation token
+   │
+   ├── meter model and tool usage
+   │
+   ├── refuse operations that exceed remaining allowance
+   │
+   └── emit final usage evidence
+```
+
+Crucially, the agent should not be able to increase its own budget merely by asking for more. Budget expansion is an **authority change** and should be handled like any other privilege elevation.
+
+## Observability: budgets need evidence
+
+An operator should be able to answer after a run:
+
+- How many model calls occurred?
+- How many tokens were consumed?
+- How many tool calls were attempted and completed?
+- Which retry layer produced the largest amplification?
+- What was the maximum concurrency?
+- Why did the run terminate?
+- Was it stopped by success, a user cancellation, a deadline, a budget, or an infrastructure failure?
+
+Without this telemetry, resource bounds exist as configuration but not as an auditable security mechanism.
+
+## Deep dive: deadlines, leases, and hierarchical budgets
+
+Timeouts are frequently implemented as local durations:
+
+```python
+call_model(timeout=30)
+```
+
+A more robust distributed-system model uses an **absolute deadline** propagated through the call graph.
+
+Why? Imagine a workflow with five nested stages, each allowed to wait 30 seconds. A user who expected a 30-second workflow may wait 150 seconds. If every child receives the parent’s absolute deadline instead, remaining time naturally shrinks:
+
+```text
+workflow deadline = 12:00:30
+stage A starts 12:00:00 -> 30 s remain
+stage B starts 12:00:12 -> 18 s remain
+stage C starts 12:00:25 -> 5 s remain
+```
+
+The same principle can be applied to token and cost budgets.
+
+### Hierarchical budget allocation
+
+An orchestrator should not grant every worker the full parent budget.
+
+If a workflow has 50,000 tokens available and spawns ten workers, handing each worker 50,000 tokens creates a theoretical 500,000-token exposure.
+
+A safer model allocates sub-budgets:
+
+```text
+workflow: 50,000
+├─ planner: 8,000
+├─ worker A: 10,000
+├─ worker B: 10,000
+├─ verifier: 8,000
+└─ reserve: 14,000
+```
+
+Unused budget can return to the parent. Budget transfer becomes explicit accounting rather than hidden multiplication.
+
+### Leases for side-effectful resources
+
+Some resources should be leased rather than merely counted.
+
+An agent may create:
+
+- a temporary cloud VM;
+- a database lock;
+- a test environment;
+- a preview deployment;
+- or a background job.
+
+A lease defines:
+
+```text
+owner
+resource
+expiration
+renewal authority
+cleanup action
+```
+
+If the agent crashes or loses context, the external controller can still reclaim the resource.
+
+### Worst-case reasoning
+
+A static analyzer can estimate upper bounds when loops and constants are visible:
+
+```text
+max_iterations × calls_per_iteration × max_cost_per_call
+```
+
+For nested delegation:
+
+```text
+max_fanout^max_depth
+```
+
+Even rough worst-case estimates are valuable. They expose configurations where a “small” retry or fan-out choice produces explosive growth.
+
+### Resource bounds as a service-level contract
+
+Security review should connect bounds to operational SLOs:
+
+```text
+p99 workflow latency < 2 minutes
+max cost per run < $3
+max concurrent tool calls per tenant = 10
+max deployment attempts = 2
+```
+
+These are measurable invariants.
+
+A scanner finding can then point not merely to “missing timeout” but to the absence of a control required to enforce a declared SLO.
+
+## Failure semantics: bounded does not mean correct
+
+When a budget is exhausted, the agent needs a defined outcome.
+
+Bad failure semantics:
+
+```text
+budget exceeded -> silently continue with a cheaper unsafe shortcut
+```
+
+Better:
+
+```text
+budget exceeded
+→ stop new side effects
+→ preserve partial evidence
+→ mark workflow incomplete
+→ release leases
+→ request explicit continuation if appropriate
+```
+
+The budget boundary should reduce authority, not trigger uncontrolled fallback behavior.
+
+For high-impact tasks, partial success can be more dangerous than explicit failure. A deployment agent that completed three of five steps must not simply return “done” because its token limit was reached.
+
+This is why resource governance belongs in the execution protocol, not only in billing dashboards.
+
+## Final perspective
+
+Missing resource bounds are a good example of why agentic security overlaps with SRE, FinOps, and distributed-systems design. A model can be perfectly aligned and still bankrupt a quota, saturate an API, or occupy a worker forever.
+
+`SKIL-AGENCY-BOUNDS` is therefore most valuable when its finding is interpreted correctly: it is evidence that the artifact does not visibly contain enough constraints—not proof that no outer constraint exists.
+
+The governing question is:
+
+> **What is the maximum amount of time, compute, money, concurrency, and side-effect activity this agent can consume before a mechanism outside the model forcibly stops it?**
+
+If the answer is “we trust it to stop itself,” the system does not have a resource boundary.
+
+## References
+
+1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
+4. [OWASP GenAI – LLM10:2025 Unbounded Consumption](https://genai.owasp.org/llmrisk/llm102025-unbounded-consumption/)
+5. [MITRE CWE-400 – Uncontrolled Resource Consumption](https://cwe.mitre.org/data/definitions/400.html)
+6. [NIST AI 100-1 – Artificial Intelligence Risk Management Framework (AI RMF 1.0), 2023](https://doi.org/10.6028/NIST.AI.100-1)
+7. [OWASP – Top 10 for Agentic Applications for 2026](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)
+8. [NIST AI 600-1 – Artificial Intelligence Risk Management Framework: Generative AI Profile, 2024](https://doi.org/10.6028/NIST.AI.600-1)

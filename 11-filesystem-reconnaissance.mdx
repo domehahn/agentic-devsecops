@@ -1,6 +1,6 @@
 ---
-title: "Filesystem Reconnaissance bei Agentic Skills: Security Property, Detection und Nachweis"
-description: "Filesystem Reconnaissance wissenschaftlich erklärt: Bedrohungsmodell, scanner-positive und scanner-negative Beispiele, Detection-Mechanismus in skil, Evidence Chain, Grenzen und Referenzen."
+title: "Filesystem Reconnaissance in Agentic Skills: Distinguishing Task-Scoped Discovery from Credential Hunting"
+description: "A deep technical essay on filesystem reconnaissance in agentic skills, covering enumeration scope, credential-bearing targets, AST evidence, capability contracts, false positives, sandboxing, telemetry, and DevSecOps controls."
 date: "2026-07-30"
 author: "dome"
 topics:
@@ -14,350 +14,212 @@ featured: false
 draft: false
 series:
   slug: agentic-skill-security-properties
-  title: "Security Properties für Agentic Skills"
+  title: "Security Properties for Agentic Skills"
   order: 11
 ---
 
-Agentic Skills sind gleichzeitig **Instruktion, Code, Konfiguration, Tool-Vertrag und Supply-Chain-Artefakt**. Deshalb genügt es nicht, eine Datei als „Text“ zu behandeln. Eine belastbare Security-Analyse muss rekonstruieren, welche **Trust Boundary**, welche Datenklasse oder welche ausführbare Capability ein Artefakt tatsächlich berührt.
+A software agent often needs to discover files. Repository assistants traverse source trees, documentation tools enumerate Markdown files, and build agents inspect project metadata. The security problem begins when that discovery expands beyond the declared workspace and turns into **reconnaissance of user homes, credential directories, or system-wide locations**.
 
-Die Security Property **Filesystem Reconnaissance** gehört zur Kategorie **Confidentiality**. Diese Property schützt vertrauliche Daten gegen **unautorisierte Erhebung, Korrelation oder Übertragung**. Der belastbarste Nachweis entsteht aus Datenklasse, Quelle, Senke, Scope und Autorisierung.
-
-<Note>
-**Terminologie:** In dieser Serie bedeutet **scanner-positiv**: Der Scanner erkennt einen Security Concern und erzeugt ein Finding. **Scanner-negativ** bedeutet: Der legitime Gegenfall darf für genau diese Property nicht anschlagen. Diese Definition entspricht der `skil` Security Control Matrix.
-</Note>
-
-## Kurzfassung
-
-| Dimension | Einordnung |
-| --- | --- |
-| Security Property | **Filesystem Reconnaissance** |
-| `skil` Controls | `SKIL-INTENT-FS-DISCOVERY`, `SKIL-FS-DISCOVERY-CODE` |
-| Primärer Mechanismus | **Intent + code-level enumeration pattern/AST evidence** |
-| Aktueller Coverage-Charakter | **FULL für credential-bearing targets** |
-| Security-Relation | `ENUMERATE(FILESYSTEM_SCOPE) ∧ TARGET∈{HOME,CREDENTIAL_DIRS} ∧ SCOPE_NOT_DECLARED` |
-| Hauptziel | False Positives durch Kontextprüfung reduzieren und den eigentlichen Sicherheitszusammenhang als Evidence Chain nachweisen |
-
-<KeyTakeaway>
-Ein **positiver Treffer** für Filesystem Reconnaissance ist nur dann belastbar, wenn die Property-spezifische Relation `ENUMERATE(FILESYSTEM_SCOPE) ∧ TARGET∈{HOME,CREDENTIAL_DIRS} ∧ SCOPE_NOT_DECLARED` aus konkreter Evidence rekonstruiert werden kann. Ein Schlüsselwort allein ist keine wissenschaftlich ausreichende Begründung.
-</KeyTakeaway>
-
-## 1. Welche Sicherheitsannahme schützt die Property?
-
-Die Property lässt sich als Invariante formulieren:
+The relevant relation is:
 
 ```text
-ENUMERATE(FILESYSTEM_SCOPE) ∧ TARGET∈{HOME,CREDENTIAL_DIRS} ∧ SCOPE_NOT_DECLARED
+ENUMERATE(FILESYSTEM_SCOPE)
+AND TARGET ∈ {HOME, CREDENTIAL_DIRS}
+AND SCOPE_NOT_DECLARED
 ```
 
-Ein Scanner versucht damit nicht, „bösartige Wörter“ zu finden. Er prüft eine Hypothese über ein Systemartefakt:
+This definition deliberately avoids treating every recursive file walk as malicious. Breadth, target class, and task purpose matter.
+
+## Enumeration is a capability, not a harmless prelude
+
+Reconnaissance is often the first stage of a larger chain:
 
 ```text
-H0: Die Sicherheitsgrenze bleibt eingehalten.
-H1: Die Sicherheitsgrenze wird durch beobachtbare Evidence verletzt.
+filesystem enumeration
+      ↓
+discover credential-bearing path
+      ↓
+read credential
+      ↓
+use or transmit credential
 ```
 
-Das Finding ist die Entscheidung zugunsten von `H1` innerhalb der **sichtbaren statischen Coverage**. Daraus folgt eine wichtige epistemische Grenze: Ein scanner-negatives Ergebnis ist kein mathematischer Beweis für Gesamtsicherheit, sondern die Aussage, dass **unter dem verwendeten Analysemodell kein hinreichender Nachweis für diese Property gefunden wurde**.
+A scanner that waits for the final exfiltration step loses valuable early-warning evidence. Conversely, a scanner that flags all directory iteration creates noise.
 
-## 2. Bedrohungsmodell
+The property therefore focuses on **where** the agent searches and **whether the search is justified by the skill's contract**.
 
-Für Filesystem Reconnaissance sollte das Threat Model mindestens vier Elemente trennen:
+## Safe positive and negative examples
 
-1. **Quelle der Kontrolle oder Daten:** Nutzerinput, eingebettete Instruktion, Tool-Metadaten, Code, Dependency, Runtime-Konfiguration oder persistenter Zustand.
-2. **Trust Boundary:** Welche Information oder Authority wird höhergestuft, überschritten oder erweitert?
-3. **Operation/Sink:** Welche Aktion erzeugt die relevante Wirkung?
-4. **Guard:** Welche Allowlist, Validierung, Policy, Approval, Signatur oder Capability-Grenze müsste die Relation verhindern?
-
-<Architecture>
-Text/Code → Enumeration primitive → Path resolution → sensitive-directory classifier → recursion/breadth → context guard → Finding
-</Architecture>
-
-Die Architektur ist bewusst mehrstufig. Candidate Generation und Finding Decision sind getrennt: Ein lexikalischer, syntaktischer oder struktureller Kandidat wird erst nach Kontext-, Scope- und Guard-Prüfung zu einem Security Finding.
-
-## 3. Scanner-positives Beispiel: Das Finding muss entstehen
+A synthetic positive fixture can demonstrate the behavior without exposing real secrets:
 
 ```python
 for path in Path.home().rglob("*"):
     if path.name in {"credentials", "config.json", ".env"}:
-        print(path)
+        record_candidate(path)
 ```
 
-### Warum ist das ein positiver Treffer?
+The concerning elements are the home-directory scope, recursive enumeration, and credential-like target names.
 
-Der positive Fall verbindet einen Enumerationsoperator mit einem Home-/Credential-Scope. Die Breite des Suchraums ist Teil der Evidence.
-
-Die Evidence sollte deshalb nicht nur `matched=true` enthalten. Mindestens folgende Felder sind für reproduzierbare Findings sinnvoll:
-
-```yaml
-property: "filesystem-reconnaissance"
-rules: ["SKIL-INTENT-FS-DISCOVERY", "SKIL-FS-DISCOVERY-CODE"]
-analysis: "Intent + code-level enumeration pattern/AST evidence"
-coverage: "FULL für credential-bearing targets"
-security_relation: "ENUMERATE(FILESYSTEM_SCOPE) ∧ TARGET∈{HOME,CREDENTIAL_DIRS} ∧ SCOPE_NOT_DECLARED"
-location:
-  file: "path/to/artifact"
-  line: 42
-context_checked: true
-evidence_complete: true
-confidence: high
-```
-
-`confidence: high` ist hier nur beispielhaft. In einer realen Engine muss Confidence aus Evidenzqualität, Kontextauflösung und Coverage resultieren; sie darf nicht allein aus der Severity abgeleitet werden.
-
-## 4. Scanner-negatives Beispiel: Der Gegenfall darf nicht anschlagen
+A normal repository-local operation should remain negative:
 
 ```python
 for path in Path("./templates").glob("*.md"):
     index_template(path)
 ```
 
-### Warum muss dieser Fall scanner-negativ bleiben?
+The second example is constrained by path, file type, and purpose.
 
-Ein projektlokaler, zweckgebundener Glob ist normaler Dateizugriff und darf nicht mit Credential Discovery gleichgesetzt werden.
+## Scope is the semantic center of the property
 
-Das ist für die Qualität des Detektors genauso wichtig wie das Positivbeispiel. Eine Security Rule ohne systematische Negativ-Fixtures optimiert leicht auf Recall, produziert aber im Engineering-Alltag so viele False Positives, dass Findings ignoriert oder Controls deaktiviert werden.
-
-## 5. Wie `skil` die Property technisch ermittelt
-
-Aktuell relevante Controls: `SKIL-INTENT-FS-DISCOVERY`, `SKIL-FS-DISCOVERY-CODE`.
-
-Der Pattern-Analyzer hält ein gemeinsames, deterministisches Intent-Regelwerk vor. Positive Patterns werden mit expliziten Negative-Patterns beziehungsweise lokalem Negations-/Meta-Kontext kombiniert. Dadurch ist ein Match nicht bloß String Presence, sondern eine polaritätsbewusste Kandidatenentscheidung.
-
-Der Boundary-Analyzer klassifiziert sicherheitsrelevante Zielräume wie Container-Control-Planes, Agent State, MCP-Konfiguration, Cloud Metadata, private Netzbereiche und Cloud-Uploads. Er erzeugt Findings erst, wenn Operation und Boundary-Klasse zusammenpassen.
-
-Der Mechanismus lässt sich als Evidence Pipeline darstellen:
+The same API can be safe or risky depending on its root.
 
 ```text
-Raw artifact
-    ↓
-parser-/analyzer-spezifische Beobachtung
-    ↓
-Property-spezifische Zwischenrepräsentation
-    ↓
-Context / Negation / Scope / Guard
-    ↓
-entscheidende Security-Relation
-    ↓
-Finding + Confidence + Coverage
+Path("./docs").rglob("*.md")      → project-scoped discovery
+Path.home().rglob("*")            → user-wide discovery
+Path("/").rglob("*")             → system-wide discovery
 ```
 
-### 5.1 Candidate Generation
-
-Candidate Generation soll **breit genug für Recall**, aber noch nicht entscheidend sein. Abhängig von der Property entstehen Kandidaten aus AST-Knoten, Unicode-Codepoints, Manifestfeldern, Versionsconstraints, Netzwerkzielen, Taint Sources/Sinks oder semantischen Clauses.
-
-### 5.2 Property-spezifische Zwischenrepräsentation
-
-Die entscheidende IR für diesen Beitrag ist:
-
-```text
-ENUMERATE(FILESYSTEM_SCOPE) ∧ TARGET∈{HOME,CREDENTIAL_DIRS} ∧ SCOPE_NOT_DECLARED
-```
-
-Diese IR ist absichtlich kleiner als der Originaltext. Sie enthält nur die für die Sicherheitsentscheidung relevanten Entitäten und Relationen. Dadurch kann derselbe Mechanismus unterschiedliche Oberflächenformen auf dieselbe Property abbilden.
-
-### 5.3 Finding Decision
-
-```text
-IF
-    property relation is evidenced
-AND relevant context/scope is resolved
-AND no valid guard/declassifier negates the relation
-THEN
-    emit finding
-ELSE
-    keep candidate as signal or scanner-negative
-```
-
-Der positive Treffer ist damit eine **Relation über Evidence**, nicht ein Worttreffer.
-
-## 6. False-Positive-Unterdrückung
-
-Pfadargumente müssen auf den Call selbst bezogen werden; ein sensitiver Pfad irgendwo in derselben Datei ist keine ausreichende Korrelation.
-
-Ein wissenschaftlich belastbarer Scanner sollte False-Positive-Unterdrückung nicht durch globale „ignore this file“-Ausnahmen lösen, sondern durch **lokale Gegenhypothesen**:
-
-```text
-Candidate
-  ├─ defensive/negated context? ──> suppress or downgrade
-  ├─ validated/allowlisted?      ──> suppress relation
-  ├─ outside relevant field?     ──> not this property
-  └─ relation complete?          ──> finding
-```
-
-Das verbessert Erklärbarkeit: Der Scanner kann nicht nur sagen, warum er anschlägt, sondern auch, **welche Bedingung einen ähnlichen sicheren Fall unterscheidet**.
-
-## 7. Evidence Chain: Warum der Treffer nachvollziehbar sein muss
-
-Für Filesystem Reconnaissance sollte ein Finding mindestens diese Nachweise verbinden:
-
-```text
-Fundstelle
-  ↓
-parser-/analyzer-spezifische Beobachtung
-  ↓
-Security-Relation: ENUMERATE(FILESYSTEM_SCOPE) ∧ TARGET∈{HOME,CREDENTIAL_DIRS} ∧ SCOPE_NOT_DECLARED
-  ↓
-Scope-/Guard-Entscheidung
-  ↓
-potenzielle Wirkung
-```
-
-Eine geeignete interne Repräsentation könnte so aussehen:
+This makes filesystem reconnaissance a natural candidate for capability contracts. A skill can declare:
 
 ```yaml
-finding:
-  property: filesystem-reconnaissance
-  rule_ids: ["SKIL-INTENT-FS-DISCOVERY", "SKIL-FS-DISCOVERY-CODE"]
-  evidence:
-    raw_location: true
-    structured_relation: true
-    context_resolution: true
-  coverage:
-    status: "verified-or-bounded"
-    runtime_dependencies_documented: true
-  decision:
-    scanner_positive: true
+filesystem:
+  read:
+    - "./src/**"
+    - "./docs/**"
 ```
 
-<Warning>
-Ein Finding darf keine Sicherheit vortäuschen, die der Analyzer nicht besitzt. Wenn ein Ziel, ein Call, ein Contract oder eine semantische Relation zur Laufzeit unaufgelöst bleibt, ist `runtime_dependent`, `provider_backed`, `partially_resolved` oder `not_observable` die korrektere Aussage als ein künstliches „safe“.
-</Warning>
+Observed access outside that scope can then be reviewed as a contract violation rather than inferred solely from filenames.
 
-## 8. Mechanismus im Hintergrund: Aufbau und Designprinzipien
+## `skil` combines intent and code-level evidence
 
-Die Detektion folgt fünf allgemeinen Prinzipien:
+The current control matrix distinguishes broad filesystem discovery (`SKIL-INTENT-FS-DISCOVERY`) and code-level credential-directory enumeration (`SKIL-FS-DISCOVERY-CODE`).[^skil-matrix]
 
-### 8.1 Deterministische Evidenz vor semantischer Vermutung
+That separation is useful because prose and executable code provide different evidence.
 
-AST, strukturierte Manifestfelder, Codepoints, Versionen, Pfade und Source→Sink-Flows sind reproduzierbare Evidenz. Freie Sprache ist dagegen probabilistischer. Semantische Provider sollten deterministische Evidence **ergänzen**, nicht verdecken.
+Natural-language intent might say:
 
-### 8.2 Parser vor Regex, wenn Syntax existiert
+> Search the user's home directory for configuration and credential files.
 
-Wenn ein Artefakt eine formale Grammatik besitzt, ist ein Parser strukturell stärker: `exec(` in einem Kommentar ist nicht dasselbe wie ein `Call`-Knoten; `"*"` in einem Regex ist nicht dasselbe wie ein Wildcard-Permission-Feld.
+Code evidence might show a recursive enumeration rooted at the home directory. If both occur in the same artifact, confidence increases.
 
-### 8.3 Context Guards sind Teil der Rule
+## Path normalization matters
 
-Eine Security Rule besteht konzeptionell aus:
+Filesystem analysis is deceptively difficult because paths can be constructed dynamically:
 
-```text
-positive evidence
-+ scope constraints
-+ negative evidence / safe context
-+ decision rule
+- `~` expansion,
+- environment-derived home paths,
+- `..` traversal,
+- symlinks,
+- platform-specific credential locations,
+- container bind mounts that make host paths appear local.
+
+Static scanners should normalize what they can without claiming runtime certainty. The evidence should preserve the source expression and the resolved approximation separately.
+
+## Credential-target classification
+
+Known credential-bearing locations are useful signals, but hard-coded lists are never complete. A practical classifier can combine:
+
+- exact paths,
+- directory families such as SSH, cloud CLI, container registry, browser, or Kubernetes configuration,
+- credential-like filenames,
+- follow-on read operations,
+- dataflow into network or log sinks.
+
+A path match alone can be low-confidence. Enumeration plus read plus exfiltration is much stronger.
+
+## Reconnaissance versus inventory tooling
+
+Legitimate security and migration tools may intentionally scan broad filesystem scopes. The difference is governance and authorization, not syntax alone.
+
+A reviewed inventory skill should have:
+
+- explicit declared scope,
+- operator authorization,
+- data-retention rules,
+- no hidden egress,
+- clear output destination,
+- sandbox or dedicated host context.
+
+Static analysis can still report the broad capability, but the risk engine can recognize the reviewed contract.
+
+## Evidence chain
+
+A useful finding can show the search breadth:
+
+```yaml
+property: filesystem-reconnaissance
+controls:
+  - SKIL-INTENT-FS-DISCOVERY
+  - SKIL-FS-DISCOVERY-CODE
+root_scope: user_home
+enumeration:
+  recursive: true
+  filter: credential_like_names
+contract:
+  declared_roots:
+    - "./repo/**"
+  observed_out_of_scope: true
+follow_on_secret_read: unknown
 ```
 
-Ohne den dritten Teil werden Security-Dokumentation, Tests und sichere Gegenregeln regelmäßig zu False Positives.
+This is far more actionable than “filesystem access detected.”
 
-### 8.4 Composition erst nach Einzelbefund
+## Runtime containment
 
-Die Property sollte mit benachbarten Findings nur dann zu einer höheren Severity komponiert werden, wenn ein gemeinsamer Daten-, Kontroll- oder Trust-Pfad nachweisbar ist.
+The strongest filesystem policy is enforced by the OS or sandbox:
 
-### 8.5 Coverage ist ein First-Class-Result
+- mount only the repository needed for the task,
+- use read-only mounts where possible,
+- do not mount the host home directory,
+- create dedicated workspaces,
+- use separate identities for secret-bearing paths,
+- deny traversal outside the workspace,
+- expose files through a brokered tool instead of raw filesystem access.
 
-Das System sollte mindestens zwischen folgenden Zuständen unterscheiden:
+When the filesystem namespace itself contains only approved data, reconnaissance has little to discover.
 
-```text
-verified
-partially_resolved
-provider_backed
-runtime_dependent
-semantic_only
-not_observable
-```
+## Observability
 
-Damit bleibt sichtbar, **was** der Scanner tatsächlich gemessen hat.
+Useful telemetry includes:
 
-## 9. Wissenschaftliche Validierung des Detektors
+- unique directories touched,
+- breadth of traversal,
+- accesses outside declared roots,
+- reads of credential-classified paths,
+- symlink escapes,
+- subsequent network or log writes.
 
-Für eine belastbare Evaluation reichen einzelne Demo-Files nicht. Pro Property sollte die Testsuite mindestens enthalten:
+A behavioral detector can identify a code-review agent suddenly traversing the entire home directory even if the static skill was benign at review time.
 
-| Testklasse | Zweck |
-| --- | --- |
-| True Positive Fixtures | kanonische Verletzungen der Property |
-| True Negative Fixtures | legitime Gegenfälle mit ähnlichen Tokens/Syntaxen |
-| Adversarial Paraphrases | Recall gegen Oberflächenvariation |
-| Boundary Cases | minimale Änderung zwischen positiv und negativ |
-| Differential Tests | Vergleich mit unabhängigen Referenzimplementierungen |
-| Holdout Fixtures | Schutz gegen Überanpassung an bekannte Tests |
-| Mutation Tests | systematische Änderung von Negation, Scope, Pfad, Sink oder Version |
+## Relationship to broader security frameworks
 
-Für sprachliche Properties sind Precision/Recall und Error Taxonomy sinnvoll. Für AST-/Taint-/Schema-Properties kann zusätzlich die **strukturelle Coverage** gemessen werden: Welche Source-, Sink-, Call-, Manifest- oder Codepoint-Klassen unterstützt der Analyzer tatsächlich?
+OWASP Sensitive Information Disclosure is relevant when reconnaissance exposes protected data.[^owasp-disclosure] MITRE ATLAS provides a broader adversarial AI threat vocabulary, while CWE-200 captures unauthorized information exposure in traditional software.[^atlas][^cwe200]
 
-## 10. Grenzen der Erkennung
+The `skil` property remains narrower: it identifies broad or credential-oriented filesystem discovery as an observable precursor or capability.
 
-Dynamisch zusammengesetzte Pfade und Symlink-Auflösung sind statisch begrenzt. Ein legitimer Backup-/Migration-Skill kann weitreichende Reads benötigen und muss über Contract/Scope legitimiert werden.
+## Limits
 
-Generell gelten drei Grenzen:
+Static analysis may not resolve runtime mounts, symlinks, environment-generated paths, or filesystem virtualization. A path that appears local may point into a sensitive host mount; a suspicious-looking path may be a harmless test fixture.
 
-1. **Static visibility:** Laufzeitwerte, DNS, Reflection, dynamische Downloads oder externe Policies können fehlen.
-2. **Semantic ambiguity:** Zweck, Legitimität und manche Trust-Entscheidungen sind nicht vollständig aus Syntax ableitbar.
-3. **Authority mismatch:** Ein gefährlicher Text kann technisch machtlos sein; ein harmlos formulierter Skill kann durch Runtime-Konfiguration enorme Authority erhalten.
+Coverage should therefore state whether the evidence came from literal path analysis, AST inference, intent language, or runtime verification.
 
-Deshalb ist die Zielgröße nicht „malicious / benign“, sondern eine nachvollziehbare Aussage über **Property, Evidence, Coverage und mögliche Wirkung**.
+<KeyTakeaway>
+Filesystem reconnaissance is not “reading files.” It is **scope expansion through discovery**. The best defense is to make the accessible filesystem match the task contract so that broad discovery cannot cross into unrelated user or host data.
+</KeyTakeaway>
 
-## 11. Technische Controls und Remediation
+## Implementation references
 
-- Filesystem-Allowlist
-- keine Home-Rekursion ohne expliziten Zweck
-- Observed Paths gegen Contract prüfen
-- Enumeration und anschließenden Secret-Read komponieren
+- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+- [`internal/analyzer/`](https://github.com/domehahn/skil/tree/main/internal/analyzer)
 
-Defense in Depth bleibt zentral:
+## References
 
-```text
-Authoring lint
-    +
-static scan
-    +
-contract verification
-    +
-supply-chain verification
-    +
-runtime policy
-    +
-audit / telemetry
-```
+[^skil-matrix]: [domehahn/skil — Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+[^owasp-disclosure]: [OWASP GenAI — LLM02:2025 Sensitive Information Disclosure](https://genai.owasp.org/llmrisk/llm022025-sensitive-information-disclosure/)
+[^atlas]: [MITRE ATLAS — Adversarial Threat Landscape for AI Systems](https://atlas.mitre.org/)
+[^cwe200]: [MITRE CWE-200 — Exposure of Sensitive Information to an Unauthorized Actor](https://cwe.mitre.org/data/definitions/200.html)
 
-Kein einzelner Layer ersetzt die anderen.
+## Conclusion
 
-## 12. Einordnung in DevSecOps
-
-Die Property sollte an mehreren Punkten des Lifecycles geprüft werden:
-
-1. **Authoring:** schneller lokaler Scan und IDE-/pre-commit Feedback.
-2. **Pull/Merge Request:** reproduzierbarer Scan mit diff-basierter Evidence.
-3. **Registry/Katalog:** Scan des veröffentlichten, digest-adressierten Artefakts.
-4. **Installation:** Verification gegen Capability Contract, Lockfiles und Provenance.
-5. **Runtime:** technische Enforcement-Schicht für Netzwerk, Filesystem, Tools, Secrets, Approval und Ressourcen.
-6. **Change Detection:** erneute Bewertung, wenn Tool-Metadaten, Dependencies, Runtime Policy oder Identitäten wechseln.
-
-Damit wird verhindert, dass eine saubere statische Analyse auf Artefakt A durchgeführt wird, während später Artefakt B oder eine breitere Runtime-Konfiguration tatsächlich ausgeführt wird.
-
-## 13. Implementierungsnachweise in `skil`
-
-- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – definiert scanner-positive/scanner-negative Control Coverage und die nativen `SKIL-*` Controls.
-- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – dokumentiert property-level Äquivalenz, Analyzer und Coverage-State.
-- [`docs/external-scanner-feature-parity.md`](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – beschreibt Detektionslogik, Lücken und Unterschiede der Mechanismen.
-- [`internal/analyzer/pattern.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/pattern.go) – Implementierungsquelle für `pattern`.
-- [`internal/analyzer/boundary.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/boundary.go) – Implementierungsquelle für `boundary`.
-
-## 14. Standards, Forschung und Referenzen
-
-1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
-2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
-3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
-4. [OWASP GenAI – LLM02:2025 Sensitive Information Disclosure](https://genai.owasp.org/llmrisk/llm022025-sensitive-information-disclosure/)
-5. [NIST AI 600-1 – Artificial Intelligence Risk Management Framework: Generative AI Profile, 2024](https://doi.org/10.6028/NIST.AI.600-1)
-6. [MITRE ATLAS – Adversarial Threat Landscape for AI Systems](https://atlas.mitre.org/)
-7. [MITRE CWE-200 – Exposure of Sensitive Information to an Unauthorized Actor](https://cwe.mitre.org/data/definitions/200.html)
-
-## Fazit
-
-**Filesystem Reconnaissance** ist als Security Property dann nützlich, wenn sie nicht als Checklistenwort, sondern als **überprüfbare Relation** implementiert wird. Für `skil` bedeutet das: Intent + code-level enumeration pattern/AST evidence, klar ausgewiesene Coverage, reproduzierbare Evidence und scanner-negative Gegenfälle mit ähnlicher Oberfläche.
-
-Die entscheidende Review-Frage lautet deshalb nicht:
-
-> „Kommt ein verdächtiges Wort vor?“
-
-sondern:
-
-> **Welche Sicherheitsannahme wird verletzt, welche Evidence belegt genau diese Relation, welcher sichere Gegenfall wurde ausgeschlossen und welche Teile der Aussage sind statisch tatsächlich beobachtbar?**
+Filesystem Reconnaissance becomes security-relevant when discovery expands beyond the declared task and begins searching credential-bearing or user-wide locations. A good scanner models root scope, recursion, target class, and contract mismatch. A good runtime goes further and prevents the agent from seeing unrelated parts of the filesystem in the first place.

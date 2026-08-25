@@ -1,6 +1,6 @@
 ---
-title: "Excessive Permissions bei Agentic Skills: Security Property, Detection und Nachweis"
-description: "Excessive Permissions wissenschaftlich erklärt: Bedrohungsmodell, scanner-positive und scanner-negative Beispiele, Detection-Mechanismus in skil, Evidence Chain, Grenzen und Referenzen."
+title: "Excessive Permissions in Agentic Skills: Measuring the Gap Between Required and Granted Authority"
+description: "A deep security essay on excessive permissions in agentic skills, including capability modeling, least privilege, wildcard grants, MCP authorization, contract verification, blast-radius analysis, and runtime policy."
 date: "2026-07-30"
 author: "dome"
 topics:
@@ -14,95 +14,77 @@ featured: false
 draft: false
 series:
   slug: agentic-skill-security-properties
-  title: "Security Properties für Agentic Skills"
+  title: "Security Properties for Agentic Skills"
   order: 14
 ---
 
-Agentic Skills sind gleichzeitig **Instruktion, Code, Konfiguration, Tool-Vertrag und Supply-Chain-Artefakt**. Deshalb genügt es nicht, eine Datei als „Text“ zu behandeln. Eine belastbare Security-Analyse muss rekonstruieren, welche **Trust Boundary**, welche Datenklasse oder welche ausführbare Capability ein Artefakt tatsächlich berührt.
+The safest agent is not the one that “knows” it should avoid dangerous actions. It is the one that **does not possess unnecessary authority in the first place**.
 
-Die Security Property **Excessive Permissions** gehört zur Kategorie **Agency / Privilege**. Diese Property begrenzt die **effektive Agency** des Agenten. Maßgeblich ist nicht nur, was der Skill behauptet zu dürfen, sondern welche privilegierten Aktionen technisch erreichbar sind.
-
-<Note>
-**Terminologie:** In dieser Serie bedeutet **scanner-positiv**: Der Scanner erkennt einen Security Concern und erzeugt ein Finding. **Scanner-negativ** bedeutet: Der legitime Gegenfall darf für genau diese Property nicht anschlagen. Diese Definition entspricht der `skil` Security Control Matrix.
-</Note>
-
-## Kurzfassung
-
-| Dimension | Einordnung |
-| --- | --- |
-| Security Property | **Excessive Permissions** |
-| `skil` Controls | `SKIL-AGENCY-TOOLS`, `SKIL-MCP-001`, `SKIL-CAP-001` |
-| Primärer Mechanismus | **Wildcard-/Agency Detection plus Contract Verification** |
-| Aktueller Coverage-Charakter | **PARTIAL für generische Freitext-Vollzugriffe; stark strukturiert** |
-| Security-Relation | `GRANTED_CAPABILITIES ⊃ REQUIRED_CAPABILITIES` |
-| Hauptziel | False Positives durch Kontextprüfung reduzieren und den eigentlichen Sicherheitszusammenhang als Evidence Chain nachweisen |
-
-<KeyTakeaway>
-Ein **positiver Treffer** für Excessive Permissions ist nur dann belastbar, wenn die Property-spezifische Relation `GRANTED_CAPABILITIES ⊃ REQUIRED_CAPABILITIES` aus konkreter Evidence rekonstruiert werden kann. Ein Schlüsselwort allein ist keine wissenschaftlich ausreichende Begründung.
-</KeyTakeaway>
-
-## 1. Welche Sicherheitsannahme schützt die Property?
-
-Die Property lässt sich als Invariante formulieren:
+Excessive Permissions measures the difference between what a task requires and what the runtime grants:
 
 ```text
 GRANTED_CAPABILITIES ⊃ REQUIRED_CAPABILITIES
 ```
 
-Ein Scanner versucht damit nicht, „bösartige Wörter“ zu finden. Er prüft eine Hypothese über ein Systemartefakt:
+This is a classic least-privilege principle, but agentic systems make the gap especially important because the decision about *which* capability to use is often delegated to a probabilistic model exposed to untrusted context.
 
-```text
-H0: Die Sicherheitsgrenze bleibt eingehalten.
-H1: Die Sicherheitsgrenze wird durch beobachtbare Evidence verletzt.
-```
+## Permissions become exploit multipliers
 
-Das Finding ist die Entscheidung zugunsten von `H1` innerhalb der **sichtbaren statischen Coverage**. Daraus folgt eine wichtige epistemische Grenze: Ein scanner-negatives Ergebnis ist kein mathematischer Beweis für Gesamtsicherheit, sondern die Aussage, dass **unter dem verwendeten Analysemodell kein hinreichender Nachweis für diese Property gefunden wurde**.
+Prompt injection, hallucination, or planning error can only cause actions that the runtime makes possible. If an agent used only for documentation can also delete repositories, write cloud IAM policies, read secrets, and send arbitrary network requests, every model failure inherits that unnecessary blast radius.
 
-## 2. Bedrohungsmodell
+OWASP defines Excessive Agency around three recurring causes: excessive functionality, excessive permissions, and excessive autonomy.[^owasp-agency] The `skil` property isolates the permission dimension so it can be reviewed and tested directly.
 
-Für Excessive Permissions sollte das Threat Model mindestens vier Elemente trennen:
+## Wildcards are a useful but incomplete signal
 
-1. **Quelle der Kontrolle oder Daten:** Nutzerinput, eingebettete Instruktion, Tool-Metadaten, Code, Dependency, Runtime-Konfiguration oder persistenter Zustand.
-2. **Trust Boundary:** Welche Information oder Authority wird höhergestuft, überschritten oder erweitert?
-3. **Operation/Sink:** Welche Aktion erzeugt die relevante Wirkung?
-4. **Guard:** Welche Allowlist, Validierung, Policy, Approval, Signatur oder Capability-Grenze müsste die Relation verhindern?
-
-<Architecture>
-Manifest/Text → Permission/Tool Set → wildcard/full-access detection → declared purpose/contract → observed capabilities → set-difference → Finding
-</Architecture>
-
-Die Architektur ist bewusst mehrstufig. Candidate Generation und Finding Decision sind getrennt: Ein lexikalischer, syntaktischer oder struktureller Kandidat wird erst nach Kontext-, Scope- und Guard-Prüfung zu einem Security Finding.
-
-## 3. Scanner-positives Beispiel: Das Finding muss entstehen
+A manifest such as:
 
 ```yaml
 permissions:
   - "*"
 ```
 
-### Warum ist das ein positiver Treffer?
-
-Ein universelles Wildcard-Grant ist positiv, weil der erlaubte Capability-Raum nicht an die beabsichtigte Aufgabe gebunden ist. Mit Contract-Verifikation kann zusätzlich Überdeklaration gemessen werden.
-
-Die Evidence sollte deshalb nicht nur `matched=true` enthalten. Mindestens folgende Felder sind für reproduzierbare Findings sinnvoll:
+is an obvious positive candidate. But excessive permission can also occur without wildcards:
 
 ```yaml
-property: "excessive-permissions"
-rules: ["SKIL-AGENCY-TOOLS", "SKIL-MCP-001", "SKIL-CAP-001"]
-analysis: "Wildcard-/Agency Detection plus Contract Verification"
-coverage: "PARTIAL für generische Freitext-Vollzugriffe; stark strukturiert"
-security_relation: "GRANTED_CAPABILITIES ⊃ REQUIRED_CAPABILITIES"
-location:
-  file: "path/to/artifact"
-  line: 42
-context_checked: true
-evidence_complete: true
-confidence: high
+permissions:
+  - repo.read
+  - repo.write
+  - repo.delete
+  - secrets.read
+  - network.connect
 ```
 
-`confidence: high` ist hier nur beispielhaft. In einer realen Engine muss Confidence aus Evidenzqualität, Kontextauflösung und Coverage resultieren; sie darf nicht allein aus der Severity abgeleitet werden.
+if the skill only needs `repo.read`.
 
-## 4. Scanner-negatives Beispiel: Der Gegenfall darf nicht anschlagen
+Therefore, wildcard detection provides strong evidence for overbreadth, while **contract verification** is needed to compare granted capabilities with task requirements.
+
+## Capability algebra
+
+A useful way to reason about permissions is as sets.
+
+Let:
+
+```text
+R = capabilities required by the declared task
+G = capabilities granted to the agent
+O = capabilities observed in implementation or runtime
+```
+
+Then:
+
+```text
+G - R = over-granted authority
+O - G = undeclared or policy-violating behavior
+R - G = missing capability / likely functional failure
+```
+
+This simple algebra separates three different problems that are often collapsed into one scanner warning.
+
+## Structured permissions are easier to secure than prose
+
+A natural-language instruction such as “the agent may access the repository” is ambiguous. Does that mean read, write, delete, administer webhooks, or manage secrets?
+
+Structured capability contracts can express operation and scope:
 
 ```yaml
 permissions:
@@ -110,255 +92,135 @@ permissions:
   - "network.connect:https://api.example"
 ```
 
-### Warum muss dieser Fall scanner-negativ bleiben?
+The more precise the capability model, the more meaningful least-privilege verification becomes.
 
-Der Negativfall begrenzt Operation, Pfad und Ziel. Least Privilege wird damit maschinenprüfbar.
+## `skil` control model
 
-Das ist für die Qualität des Detektors genauso wichtig wie das Positivbeispiel. Eine Security Rule ohne systematische Negativ-Fixtures optimiert leicht auf Recall, produziert aber im Engineering-Alltag so viele False Positives, dass Findings ignoriert oder Controls deaktiviert werden.
+The current repository maps excessive agency/tool scope to controls including `SKIL-AGENCY-TOOLS` and `SKIL-MCP-001`; contract verification provides the stronger declared-versus-observed comparison.[^skil-matrix][^skil-crosswalk]
 
-## 5. Wie `skil` die Property technisch ermittelt
+Earlier article drafts referenced a generic `SKIL-CAP-001`. The current control matrix should be treated as authoritative for published control IDs; capability declaration and verification are represented more granularly in the current repository.
 
-Aktuell relevante Controls: `SKIL-AGENCY-TOOLS`, `SKIL-MCP-001`, `SKIL-CAP-001`.
+## Permissions have dimensions, not just names
 
-Der Pattern-Analyzer hält ein gemeinsames, deterministisches Intent-Regelwerk vor. Positive Patterns werden mit expliziten Negative-Patterns beziehungsweise lokalem Negations-/Meta-Kontext kombiniert. Dadurch ist ein Match nicht bloß String Presence, sondern eine polaritätsbewusste Kandidatenentscheidung.
+A capability can be overbroad along several axes:
 
-Der MCP-Analyzer parst Tool-/Permission-/Parameter-Metadaten strukturiert und wendet Feld-spezifische Checks an. Für Freitextfelder kann das gemeinsame Intent-Regelwerk wiederverwendet werden, ohne eine zweite semantisch abweichende Regex-Engine zu schaffen.
+- **operation** — read versus write versus delete;
+- **resource** — one repository versus all repositories;
+- **tenant** — current tenant versus cross-tenant;
+- **destination** — one API versus arbitrary network;
+- **time** — one task versus long-lived token;
+- **data class** — public files versus secrets;
+- **environment** — sandbox versus production.
 
-Der Mechanismus lässt sich als Evidence Pipeline darstellen:
+A permission model that captures only `tool_name` leaves substantial ambient authority.
 
-```text
-Raw artifact
-    ↓
-parser-/analyzer-spezifische Beobachtung
-    ↓
-Property-spezifische Zwischenrepräsentation
-    ↓
-Context / Negation / Scope / Guard
-    ↓
-entscheidende Security-Relation
-    ↓
-Finding + Confidence + Coverage
-```
+## OAuth and MCP: scopes should be minimized
 
-### 5.1 Candidate Generation
+RFC 9700 recommends restricting access-token privileges to the minimum required and audience-restricting tokens to intended resource servers.[^oauth-bcp]
 
-Candidate Generation soll **breit genug für Recall**, aber noch nicht entscheidend sein. Abhängig von der Property entstehen Kandidaten aus AST-Knoten, Unicode-Codepoints, Manifestfeldern, Versionsconstraints, Netzwerkzielen, Taint Sources/Sinks oder semantischen Clauses.
+The MCP 2025-11-25 authorization specification goes further in its own domain: clients include resource indicators, servers validate token audience, and scope minimization is part of the authorization model.[^mcp-auth]
 
-### 5.2 Property-spezifische Zwischenrepräsentation
+This is directly relevant to agentic tool access. A model should not hold a broad bearer token that can be replayed across unrelated MCP servers or downstream APIs.
 
-Die entscheidende IR für diesen Beitrag ist:
+## Evidence should compare authority with purpose
 
-```text
-GRANTED_CAPABILITIES ⊃ REQUIRED_CAPABILITIES
-```
-
-Diese IR ist absichtlich kleiner als der Originaltext. Sie enthält nur die für die Sicherheitsentscheidung relevanten Entitäten und Relationen. Dadurch kann derselbe Mechanismus unterschiedliche Oberflächenformen auf dieselbe Property abbilden.
-
-### 5.3 Finding Decision
-
-```text
-IF
-    property relation is evidenced
-AND relevant context/scope is resolved
-AND no valid guard/declassifier negates the relation
-THEN
-    emit finding
-ELSE
-    keep candidate as signal or scanner-negative
-```
-
-Der positive Treffer ist damit eine **Relation über Evidence**, nicht ein Worttreffer.
-
-## 6. False-Positive-Unterdrückung
-
-Breite Sprache wie „full access“ außerhalb strukturierter Permission-Blöcke ist stärker heuristisch. Ein legitimer Admin-Skill kann breite Rechte benötigen, muss sie aber explizit und reviewbar deklarieren.
-
-Ein wissenschaftlich belastbarer Scanner sollte False-Positive-Unterdrückung nicht durch globale „ignore this file“-Ausnahmen lösen, sondern durch **lokale Gegenhypothesen**:
-
-```text
-Candidate
-  ├─ defensive/negated context? ──> suppress or downgrade
-  ├─ validated/allowlisted?      ──> suppress relation
-  ├─ outside relevant field?     ──> not this property
-  └─ relation complete?          ──> finding
-```
-
-Das verbessert Erklärbarkeit: Der Scanner kann nicht nur sagen, warum er anschlägt, sondern auch, **welche Bedingung einen ähnlichen sicheren Fall unterscheidet**.
-
-## 7. Evidence Chain: Warum der Treffer nachvollziehbar sein muss
-
-Für Excessive Permissions sollte ein Finding mindestens diese Nachweise verbinden:
-
-```text
-Fundstelle
-  ↓
-parser-/analyzer-spezifische Beobachtung
-  ↓
-Security-Relation: GRANTED_CAPABILITIES ⊃ REQUIRED_CAPABILITIES
-  ↓
-Scope-/Guard-Entscheidung
-  ↓
-potenzielle Wirkung
-```
-
-Eine geeignete interne Repräsentation könnte so aussehen:
+A finding can be expressed as:
 
 ```yaml
-finding:
-  property: excessive-permissions
-  rule_ids: ["SKIL-AGENCY-TOOLS", "SKIL-MCP-001", "SKIL-CAP-001"]
-  evidence:
-    raw_location: true
-    structured_relation: true
-    context_resolution: true
-  coverage:
-    status: "verified-or-bounded"
-    runtime_dependencies_documented: true
-  decision:
-    scanner_positive: true
+property: excessive-permissions
+controls:
+  - SKIL-AGENCY-TOOLS
+  - SKIL-MCP-001
+declared_purpose: documentation_review
+required_capabilities:
+  - repo.read
+granted_capabilities:
+  - repo.read
+  - repo.write
+  - repo.delete
+excess:
+  - repo.write
+  - repo.delete
 ```
 
-<Warning>
-Ein Finding darf keine Sicherheit vortäuschen, die der Analyzer nicht besitzt. Wenn ein Ziel, ein Call, ein Contract oder eine semantische Relation zur Laufzeit unaufgelöst bleibt, ist `runtime_dependent`, `provider_backed`, `partially_resolved` oder `not_observable` die korrektere Aussage als ein künstliches „safe“.
-</Warning>
+This is significantly more useful than reporting “permissions are broad.”
 
-## 8. Mechanismus im Hintergrund: Aufbau und Designprinzipien
+## The hard problem: determining required capability
 
-Die Detektion folgt fünf allgemeinen Prinzipien:
+Static analysis cannot always infer `R`, the required set. Purpose is partly semantic and organizational.
 
-### 8.1 Deterministische Evidenz vor semantischer Vermutung
+`skil` addresses this through an assurance model that distinguishes static detection from explicit reviewed contracts. This is an important design choice: it avoids pretending that a heuristic can always determine what permissions a business process legitimately needs.[^skil-crosswalk]
 
-AST, strukturierte Manifestfelder, Codepoints, Versionen, Pfade und Source→Sink-Flows sind reproduzierbare Evidenz. Freie Sprache ist dagegen probabilistischer. Semantische Provider sollten deterministische Evidence **ergänzen**, nicht verdecken.
+## False positives and intentional privilege
 
-### 8.2 Parser vor Regex, wenn Syntax existiert
+Some administrative skills legitimately require broad authority. That does not make the finding meaningless. It changes the response:
 
-Wenn ein Artefakt eine formale Grammatik besitzt, ist ein Parser strukturell stärker: `exec(` in einem Kommentar ist nicht dasselbe wie ein `Call`-Knoten; `"*"` in einem Regex ist nicht dasselbe wie ein Wildcard-Permission-Feld.
+- isolate the workload,
+- require stronger approval,
+- use a dedicated identity,
+- shorten credential lifetime,
+- increase audit detail,
+- restrict when and where the skill can run.
 
-### 8.3 Context Guards sind Teil der Rule
+“Intentional” should lead to compensating controls, not automatic dismissal.
 
-Eine Security Rule besteht konzeptionell aus:
+## Runtime least privilege
+
+The best architecture avoids placing all capabilities in one tool set. Instead:
 
 ```text
-positive evidence
-+ scope constraints
-+ negative evidence / safe context
-+ decision rule
+planner agent
+   ↓ proposes action
+policy/router
+   ↓ selects narrow executor
+scoped executor identity
+   ↓ performs one operation
 ```
 
-Ohne den dritten Teil werden Security-Dokumentation, Tests und sichere Gegenregeln regelmäßig zu False Positives.
+This separates reasoning authority from execution authority.
 
-### 8.4 Composition erst nach Einzelbefund
+## Permission creep over time
 
-Die Property sollte mit benachbarten Findings nur dann zu einer höheren Severity komponiert werden, wenn ein gemeinsamer Daten-, Kontroll- oder Trust-Pfad nachweisbar ist.
+Agentic platforms evolve rapidly. A tool may gain new operations, a service account may accumulate roles, or an MCP server may expose more tools after an update.
 
-### 8.5 Coverage ist ein First-Class-Result
+Therefore, least privilege is not a one-time review. Continuous verification should compare:
 
-Das System sollte mindestens zwischen folgenden Zuständen unterscheiden:
+- declared capability contract,
+- discovered tool schemas,
+- IAM policy,
+- observed runtime calls.
 
-```text
-verified
-partially_resolved
-provider_backed
-runtime_dependent
-semantic_only
-not_observable
-```
+Differences should be visible in CI or deployment review.
 
-Damit bleibt sichtbar, **was** der Scanner tatsächlich gemessen hat.
+## Relationship to CWE-269
 
-## 9. Wissenschaftliche Validierung des Detektors
+CWE-269 describes improper privilege management and recommends careful handling of privileges, explicit trust zones, least privilege, and separation of privilege.[^cwe269] Agentic excessive-permission findings are a modern specialization of this long-standing security principle.
 
-Für eine belastbare Evaluation reichen einzelne Demo-Files nicht. Pro Property sollte die Testsuite mindestens enthalten:
+## Limits
 
-| Testklasse | Zweck |
-| --- | --- |
-| True Positive Fixtures | kanonische Verletzungen der Property |
-| True Negative Fixtures | legitime Gegenfälle mit ähnlichen Tokens/Syntaxen |
-| Adversarial Paraphrases | Recall gegen Oberflächenvariation |
-| Boundary Cases | minimale Änderung zwischen positiv und negativ |
-| Differential Tests | Vergleich mit unabhängigen Referenzimplementierungen |
-| Holdout Fixtures | Schutz gegen Überanpassung an bekannte Tests |
-| Mutation Tests | systematische Änderung von Negation, Scope, Pfad, Sink oder Version |
+Static files may not reveal effective cloud IAM, inherited roles, dynamic MCP discovery, or host-side policy. Conversely, a broad declaration may be reduced by runtime enforcement.
 
-Für sprachliche Properties sind Precision/Recall und Error Taxonomy sinnvoll. Für AST-/Taint-/Schema-Properties kann zusätzlich die **strukturelle Coverage** gemessen werden: Welche Source-, Sink-, Call-, Manifest- oder Codepoint-Klassen unterstützt der Analyzer tatsächlich?
+The scanner should distinguish **declared authority**, **observed capability**, and **effective runtime authority** rather than treating them as interchangeable.
 
-## 10. Grenzen der Erkennung
+<KeyTakeaway>
+The most important metric is not how many tools an agent has, but the **difference between necessary authority and effective authority**. Every unnecessary capability expands the blast radius of prompt injection, model error, and supply-chain compromise.
+</KeyTakeaway>
 
-Statische Analyse sieht nicht immer die effektiven IAM-/OS-Rechte. Deklaration und Runtime-Authority müssen getrennt bewertet werden.
+## Implementation references
 
-Generell gelten drei Grenzen:
+- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+- [`internal/analyzer/mcp.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/mcp.go)
 
-1. **Static visibility:** Laufzeitwerte, DNS, Reflection, dynamische Downloads oder externe Policies können fehlen.
-2. **Semantic ambiguity:** Zweck, Legitimität und manche Trust-Entscheidungen sind nicht vollständig aus Syntax ableitbar.
-3. **Authority mismatch:** Ein gefährlicher Text kann technisch machtlos sein; ein harmlos formulierter Skill kann durch Runtime-Konfiguration enorme Authority erhalten.
+## References
 
-Deshalb ist die Zielgröße nicht „malicious / benign“, sondern eine nachvollziehbare Aussage über **Property, Evidence, Coverage und mögliche Wirkung**.
+[^skil-matrix]: [domehahn/skil — Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
+[^skil-crosswalk]: [domehahn/skil — External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
+[^owasp-agency]: [OWASP GenAI — LLM06:2025 Excessive Agency](https://genai.owasp.org/llmrisk/llm062025-excessive-agency/)
+[^cwe269]: [MITRE CWE-269 — Improper Privilege Management](https://cwe.mitre.org/data/definitions/269.html)
+[^oauth-bcp]: [RFC 9700 — Best Current Practice for OAuth 2.0 Security](https://www.rfc-editor.org/rfc/rfc9700.html)
+[^mcp-auth]: [Model Context Protocol — Authorization, Specification 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
 
-## 11. Technische Controls und Remediation
+## Conclusion
 
-- deny-by-default
-- scoped permissions
-- separate read/write/delete capabilities
-- declared-vs-observed Verification im CI
-
-Defense in Depth bleibt zentral:
-
-```text
-Authoring lint
-    +
-static scan
-    +
-contract verification
-    +
-supply-chain verification
-    +
-runtime policy
-    +
-audit / telemetry
-```
-
-Kein einzelner Layer ersetzt die anderen.
-
-## 12. Einordnung in DevSecOps
-
-Die Property sollte an mehreren Punkten des Lifecycles geprüft werden:
-
-1. **Authoring:** schneller lokaler Scan und IDE-/pre-commit Feedback.
-2. **Pull/Merge Request:** reproduzierbarer Scan mit diff-basierter Evidence.
-3. **Registry/Katalog:** Scan des veröffentlichten, digest-adressierten Artefakts.
-4. **Installation:** Verification gegen Capability Contract, Lockfiles und Provenance.
-5. **Runtime:** technische Enforcement-Schicht für Netzwerk, Filesystem, Tools, Secrets, Approval und Ressourcen.
-6. **Change Detection:** erneute Bewertung, wenn Tool-Metadaten, Dependencies, Runtime Policy oder Identitäten wechseln.
-
-Damit wird verhindert, dass eine saubere statische Analyse auf Artefakt A durchgeführt wird, während später Artefakt B oder eine breitere Runtime-Konfiguration tatsächlich ausgeführt wird.
-
-## 13. Implementierungsnachweise in `skil`
-
-- [`docs/security-control-matrix.md`](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md) – definiert scanner-positive/scanner-negative Control Coverage und die nativen `SKIL-*` Controls.
-- [`docs/external-control-crosswalk.md`](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md) – dokumentiert property-level Äquivalenz, Analyzer und Coverage-State.
-- [`docs/external-scanner-feature-parity.md`](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md) – beschreibt Detektionslogik, Lücken und Unterschiede der Mechanismen.
-- [`internal/analyzer/pattern.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/pattern.go) – Implementierungsquelle für `pattern`.
-- [`internal/analyzer/mcp.go`](https://github.com/domehahn/skil/blob/main/internal/analyzer/mcp.go) – Implementierungsquelle für `mcp`.
-
-## 14. Standards, Forschung und Referenzen
-
-1. [domehahn/skil – Security control matrix](https://github.com/domehahn/skil/blob/main/docs/security-control-matrix.md)
-2. [domehahn/skil – External scanner control crosswalk](https://github.com/domehahn/skil/blob/main/docs/external-control-crosswalk.md)
-3. [domehahn/skil – External security-scanner feature parity](https://github.com/domehahn/skil/blob/main/docs/external-scanner-feature-parity.md)
-4. [OWASP GenAI – LLM06:2025 Excessive Agency](https://genai.owasp.org/llmrisk/llm062025-excessive-agency/)
-5. [OWASP – Top 10 for Agentic Applications for 2026](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)
-6. [NIST AI 100-1 – Artificial Intelligence Risk Management Framework (AI RMF 1.0), 2023](https://doi.org/10.6028/NIST.AI.100-1)
-7. [MITRE CWE-269 – Improper Privilege Management](https://cwe.mitre.org/data/definitions/269.html)
-8. [Model Context Protocol – Specification 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25)
-
-## Fazit
-
-**Excessive Permissions** ist als Security Property dann nützlich, wenn sie nicht als Checklistenwort, sondern als **überprüfbare Relation** implementiert wird. Für `skil` bedeutet das: Wildcard-/Agency Detection plus Contract Verification, klar ausgewiesene Coverage, reproduzierbare Evidence und scanner-negative Gegenfälle mit ähnlicher Oberfläche.
-
-Die entscheidende Review-Frage lautet deshalb nicht:
-
-> „Kommt ein verdächtiges Wort vor?“
-
-sondern:
-
-> **Welche Sicherheitsannahme wird verletzt, welche Evidence belegt genau diese Relation, welcher sichere Gegenfall wurde ausgeschlossen und welche Teile der Aussage sind statisch tatsächlich beobachtbar?**
+Excessive Permissions converts otherwise containable model failures into high-impact incidents. Static wildcard detection is useful, but the deeper engineering goal is contract-based least privilege: define what the task requires, grant only that authority, bind credentials to the intended resources, and continuously compare declared, observed, and effective capability.
