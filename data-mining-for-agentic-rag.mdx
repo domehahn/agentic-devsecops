@@ -1,0 +1,328 @@
+---
+title: "Data Mining for Agentic RAG: Mining Retrieval Traces, State Transitions, and Epistemic Progress"
+description: "A deep essay on data mining in iterative agentic RAG systems, including retrieval traces, state aggregation, exploration versus exploitation, evidence gain, query refinement, tool-use mining, conflict detection, and human feedback."
+date: "2026-08-27"
+author: "dome"
+topics: [agentic-rag, data-mining]
+tags: [Agentic RAG, Retrieval, Data Mining, State, Evaluation]
+featured: false
+draft: false
+series:
+  slug: ai-foundations-to-agentic-systems
+  title: "AI Foundations to Agentic Systems"
+  order: 12
+---
+
+# Data Mining for Agentic RAG
+
+Classic RAG often produces one retrieval event.
+
+Agentic RAG produces a **search trajectory**.
+
+A single query can be represented as:
+
+```text
+q → documents → answer
+```
+
+An agentic process may look like:
+
+```text
+question
+ ↓
+query 1
+ ↓
+evidence
+ ↓
+gap detected
+ ↓
+query 2
+ ↓
+conflicting evidence
+ ↓
+query 3
+ ↓
+synthesis
+ ↓
+verification
+```
+
+Data Mining becomes temporal.
+
+## Retrieval Traces Are Sequences
+
+Represent a trace as:
+
+\[
+\tau=(s_0,a_0,o_1,s_1,a_1,o_2,\dots)
+\]
+
+where \(s_t\) is knowledge/task state, \(a_t\) an action and \(o_t\) evidence returned.
+
+The mining problem becomes:
+
+```text
+Which trajectories lead to good answers?
+Which loops waste cost?
+Which refinements add evidence?
+Which steps create drift?
+```
+
+## Query Refinement Can Be Measured as Information Gain
+
+A query rewrite is useful if it reduces uncertainty or improves evidence coverage.
+
+Conceptually:
+
+\[
+Gain(q_t)=Coverage_{t+1}-Coverage_t
+\]
+
+A query that retrieves more documents but no new relevant evidence has low epistemic gain.
+
+## Exploration Versus Exploitation
+
+### Exploitation
+
+Search near already useful evidence.
+
+Advantages: precision and lower cost.
+
+Risk: tunnel vision.
+
+### Exploration
+
+Search new formulations, sources or hypotheses.
+
+Advantages: coverage.
+
+Risk: noise and drift.
+
+Mine historical trajectories to identify where exploration pays off.
+
+## State Must Summarize Evidence, Not Just Conversation
+
+Useful state:
+
+```yaml
+question: ...
+subquestions:
+  - id: q1
+    status: answered
+  - id: q2
+    status: open
+
+evidence:
+  supported_claims: [...]
+  conflicts: [...]
+  missing: [...]
+```
+
+This is more useful than retaining a raw transcript.
+
+## Conflict Mining
+
+Retrieval systems may return contradictory sources.
+
+```text
+document A: retention = 30 days
+document B: retention = 90 days
+```
+
+Do not average them.
+
+Inspect version, authority, effective date and owner.
+
+Conflict should influence control flow.
+
+## Tool-Use Mining
+
+Agentic RAG may use vector search, keyword search, web search, SQL, knowledge graphs or document fetches.
+
+Logs can reveal which tools succeed by query class, redundant combinations, expensive low-value tools and failure loops.
+
+## Query-Class-Specific Policies
+
+Cluster queries into exact identifiers, comparative research, policy lookup, multi-hop questions or temporal questions.
+
+Different classes can use different strategies.
+
+## Evidence Diversity
+
+Ten chunks from one document are not ten independent confirmations.
+
+Track unique documents, domains and independent authorities.
+
+But normative policy may legitimately depend on one authoritative source.
+
+Diversity is contextual.
+
+## Stopping Rules
+
+Possible criteria:
+
+```text
+coverage threshold
+max queries
+max cost
+no new evidence
+human escalation
+```
+
+“No new evidence” can be measured across iterations.
+
+## Faithfulness Is Necessary but Not Sufficient
+
+A response can be faithful to wrong evidence.
+
+Therefore:
+
+```text
+faithfulness
+≠
+truth
+```
+
+Track source authority and freshness in addition to support.
+
+## Human Feedback Should Attach to the Failure Layer
+
+A generic thumbs-down is weak.
+
+Better:
+
+```yaml
+feedback:
+  answer: incorrect
+  retrieval: missed_relevant_source
+  citation: unsupported
+```
+
+This helps identify which subsystem to improve.
+
+## Offline Improvement
+
+Telemetry can improve query routing, rewrites, reranking, stopping rules and source policies.
+
+Use:
+
+```text
+traces
+ ↓
+failure clusters
+ ↓
+candidate change
+ ↓
+offline benchmark
+ ↓
+holdout
+ ↓
+canary
+```
+
+## Security
+
+Agentic RAG consumes untrusted documents.
+
+Requirements include authorization-filtered retrieval, tenant isolation, prompt-injection resistance, trace access control and data retention.
+
+A trace is valuable evidence and potentially sensitive data.
+
+## Mining for Prompt Injection
+
+A useful signal is the relation:
+
+```text
+retrieved content
+→ change in agent action policy
+```
+
+If a document causes an unexpected tool request, the trace should expose it.
+
+Behavioral mining can identify suspicious sequences.
+
+## Trajectory Metrics
+
+Useful diagnostic metrics include:
+
+\[
+QE=\frac{\text{useful evidence discovered}}{\text{retrieval actions}}
+\]
+
+and a redundancy ratio:
+
+\[
+RR=\frac{\text{evidence overlapping prior retrievals}}{\text{all retrieved evidence}}
+\]
+
+These should be treated as diagnostics rather than optimization targets.
+
+## Branch Analysis
+
+Two runs may diverge from the same state:
+
+```text
+state S
+├─ search web
+└─ search internal KB
+```
+
+Mining can compare downstream outcomes by query class.
+
+Selection bias matters: the current agent may choose one branch only when the task is already difficult.
+
+## State Compression Quality
+
+Agentic RAG often summarizes state to control context growth.
+
+Evaluate whether compressed state preserves unresolved questions, contradictions, source provenance and constraints.
+
+State compression deserves regression testing just like retrieval.
+
+## Failure Taxonomy for Iterative Retrieval
+
+Use labels such as:
+
+```text
+premature_stop
+query_drift
+redundant_loop
+source_conflict_unresolved
+retrieval_tool_misroute
+coverage_false_positive
+```
+
+A generic `bad_answer` label cannot identify whether the control loop or generator failed.
+
+## Budget-Aware Retrieval Policies
+
+Each iteration consumes latency, tokens, API calls and reranker compute.
+
+Conceptually:
+
+\[
+continue \quad \text{if} \quad E[\Delta quality]>\lambda\cdot cost
+\]
+
+Even coarse budgets can prevent unbounded loops.
+
+## Human Review of Epistemic State
+
+For regulated research workflows, expose supported claims, uncertain claims, sources, conflicts and open questions.
+
+Reviewing epistemic state is often more useful than reviewing only final prose.
+
+## Conclusion
+
+Data Mining in Agentic RAG analyzes an evolving epistemic process.
+
+The key objects are queries, evidence, state, actions, conflicts and progress.
+
+Mining these trajectories makes it possible to optimize retrieval without blindly increasing autonomy.
+
+## References
+
+1. Lewis, P. et al., *Retrieval-Augmented Generation*. https://arxiv.org/abs/2005.11401
+2. Asai, A. et al., *Self-RAG*. https://arxiv.org/abs/2310.11511
+3. Yan, S. et al., *Corrective Retrieval Augmented Generation*. https://arxiv.org/abs/2401.15884
+4. Es, S. et al., *RAGAS*. https://arxiv.org/abs/2309.15217

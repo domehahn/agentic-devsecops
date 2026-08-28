@@ -1,0 +1,975 @@
+---
+title: "BM25 in Modern AI Retrieval: Why Lexical Ranking Still Matters in a World of Embeddings"
+description: "A deep technical essay on BM25 and the probabilistic relevance framework, including term-frequency saturation, IDF, document-length normalization, analyzers, BM25F, technical identifiers, RAG, agent routing, hybrid search, poisoning, evaluation, and operational design."
+date: "2026-08-28"
+author: "dome"
+topics:
+  - information-retrieval
+  - bm25
+  - rag
+tags:
+  - BM25
+  - Lexical Retrieval
+  - Search
+  - RAG
+  - DevSecOps
+featured: false
+draft: false
+series:
+  slug: retrieval-engineering-from-lexical-search-to-agentic-memory
+  title: "Retrieval Engineering: From Lexical Search to Agentic Memory"
+  order: 5
+---
+
+# BM25 in Modern AI Retrieval
+
+Embeddings did not make lexical retrieval obsolete.
+
+If anything, the rise of RAG and agentic systems has made the strengths of lexical ranking easier to see.
+
+Modern enterprise queries contain:
+
+```text
+CVE-2026-12345
+ERR_CERT_AUTHORITY_INVALID
+CI_JOB_TOKEN
+gitlab-runner-18.7
+sha256:...
+registry.company.internal:5000
+```
+
+These are not vague concepts.
+
+They are identifiers.
+
+When the information need depends on exact textual identity, semantic similarity can be a disadvantage.
+
+BM25 remains valuable because it answers a different question from vector retrieval:
+
+> Which documents contain the query's informative terms, and how strongly should those matches influence ranking?
+
+That question is classical.
+
+Its role in AI systems is contemporary.
+
+---
+
+## BM25 Comes from the Probabilistic Relevance Tradition
+
+BM25 belongs to the probabilistic relevance framework developed through decades of information-retrieval research.
+
+Robertson and Zaragoza describe BM25 as one of the major ranking models to emerge from that framework and connect it to earlier probabilistic relevance reasoning.[^1]
+
+The simplified intuition is:
+
+```text
+rare query term found in document
+→ strong evidence
+
+common term found in document
+→ weak evidence
+
+term repeated many times
+→ increasing but saturating evidence
+
+very long document
+→ normalize for increased chance of incidental matches
+```
+
+BM25 is not a primitive string match.
+
+It is a relevance-ranking function.
+
+---
+
+## The Standard BM25 Form
+
+A common BM25 formulation is:
+
+\[
+score(D,Q)
+=
+\sum_{q_i\in Q}
+IDF(q_i)
+\cdot
+\frac{
+f(q_i,D)(k_1+1)
+}{
+f(q_i,D)
++
+k_1
+\left(
+1-b+b\frac{|D|}{avgdl}
+\right)
+}
+\]
+
+where:
+
+- \(f(q_i,D)\) is the term frequency of query term \(q_i\) in document \(D\);
+- \(|D|\) is document length;
+- \(avgdl\) is average document length;
+- \(k_1\) controls term-frequency saturation;
+- \(b\) controls length normalization.
+
+The formula looks compact.
+
+The behavior is easier to understand piece by piece.
+
+---
+
+## Term Frequency Saturates
+
+A naive lexical system might reward every repetition linearly.
+
+BM25 does not.
+
+Suppose:
+
+```text
+CVE-2026-12345
+```
+
+appears:
+
+```text
+1 time
+3 times
+30 times
+```
+
+The first few occurrences increase confidence that the document is genuinely about the term.
+
+The thirtieth repetition provides little new evidence.
+
+The fraction:
+
+\[
+\frac{f(k_1+1)}{f+k_1(...)}
+\]
+
+creates saturation.
+
+This reduces the ability of raw repetition to dominate ranking.
+
+---
+
+## IDF Rewards Discriminative Terms
+
+Inverse Document Frequency captures the intuition that rare terms are more informative.
+
+A token such as:
+
+```text
+system
+```
+
+may occur in nearly every DevSecOps document.
+
+It provides little discrimination.
+
+A token such as:
+
+```text
+ERR_CERT_AUTHORITY_INVALID
+```
+
+may occur in a small subset.
+
+That is highly informative.
+
+This is one reason BM25 works so well for technical corpora.
+
+Technical identifiers often have extremely high discriminative value.
+
+---
+
+## Document-Length Normalization Controls Accidental Matching
+
+A 200-page runbook naturally contains more terms than a focused five-paragraph incident note.
+
+Without normalization, long documents receive an unfair advantage simply because they contain more opportunities for matching.
+
+The \(b\) parameter controls how strongly BM25 normalizes for document length.
+
+Typical defaults are often near:
+
+```text
+k1 ≈ 1.2–2.0
+b ≈ 0.75
+```
+
+but these are not laws of nature.
+
+The correct values depend on:
+
+- document granularity;
+- corpus style;
+- analyzer behavior;
+- information needs.
+
+A corpus of short code symbols and a corpus of long legal documents should not be assumed to share one optimal configuration.
+
+---
+
+## Analyzer Design Can Matter More Than Parameter Tuning
+
+BM25 operates over tokens.
+
+How text becomes tokens is therefore part of the ranking model.
+
+Analyzer decisions include:
+
+```text
+lowercasing
+stemming
+lemmatization
+stopword removal
+punctuation handling
+hyphen handling
+Unicode normalization
+language-specific rules
+```
+
+For general prose, aggressive normalization can improve recall.
+
+For technical corpora, it can destroy identity.
+
+Consider:
+
+```text
+CI_JOB_TOKEN
+CVE-2026-12345
+sha256:abcd...
+registry.company.local:5000
+```
+
+A generic language analyzer may split or normalize these in undesirable ways.
+
+The retrieval team should treat analyzers as production code.
+
+---
+
+## Field Structure Creates Another Relevance Signal
+
+Documents are not flat text.
+
+They have fields:
+
+```text
+title
+heading
+body
+tags
+code block
+error message
+identifier
+```
+
+A match in a title may be stronger evidence than the same match in a footer.
+
+BM25F extends the probabilistic ranking approach across structured fields.[^1]
+
+Conceptually:
+
+\[
+score =
+w_t\cdot title
++
+w_h\cdot heading
++
+w_b\cdot body
+\]
+
+with field-specific normalization.
+
+This is especially useful in enterprise search.
+
+Example:
+
+```text
+title:
+"GitLab Runner x509 Failure"
+
+body:
+contains many generic TLS terms
+```
+
+The title deserves strong ranking influence.
+
+---
+
+## Exact Identifiers Are the Natural Habitat of Lexical Search
+
+A user asking:
+
+```text
+What affects CVE-2026-12345?
+```
+
+does not want:
+
+```text
+a semantically related vulnerability
+```
+
+They want:
+
+```text
+that vulnerability
+```
+
+Likewise:
+
+```text
+pod/payments-api-58dc
+```
+
+is an identity.
+
+Not a concept.
+
+BM25 and exact term matching preserve this distinction naturally.
+
+This is why lexical search remains essential even in highly semantic systems.
+
+---
+
+## Stack Traces Are More Lexical Than They Look
+
+A stack trace contains:
+
+```text
+class names
+method names
+line numbers
+error strings
+package paths
+```
+
+Semantically, two failures may be related.
+
+Operationally, one exact line such as:
+
+```text
+javax.net.ssl.SSLHandshakeException
+```
+
+can be decisive.
+
+A hybrid system can use:
+
+```text
+BM25:
+exact trace anchors
+
+Vector Search:
+similar failure narratives
+```
+
+This is stronger than either alone.
+
+---
+
+## BM25 Is Also Strong for Source Code Metadata
+
+For code retrieval, identifiers matter:
+
+```text
+verifyAccessToken
+CI_JOB_TOKEN
+securityContext
+imagePullSecrets
+```
+
+Semantic code embeddings help with questions such as:
+
+```text
+Where is login throttling implemented?
+```
+
+But BM25 remains excellent when the query names:
+
+```text
+function
+class
+constant
+environment variable
+configuration field
+```
+
+This suggests route-by-intent rather than dense-only code search.
+
+---
+
+## BM25 in RAG Is Often a Candidate Generator
+
+A modern RAG pipeline may use:
+
+```text
+query
+   ↓
+BM25
+   ↓
+top 100
+   ↓
+reranker
+   ↓
+top 10
+   ↓
+LLM
+```
+
+BM25 does not need to produce the final ranking.
+
+Its role is to preserve exact lexical evidence during candidate generation.
+
+This can be especially valuable when dense embeddings miss rare identifiers.
+
+---
+
+## BM25 in Agentic Systems Becomes a Routing Target
+
+An agent can classify a query:
+
+```text
+contains CVE / hash / ticket / resource id
+→ BM25 or exact search
+
+abstract concept
+→ vector search
+
+mixed query
+→ hybrid
+```
+
+This is a useful example of model-based orchestration around deterministic retrieval.
+
+The agent does not replace BM25.
+
+It decides when BM25 is the appropriate tool.
+
+---
+
+## Lexical Retrieval Has an Explainability Advantage
+
+BM25 is relatively interpretable.
+
+A ranking can often be explained through:
+
+```text
+matched terms
+term frequency
+document frequency
+field
+document length
+```
+
+This is useful for:
+
+- debugging;
+- audit;
+- relevance tuning;
+- user-facing explanations.
+
+Dense vector similarity is usually harder to interpret at the feature level.
+
+In security or regulated domains, this difference can matter.
+
+---
+
+## BM25 Does Not Understand Synonyms
+
+Query:
+
+```text
+login brute-force protection
+```
+
+Relevant document:
+
+```text
+authentication throttling and credential abuse controls
+```
+
+Lexical overlap may be weak.
+
+This is the core limitation.
+
+BM25 only sees terms produced by the analyzer.
+
+It does not infer semantic equivalence on its own.
+
+Possible mitigations include:
+
+- synonyms;
+- query expansion;
+- learned sparse retrieval;
+- dense retrieval;
+- hybrid search.
+
+---
+
+## Query Expansion Must Be Used Carefully
+
+A search system may expand:
+
+```text
+login
+→ authentication
+
+brute force
+→ credential attack
+```
+
+This can improve recall.
+
+It can also cause drift.
+
+A security query for:
+
+```text
+token theft
+```
+
+should not expand so broadly that generic identity documents dominate.
+
+Expansion should be evaluated on real relevance judgments.
+
+---
+
+## Learned Sparse Retrieval Modernizes the Lexical Family
+
+SPLADE uses learned sparse representations with term expansion while retaining sparse retrieval structure.[^2]
+
+This creates a continuum:
+
+```text
+classic BM25
+→ manually expanded lexical search
+→ learned sparse retrieval
+→ dense retrieval
+```
+
+Modern retrieval systems can choose among these signals rather than treating BM25 and embeddings as the only options.
+
+---
+
+## BM25 Scores Are Query-Relative
+
+A BM25 score of:
+
+```text
+14.2
+```
+
+does not mean the same thing across every query.
+
+The scale depends on:
+
+- query terms;
+- corpus frequencies;
+- field structure;
+- analyzer configuration.
+
+This matters in hybrid fusion.
+
+Raw BM25 scores should not be naively added to cosine similarities.
+
+Use:
+
+- calibrated features;
+- normalization;
+- rank fusion;
+- learning-to-rank.
+
+---
+
+## RRF Avoids BM25/Dense Score Comparability
+
+Reciprocal Rank Fusion combines positions:
+
+\[
+RRF(d)
+=
+\sum_i
+\frac{1}{k+rank_i(d)}
+\]
+
+This lets a BM25 ranking and vector ranking contribute without assuming that their raw scores share a scale.[^3]
+
+This is one of the reasons RRF is common in practical hybrid architectures.
+
+---
+
+## Chunking Affects BM25 Differently from Dense Search
+
+A long chunk affects:
+
+- document-length normalization;
+- term density;
+- accidental matches.
+
+A short chunk affects:
+
+- context completeness;
+- co-occurrence;
+- phrase evidence.
+
+Therefore chunking is not neutral for lexical ranking.
+
+A RAG pipeline should evaluate chunk strategies separately for BM25 and dense retrieval.
+
+The best dense chunk may not be the best lexical chunk.
+
+---
+
+## Parent-Child Retrieval Can Benefit BM25 Too
+
+The child chunk can be the unit of lexical retrieval:
+
+```text
+small section with exact error
+```
+
+The parent can be the context delivered to the LLM:
+
+```text
+full troubleshooting section
+```
+
+This preserves lexical precision while providing enough explanatory context.
+
+Parent-child retrieval is not exclusively a vector-search technique.
+
+---
+
+## Multilingual Search Exposes BM25's Limits
+
+A German query:
+
+```text
+Zertifikatsprüfung fehlgeschlagen
+```
+
+will not automatically find an English document:
+
+```text
+certificate validation failure
+```
+
+unless translation, synonyms, or multilingual lexical expansion is used.
+
+Multilingual embeddings can bridge the semantic gap more naturally.
+
+A multilingual architecture may therefore use:
+
+```text
+BM25 within language
++
+multilingual vector retrieval across language
+```
+
+---
+
+## BM25 Security: Relevance Can Be Manipulated
+
+An attacker who controls indexed content can repeat target terms.
+
+BM25's saturation limits simplistic keyword stuffing.
+
+It does not eliminate adversarial ranking manipulation.
+
+A poisoned document can deliberately include:
+
+```text
+CVE identifier
+product name
+error string
+high-value terminology
+```
+
+to increase retrieval probability.
+
+If the content also contains malicious instructions, retrieval becomes an indirect prompt-injection channel.
+
+---
+
+## Poisoning Attacks the Retrieval Layer, Not the Formula Alone
+
+The important security chain is:
+
+```text
+attacker controls document
+   ↓
+document indexes successfully
+   ↓
+high lexical relevance
+   ↓
+RAG retrieves document
+   ↓
+LLM consumes content
+```
+
+The BM25 algorithm may be functioning exactly as designed.
+
+The failure lies in:
+
+- source trust;
+- ingestion governance;
+- context authority;
+- agent permissions.
+
+This is why relevance must never be treated as trust.
+
+---
+
+## Provenance Should Survive Candidate Generation
+
+A BM25 result should carry:
+
+```text
+source
+owner
+timestamp
+classification
+tenant
+signature/verification
+```
+
+The ranking stage can then distinguish:
+
+```text
+official runbook
+```
+
+from:
+
+```text
+unverified user page
+```
+
+even when both match the same terms.
+
+---
+
+## BM25 in a Security Knowledge Base
+
+A security query may include:
+
+```text
+CVE-2026-12345
+OpenSSL
+container image
+production
+```
+
+BM25 can reliably retrieve:
+
+- the exact CVE advisory;
+- internal findings mentioning that identifier;
+- asset records containing the package.
+
+Dense search can retrieve:
+
+- similar vulnerabilities;
+- remediation guidance;
+- conceptually related hardening documentation.
+
+A hybrid system preserves both identity and context.
+
+---
+
+## Evaluation Needs Ground Truth, Not Intuition
+
+Create a query set:
+
+```yaml
+query: "ERR_CERT_AUTHORITY_INVALID runner"
+relevant:
+  - incident-182
+  - ca-runbook
+```
+
+Then evaluate:
+
+\[
+Precision@K
+\]
+
+\[
+Recall@K
+\]
+
+\[
+MRR
+\]
+
+\[
+NDCG
+\]
+
+\[
+HitRate@K
+\]
+
+Measure latency separately.
+
+The search engine should be tuned against representative tasks, not synthetic keyword lists alone.
+
+---
+
+## Ablation Testing Reveals BM25's Contribution
+
+Compare:
+
+```text
+dense only
+BM25 only
+hybrid
+hybrid + reranker
+```
+
+Then slice by query type.
+
+A likely result:
+
+```text
+exact identifiers:
+  BM25 strong
+
+natural-language concepts:
+  dense strong
+
+mixed technical queries:
+  hybrid strongest
+```
+
+The purpose of BM25 in modern AI is not to win every query.
+
+It is to prevent a semantic retrieval system from losing lexical precision where lexical precision is essential.
+
+---
+
+## Operational Changes Can Shift Rankings
+
+BM25 behavior changes when:
+
+- analyzer changes;
+- corpus grows;
+- document lengths change;
+- fields are reweighted;
+- stopwords change;
+- stemming changes;
+- chunking changes.
+
+Therefore search configuration deserves versioning.
+
+A production trace should capture at least:
+
+```text
+index version
+analyzer version
+ranking parameters
+query
+candidate ranks
+```
+
+This makes search regressions reproducible.
+
+---
+
+## A Modern Retrieval Stack
+
+```text
+                    Query
+                      │
+             Query Classification
+                      │
+      ┌───────────────┼────────────────┐
+      ▼               ▼                ▼
+    BM25           Dense            Exact ID
+      │               │                │
+      └───────────────┼────────────────┘
+                      ▼
+                    Fusion
+                      ▼
+                  Reranker
+                      ▼
+              Security Filters
+                      ▼
+               Context Builder
+                      ▼
+                    LLM
+```
+
+BM25 remains a first-class component because the world contains exact identifiers.
+
+---
+
+## What BM25 Is Not
+
+BM25 is not:
+
+```text
+semantic understanding
+a truth score
+an authorization decision
+a complete RAG system
+```
+
+It is a lexical relevance model.
+
+Its strength comes from being narrow and predictable.
+
+Modern AI does not reduce the value of narrow, predictable components.
+
+It often increases it.
+
+---
+
+## Conclusion
+
+BM25 survives in modern AI architectures because embeddings did not eliminate lexical information needs.
+
+Technical systems are full of strings whose identity matters:
+
+```text
+CVE
+hash
+version
+ticket
+resource
+error
+symbol
+```
+
+BM25 ranks these signals efficiently and transparently.
+
+Its limitations—synonyms, paraphrases, cross-lingual semantics—are real.
+
+That is why the strongest architecture rarely chooses:
+
+```text
+BM25 or vectors
+```
+
+It chooses:
+
+```text
+BM25 for lexical precision
++
+dense retrieval for semantic reach
++
+reranking for final judgment
+```
+
+The continued relevance of BM25 is not evidence that AI search failed to advance.
+
+It is evidence that **semantic similarity and lexical identity solve different retrieval problems**.
+
+## References
+
+[^1]: Robertson, S., Zaragoza, H., *The Probabilistic Relevance Framework: BM25 and Beyond*. Foundations and Trends in Information Retrieval. https://doi.org/10.1561/1500000019
+[^2]: Formal, T. et al., *SPLADE: Sparse Lexical and Expansion Model for First Stage Ranking*. https://arxiv.org/abs/2107.05720
+[^3]: Cormack, G. V., Clarke, C. L. A., Büttcher, S., *Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods*. https://research.google/pubs/reciprocal-rank-fusion-outperforms-condorcet-and-individual-rank-learning-methods/

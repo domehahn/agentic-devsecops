@@ -1,0 +1,494 @@
+---
+title: "RAG, Agentic RAG, and GraphRAG: Three Architectures for Governing Knowledge at Inference Time"
+description: "A deep comparative essay on classical RAG, Agentic RAG, and GraphRAG across knowledge representation, control logic, retrieval, epistemic coverage, cost, governance, evaluation, and hybrid deployment patterns."
+date: "2026-08-28"
+author: "dome"
+topics: [rag, agentic-rag, graphrag]
+tags: [RAG, Agentic RAG, GraphRAG, Knowledge Graphs, Retrieval]
+featured: false
+draft: false
+series:
+  slug: agentic-ai-architecture-security
+  title: "Agentic AI Architecture and Security"
+  order: 10
+---
+
+# RAG, Agentic RAG, and GraphRAG: Three Architectures for Governing Knowledge at Inference Time
+
+Classical RAG, Agentic RAG, and GraphRAG are often presented as maturity levels: first retrieve documents, then add an agent, then build a graph. That interpretation is misleading.
+
+They solve different knowledge problems.
+
+Classical RAG optimizes **document evidence retrieval**.
+
+Agentic RAG introduces **adaptive control over the evidence-gathering process**.
+
+GraphRAG makes **relationships and higher-order structure explicit** so the system can reason over entities, communities, and graph-derived summaries.
+
+None is universally superior. The correct choice depends on the shape of the knowledge and the questions being asked.
+
+## Three Different Answers to “What Is Knowledge?”
+
+A useful comparison begins with representation.
+
+### Classical RAG
+
+Knowledge is primarily a collection of retrievable passages:
+
+```text
+document
+ → chunks
+ → embeddings / lexical index
+```
+
+### Agentic RAG
+
+Knowledge is an evolving evidence state:
+
+```text
+question
+ → retrieval
+ → evidence gap
+ → new query
+ → revised evidence
+```
+
+### GraphRAG
+
+Knowledge is explicitly structured into entities, relations, claims, communities, and summaries:
+
+```text
+Entity A ──relation──> Entity B
+   │                     │
+   └──── community ──────┘
+```
+
+These representations create different retrieval strengths and failure modes.
+
+## Classical RAG: Bounded, Efficient, and Often Sufficient
+
+A classical pipeline is usually designed before runtime:
+
+```text
+Query
+  ↓
+Retriever
+  ↓
+Top-k evidence
+  ↓
+Generator
+```
+
+This “linear” description refers to control flow, not implementation simplicity. A production RAG system may already include query rewriting, hybrid retrieval, metadata filters, reranking, and citation validation.
+
+Its principal advantage is **boundedness**.
+
+The number of retrieval rounds, tools, and model calls is predictable. Latency and cost can be controlled. Failure analysis is easier because the path is stable.
+
+Classical RAG is often the best architecture when:
+
+- users ask direct questions over a well-curated corpus;
+- one retrieval round usually finds sufficient evidence;
+- low latency matters;
+- the corpus changes more often than the reasoning strategy.
+
+## The Classical RAG Failure: The System Guesses Relevance Up Front
+
+The pipeline must decide what to retrieve before seeing the answer.
+
+For a simple question this is fine.
+
+For a multi-hop task:
+
+```text
+"Which platform change caused the security control to fail,
+and which team owns the relevant dependency?"
+```
+
+the necessary evidence may span deployment history, architecture docs, ownership metadata, and a security policy.
+
+A single query may not express all of that.
+
+The system needs **iterative evidence acquisition**.
+
+## Agentic RAG: Retrieval Becomes a Control Loop
+
+Agentic RAG adds an explicit decision loop:
+
+```text
+Goal
+ ↓
+Form query
+ ↓
+Retrieve
+ ↓
+Evaluate evidence
+ ↓
+Enough?
+ ├─ yes → synthesize
+ └─ no  → rewrite / decompose / choose another source
+                 ↺
+```
+
+The defining feature is not simply that “an LLM is present.” Classical RAG already has an LLM.
+
+The defining feature is that model reasoning participates in **deciding what evidence to acquire next**.
+
+## Agentic Retrieval Treats Knowledge as a Hypothesis Space
+
+Suppose an incident agent sees:
+
+```text
+symptom: API timeouts after deployment
+```
+
+It can maintain competing hypotheses:
+
+```text
+H1: dependency regression
+H2: database saturation
+H3: network policy change
+H4: credential failure
+```
+
+Retrieval becomes experimental:
+
+```text
+query logs to distinguish H2/H3
+query deployment diff to test H1
+query auth events to test H4
+```
+
+This is qualitatively different from retrieving the top five documents once.
+
+## Self-Evaluation Needs External Anchors
+
+Agentic RAG is often described as “self-correcting.” That phrase should be used carefully.
+
+The model can critique whether evidence appears sufficient, but an LLM evaluating its own reasoning is not an independent verifier.
+
+Strong stopping conditions can include:
+
+```text
+required claims all supported
+source diversity threshold
+no unresolved contradiction
+max retrieval budget
+external verifier passed
+human escalation
+```
+
+The agent controls search. Deterministic runtime controls its budget and authority.
+
+## Agentic RAG Costs More Because Search Is Sequential
+
+A classical retrieval call may require one embedding query and one generation.
+
+An agentic trajectory may require:
+
+```text
+query rewrite
+retrieval
+reranking
+evidence critique
+second retrieval
+web/database tool
+verification
+final generation
+```
+
+The added cost can be justified when the task is high value and evidence requirements are complex.
+
+It is wasteful when a simple retrieval already answers the question.
+
+A mature router should therefore decide when *not* to use the agentic path.
+
+## GraphRAG: Structure Before Query Time
+
+GraphRAG shifts complexity into indexing and representation.
+
+A graph-oriented pipeline can extract:
+
+```text
+entities
+relationships
+claims
+communities
+community summaries
+```
+
+from a corpus.
+
+Microsoft's GraphRAG implementation, for example, builds graph structure and supports several query modes, including Local Search, Global Search, DRIFT Search, and Basic Search.[^1]
+
+This creates retrieval options that ordinary chunk similarity does not naturally provide.
+
+## Local Search: Entity-Centered Context
+
+Local Search begins from entities related to the query and combines graph relationships with source text.
+
+This is useful for questions such as:
+
+```text
+How is service A related to team B, project C,
+and control D?
+```
+
+The graph provides explicit relational neighborhood structure.
+
+It does not guarantee correctness: entity extraction and relationship construction can be wrong.
+
+## Global Search: Corpus-Level Questions
+
+Some questions ask about the dataset as a whole:
+
+```text
+What are the major recurring themes in these incident reports?
+Which systemic risks appear across the organization?
+```
+
+Retrieving a few semantically similar chunks is a poor strategy because no individual chunk represents the corpus.
+
+GraphRAG Global Search uses community-level summaries and a map-reduce-style process to reason over broader structure.[^2]
+
+This is one of GraphRAG's strongest differentiators.
+
+## DRIFT Search: Local Grounding with Broader Exploration
+
+DRIFT Search combines local graph grounding with broader community information and iterative expansion.[^3]
+
+Conceptually:
+
+```text
+query
+ ↓
+local entity context
+ ↓
+community-level signals
+ ↓
+follow-up exploration
+ ↓
+synthesis
+```
+
+This begins to blur the boundary between graph retrieval and agentic exploration.
+
+The important point is that “GraphRAG” is not one fixed traversal algorithm. Contemporary implementations expose several search modes for different question types.
+
+## GraphRAG Is Not Automatically More Factual
+
+The source comparison characterizes GraphRAG as having very high factuality. That is too absolute.
+
+Graph-based retrieval can improve relational and global-corpus reasoning, but it introduces new errors:
+
+```text
+entity extraction error
+relationship extraction error
+entity resolution error
+community clustering error
+summary distortion
+graph staleness
+```
+
+A beautifully traversed graph can still contain a false edge.
+
+The correct claim is workload-dependent:
+
+> GraphRAG can improve evidence organization for questions whose answer depends on explicit relationships or corpus-level structure.
+
+It is not a universal factuality upgrade.
+
+## Knowledge Representation Determines Maintenance Cost
+
+Classical RAG can often ingest a document with relatively little semantic modeling.
+
+GraphRAG requires more preprocessing:
+
+```text
+entity extraction
+relationship extraction
+resolution / deduplication
+community construction
+summary generation
+```
+
+That creates higher indexing cost and more artifacts to keep current.
+
+The added complexity is justified when graph structure is repeatedly useful.
+
+If users only search product documentation for direct answers, a graph may be unnecessary infrastructure.
+
+## Retrieval Strategy Comparison
+
+| Dimension | Classical RAG | Agentic RAG | GraphRAG |
+| --- | --- | --- | --- |
+| Primary unit | Passage/document | Evolving evidence state | Entity/relationship/community + text |
+| Control | Mostly predefined | Iterative/model-directed | Query-mode dependent |
+| Retrieval rounds | Usually bounded | Dynamic | Mode-dependent |
+| Best at | Direct knowledge lookup | Multi-step evidence gathering | Relational/global corpus questions |
+| Latency predictability | High | Lower | Medium |
+| Indexing complexity | Low–medium | Similar corpus + orchestration | High |
+| Runtime complexity | Low–medium | High | Medium–high |
+| Main failure | Missed/irrelevant evidence | Search drift / loops / bad self-evaluation | Extraction/graph construction error |
+
+The table describes tendencies, not guarantees.
+
+## Epistemic Coverage Is a Better Comparison Than “Answer Quality”
+
+Instead of asking which architecture has the “best answers,” ask which one can economically acquire the required evidence.
+
+Classical RAG can have excellent coverage when the question maps cleanly to passages.
+
+Agentic RAG can improve coverage when the query must be decomposed or refined.
+
+GraphRAG can improve coverage when evidence is distributed across relationships or corpus-level patterns.
+
+The architecture should match the evidence topology.
+
+## Governance Differs by Architecture
+
+### Classical RAG governance
+
+Focus on:
+
+```text
+corpus provenance
+authorization
+index freshness
+citation support
+```
+
+### Agentic RAG governance
+
+Add:
+
+```text
+retrieval-tool policy
+iteration budgets
+query logging
+source expansion rules
+stopping criteria
+```
+
+### GraphRAG governance
+
+Add:
+
+```text
+graph lineage
+entity provenance
+relationship provenance
+community-summary versions
+rebuild policy
+```
+
+The more derived knowledge the system creates, the more important lineage becomes.
+
+## Security Changes Too
+
+Classical RAG is vulnerable to corpus poisoning and prompt injection in retrieved text.
+
+Agentic RAG expands the attack surface because the model may choose additional sources and tools dynamically.
+
+GraphRAG introduces poisoning opportunities in entity and relationship extraction: an attacker may try to create misleading high-connectivity entities or false relations.
+
+All three need authorization before evidence reaches the model.
+
+## Hybrid Architecture: Use the Right Retriever at the Right Time
+
+A strong production system can combine all three:
+
+```text
+User Question
+   ↓
+Query Router
+   ├─ direct factual lookup → Classical RAG
+   ├─ relational question  → GraphRAG Local
+   ├─ corpus-wide theme    → GraphRAG Global
+   └─ complex investigation → Agentic RAG
+                               ├─ vector search
+                               ├─ graph search
+                               ├─ SQL/API
+                               └─ web/internal tools
+```
+
+The agent should not automatically own every query.
+
+Routing preserves efficiency.
+
+## Example: Security Incident Investigation
+
+Question:
+
+```text
+"Why did access-control failures increase after the July platform migration?"
+```
+
+Classical RAG can retrieve migration docs and incident reports.
+
+GraphRAG can connect services, teams, components, and recurring incident themes.
+
+Agentic RAG can iteratively retrieve telemetry, test hypotheses, compare pre/post migration evidence, and stop when the causal explanation is sufficiently supported.
+
+The three architectures answer different subproblems.
+
+## Evaluation Must Match the Architecture
+
+### Classical RAG
+
+Measure passage recall, ranking precision, faithfulness, and citation correctness.
+
+### Agentic RAG
+
+Add trajectory measures:
+
+```text
+queries per task
+new evidence per iteration
+loop rate
+premature stop rate
+cost to reach sufficient coverage
+```
+
+### GraphRAG
+
+Add graph quality:
+
+```text
+entity precision/recall
+relationship quality
+entity resolution
+community usefulness
+source provenance of graph claims
+```
+
+An end-to-end answer metric alone cannot identify the failing layer.
+
+## Decision Heuristic
+
+Choose classical RAG when the path to evidence is known and one or two retrieval rounds are sufficient.
+
+Choose Agentic RAG when the system must discover which evidence is relevant while the task unfolds.
+
+Choose GraphRAG when relationships and corpus-wide structure are first-class parts of the questions.
+
+Combine them when the workload spans all three.
+
+## Conclusion
+
+RAG, Agentic RAG, and GraphRAG are not a ladder from primitive to advanced. They are different **control and representation strategies for external knowledge**.
+
+Classical RAG retrieves passages efficiently.
+
+Agentic RAG makes retrieval adaptive and iterative.
+
+GraphRAG invests in explicit structure so relational and corpus-level questions can be answered through graph-aware retrieval and summaries.
+
+The best architecture follows the knowledge problem rather than the trend. Use the simplest retrieval control that achieves the required evidence coverage, preserve provenance as derived structure increases, and reserve adaptive search for tasks whose uncertainty genuinely requires it.
+
+## References
+
+[^1]: Microsoft Research, *GraphRAG Query Overview*. https://microsoft.github.io/graphrag/query/overview/
+[^2]: Microsoft GraphRAG, *Global Search*. https://microsoft.github.io/graphrag/query/global_search/
+[^3]: Microsoft GraphRAG, *DRIFT Search*. https://microsoft.github.io/graphrag/query/drift_search/
+4. Lewis, P. et al., *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks*. https://arxiv.org/abs/2005.11401

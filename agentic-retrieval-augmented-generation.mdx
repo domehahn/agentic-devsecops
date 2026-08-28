@@ -1,0 +1,810 @@
+---
+title: "Agentic Retrieval-Augmented Generation: Designing Epistemic Control Loops for Adaptive Knowledge Systems"
+description: "A deep technical essay on Agentic RAG: adaptive retrieval, query planning, reranking, evidence criticism, stopping rules, evaluation, state graphs, self-correction, offline optimization, security, and production architecture."
+date: "2026-08-27"
+author: "dome"
+topics:
+  - rag
+  - agentic-engineering
+  - ai-engineering
+tags:
+  - Agentic RAG
+  - Retrieval-Augmented Generation
+  - Self-RAG
+  - CRAG
+  - Adaptive-RAG
+  - RAG Evaluation
+featured: false
+draft: false
+---
+
+# Agentic Retrieval-Augmented Generation: Designing Epistemic Control Loops for Adaptive Knowledge Systems
+
+Retrieval-Augmented Generation was introduced as a way to combine the generative capabilities of language models with explicit non-parametric knowledge. Instead of forcing a model to answer entirely from its parameters, RAG retrieves external passages and conditions generation on them.[^1]
+
+The basic pattern is straightforward:
+
+```text
+question
+  ↓
+retrieve documents
+  ↓
+construct context
+  ↓
+generate answer
+```
+
+The simplicity is also its limitation.
+
+A fixed pipeline assumes that the system already knows:
+
+- whether retrieval is necessary;
+- which corpus to search;
+- how to formulate the query;
+- how many documents are enough;
+- whether retrieved evidence is relevant;
+- whether the evidence is complete;
+- whether the sources contradict one another;
+- when the system should stop retrieving;
+- when it should abstain.
+
+Agentic Retrieval-Augmented Generation treats these questions as **runtime decisions**.
+
+The source paper captures that transition by describing knowledge acquisition as an iterative epistemic process: form a retrieval hypothesis, search for evidence, assess that evidence, revise the query, and continue until sufficient support exists. It proposes logical roles such as Router, Planner, Retriever, Relevance Critic, Query Refiner, Generator, and Faithfulness Agent, while correctly noting that logical roles do not require physically separate agents.
+
+That foundation can be developed further.
+
+Agentic RAG is best understood not as “RAG plus an agent,” but as a **controlled evidence-acquisition system in which retrieval policy, evidence evaluation, and synthesis become part of a bounded decision loop**.
+
+---
+
+## Traditional RAG Solves a Grounding Problem; Agentic RAG Solves a Control Problem
+
+Classical RAG asks:
+
+```text
+Given query q, retrieve context C and generate answer y.
+```
+
+Agentic RAG must also decide:
+
+```text
+Do I need C?
+Which C?
+From where?
+How do I know C is sufficient?
+What should I do if C is poor?
+```
+
+The distinction is architectural.
+
+A fixed RAG pipeline can be modeled roughly as a function:
+
+```text
+y = G(q, R(q))
+```
+
+where `R` is retrieval and `G` generation.
+
+An agentic pipeline has state:
+
+```text
+s_t = {
+  original_question,
+  current_subproblem,
+  retrieved_evidence,
+  unresolved_claims,
+  search_history,
+  cost_budget,
+  confidence_state
+}
+```
+
+The next action is selected conditionally:
+
+```text
+a_t = policy(s_t)
+```
+
+Possible actions include:
+
+```text
+retrieve
+rewrite_query
+search_other_source
+rerank
+verify_claim
+ask_user
+synthesize
+abstain
+stop
+```
+
+That is the essence of the agentic extension.
+
+---
+
+## Retrieval Should Be Conditional, Not Ritualistic
+
+A common RAG anti-pattern is retrieving for every request.
+
+```text
+"Hello" → vector search
+"Summarize this paragraph" → vector search
+"What does our policy say?" → vector search
+```
+
+This wastes latency and can introduce irrelevant evidence.
+
+Self-RAG demonstrated an adaptive approach in which a model learns to retrieve on demand and to reflect on retrieval relevance and generation quality.[^2]
+
+Adaptive-RAG similarly chooses among retrieval strategies according to query complexity rather than applying the most expensive strategy to every question.[^3]
+
+This suggests a routing decision:
+
+```text
+query
+  ├─ answerable from supplied context → no retrieval
+  ├─ simple factual lookup → single retrieval
+  ├─ multi-hop question → decomposed retrieval
+  └─ insufficiently specified → clarification
+```
+
+The router is not an optimization detail.
+
+It determines the **epistemic cost model** of the system.
+
+---
+
+## Query Planning Is Where Agentic RAG Becomes Truly Different
+
+Many information needs are not well represented by one search string.
+
+Consider:
+
+> “Which security controls changed between the last two platform releases, and what operational impact do they have on our deployment process?”
+
+A useful plan may decompose into:
+
+```text
+A. identify relevant releases
+B. retrieve release notes
+C. extract security-related changes
+D. retrieve operational documentation for affected features
+E. compare old and new behavior
+F. synthesize impact
+```
+
+The system can represent unresolved evidence explicitly:
+
+```yaml
+claims:
+  release_changes:
+    status: supported
+  affected_controls:
+    status: supported
+  deployment_impact:
+    status: partial
+  rollback_implications:
+    status: missing
+```
+
+The next retrieval action follows from the missing claim, not from a generic “search again” instruction.
+
+This is a major difference between **iterative retrieval** and **random retries**.
+
+---
+
+## The Query Is a Hypothesis About Where Evidence Lives
+
+The source paper uses the analogy of scientific inquiry. The useful part of that analogy is not that the agent is a scientist; it is that retrieval queries are **hypotheses about evidence location**.
+
+```text
+hypothesis:
+    authoritative evidence is likely in release notes
+
+query:
+    product X release 8.2 security changes
+
+observation:
+    release notes mention feature but not operational impact
+
+revision:
+    search deployment documentation
+```
+
+This gives query refinement a purpose.
+
+A poor refinement loop often does this:
+
+```text
+query failed
+→ paraphrase query
+→ paraphrase again
+→ broaden query
+```
+
+A better loop updates the **evidence model**:
+
+```text
+What information is missing?
+Which source class could contain it?
+Which retrieval strategy best addresses that class?
+```
+
+---
+
+## Agentic RAG Needs a Source Policy Before It Needs More Agents
+
+The quality of a knowledge system depends heavily on where it is allowed to retrieve.
+
+A production source catalog should carry metadata such as:
+
+```yaml
+source:
+  id: regulator-guidance
+  authority: primary
+  freshness_sla: 24h
+  tenant_scope: global
+  classification: public
+  retrieval_mode: keyword+vector
+```
+
+A legal or compliance system may use an authority hierarchy:
+
+```text
+law / regulation
+   ↓
+official guidance
+   ↓
+internal policy
+   ↓
+approved commentary
+   ↓
+general web
+```
+
+An agent should not compensate for a weak source policy by adding more reasoning loops.
+
+No amount of query sophistication turns an untrusted corpus into authoritative evidence.
+
+---
+
+## The Retrieval Stack Is More Than a Vector Database
+
+Agentic RAG is often illustrated as:
+
+```text
+LLM ↔ vector DB
+```
+
+Real systems may need:
+
+- lexical retrieval;
+- dense embeddings;
+- metadata filters;
+- hybrid search;
+- graph traversal;
+- SQL;
+- APIs;
+- web search;
+- source-specific retrievers.
+
+A router can choose among them:
+
+```text
+question
+  ↓
+source intent
+  ├─ exact identifier → keyword / database
+  ├─ semantic concept → dense retrieval
+  ├─ relationship → graph
+  ├─ current public fact → web/API
+  └─ multi-source → parallel retrieval
+```
+
+The “retriever” is therefore frequently a **tool family**, not one component. A 2026 revision of a dedicated Agentic RAG survey likewise frames the design space across dimensions such as agent cardinality, control structure, autonomy, and knowledge representation rather than reducing Agentic RAG to one fixed pipeline.[^8]
+
+---
+
+## Reranking Separates Candidate Discovery from Evidence Selection
+
+Initial retrieval should often prioritize recall.
+
+Reranking can then prioritize relevance.
+
+```text
+query
+  ↓
+retrieve 50 candidates
+  ↓
+rerank
+  ↓
+select top evidence
+```
+
+This separation becomes especially important when the agent uses multiple retrieval modes.
+
+The evidence critic should evaluate more than semantic similarity.
+
+Potential dimensions include:
+
+```text
+relevance
+authority
+freshness
+specificity
+contradiction
+coverage
+access scope
+```
+
+A highly relevant outdated document may be inferior to a slightly less similar current primary source.
+
+---
+
+## Corrective Retrieval Is a Control Pattern
+
+CRAG introduces a retrieval evaluator that assesses retrieval quality and can trigger different corrective actions when the evidence is poor.[^4]
+
+Architecturally, the useful abstraction is:
+
+```text
+retrieve
+   ↓
+evaluate evidence
+   ├─ good → synthesize
+   ├─ ambiguous → refine
+   └─ bad → alternate retrieval path
+```
+
+This should not be reduced to “add another LLM critic.”
+
+The evaluator can use:
+
+- deterministic metadata checks;
+- source authority;
+- retrieval scores;
+- document freshness;
+- model-based relevance judgments;
+- claim coverage.
+
+The strongest system combines them.
+
+---
+
+## Stopping Rules Matter as Much as Search Quality
+
+An agentic retriever can search forever.
+
+Every additional loop can increase:
+
+- cost;
+- latency;
+- context size;
+- contradiction probability;
+- exposure to low-quality sources.
+
+A bounded system needs termination conditions.
+
+Examples:
+
+```text
+max retrieval rounds
+max total documents
+max tokens
+max cost
+minimum evidence coverage
+minimum marginal information gain
+```
+
+A useful policy might be:
+
+```text
+STOP if:
+  evidence_coverage ≥ threshold
+  AND unresolved_critical_claims = 0
+
+ABSTAIN if:
+  max_rounds reached
+  AND critical evidence missing
+```
+
+The source paper describes limited cycles and non-answer behavior; these should be implemented as state-machine rules rather than informal model preferences.
+
+---
+
+## A State Graph Is Usually More Useful Than Calling Everything an MDP
+
+The source suggests that Agentic RAG can be modeled as a finite-horizon Markov Decision Process.
+
+That can be a useful theoretical analogy, but production systems rarely satisfy the assumptions needed to make the MDP framing exact.
+
+Observations are incomplete.
+
+State representations are approximate.
+
+Tool responses can be non-stationary.
+
+The environment may be partially observable.
+
+A practical implementation is often better represented as an explicit state graph:
+
+```text
+ANALYZE
+  ↓
+ROUTE
+  ├─ NO_RETRIEVAL → GENERATE
+  └─ RETRIEVE
+         ↓
+      EVALUATE_CONTEXT
+         ├─ SUFFICIENT → GENERATE
+         ├─ RETRY → REFINE_QUERY
+         └─ FAIL → ABSTAIN
+
+GENERATE
+  ↓
+VERIFY
+  ├─ PASS → COMPLETE
+  └─ FAIL → RETRIEVE / REVISE / ABSTAIN
+```
+
+This has an engineering advantage: it is testable.
+
+---
+
+## Logical Roles Should Not Automatically Become Separate Agents
+
+The source defines:
+
+- Router;
+- Planner;
+- Retriever;
+- Relevance Critic;
+- Query Refiner;
+- Generator;
+- Faithfulness Agent.
+
+These are useful **responsibilities**.
+
+They may be implemented as:
+
+### One model, multiple prompts
+
+Low coordination overhead.
+
+### One orchestrator plus deterministic components
+
+Often preferable where ranking, filtering, or validation can be mechanical.
+
+### Multiple specialist models
+
+Useful when context separation, model specialization, or independent evaluation provides measurable benefit.
+
+The anti-pattern is:
+
+```text
+one conceptual responsibility
+→ one new agent
+```
+
+More agents mean more:
+
+- messages;
+- latency;
+- state synchronization;
+- tool permissions;
+- security boundaries;
+- failure modes.
+
+Agent count is not a quality metric.
+
+---
+
+## Evaluation Must Decompose Retrieval and Generation
+
+RAGAS formalized a multi-dimensional evaluation approach for RAG systems rather than relying on a single answer score.[^5]
+
+For Agentic RAG, an evaluation model can include:
+
+### Retrieval quality
+
+```text
+context precision
+context recall
+```
+
+### Generation quality
+
+```text
+answer relevance
+faithfulness
+```
+
+### Agent quality
+
+```text
+query efficiency
+retrieval rounds
+cost
+abstention quality
+stopping decisions
+```
+
+### Evidence quality
+
+```text
+source authority
+citation correctness
+freshness
+claim coverage
+```
+
+The source paper says evaluation should influence runtime decisions. That is correct, but metrics should not “replace heuristics” automatically.
+
+Metrics are themselves models of quality.
+
+They need validation.
+
+---
+
+## Faithfulness Is Not Factuality
+
+An answer can be faithful to retrieved context and still be wrong if the source is wrong.
+
+```text
+source contains false claim
+   ↓
+answer accurately repeats source
+   ↓
+high faithfulness
+   ↓
+low factuality
+```
+
+This is why a knowledge architecture needs both:
+
+```text
+entailment / faithfulness
+and
+source authority / factual validation
+```
+
+The distinction becomes critical in:
+
+- compliance;
+- medicine;
+- legal research;
+- security intelligence.
+
+---
+
+## Agentic RAG Needs Security Controls at the Knowledge Boundary
+
+Retrieval introduces external data into model context.
+
+That creates two important risks.
+
+### Knowledge poisoning
+
+PoisonedRAG demonstrated that malicious texts injected into a retrieval database can manipulate downstream generated answers.[^6]
+
+### Indirect prompt injection
+
+Retrieved documents can contain instructions attempting to manipulate the agent rather than provide evidence.
+
+The secure architecture should therefore distinguish:
+
+```text
+retrieved content = data
+system/developer instruction = authority
+```
+
+The model may still be influenced by both, so runtime tool authorization must remain independent of model interpretation.
+
+For knowledge-only Agentic RAG, tool authority should usually remain narrow.
+
+---
+
+## Self-Improvement Should Happen Mostly Offline
+
+The source paper describes online reflection and offline optimization.
+
+That separation is important.
+
+### Online adaptation
+
+During one request, the system may:
+
+- rewrite query;
+- retrieve more;
+- switch retriever;
+- correct answer;
+- abstain.
+
+### Offline optimization
+
+Across many requests, the system may:
+
+- tune routing;
+- optimize prompts;
+- adjust retrieval weights;
+- improve query rewriting;
+- change evaluation thresholds.
+
+Persistent changes should flow through:
+
+```text
+telemetry
+  ↓
+error clustering
+  ↓
+candidate
+  ↓
+holdout
+  ↓
+regression
+  ↓
+canary
+  ↓
+promotion
+```
+
+The runtime agent should not silently rewrite the configuration that defines future retrieval policy.
+
+---
+
+## Cost-Aware Retrieval Is Part of Intelligence
+
+An “intelligent” retrieval strategy that costs 50 times more for a 1% quality increase may be a poor system.
+
+The agent should reason under a budget:
+
+```yaml
+budget:
+  retrieval_rounds: 4
+  max_documents: 40
+  max_latency_ms: 8000
+  max_model_calls: 8
+```
+
+A decision policy can consider expected marginal value:
+
+```text
+retrieve again if:
+    expected_quality_gain > expected_cost
+```
+
+The values need not be perfectly numeric. The architecture should at least represent the trade-off.
+
+---
+
+## A Production Reference Architecture
+
+```text
+User Query
+   ↓
+Risk / Intent Classification
+   ↓
+Retrieval Router
+   ├─ no retrieval needed
+   └─ retrieval required
+          ↓
+      Query Planner
+          ↓
+      Source Policy
+          ↓
+      Retriever Portfolio
+      ├─ lexical
+      ├─ vector
+      ├─ graph
+      ├─ API
+      └─ web
+          ↓
+      Reranker
+          ↓
+      Evidence Critic
+      ├─ enough → Generator
+      ├─ refine → Query Planner
+      └─ insufficient → Abstain
+
+Generator
+   ↓
+Claim / Citation Verifier
+   ↓
+Answer or Controlled Non-Answer
+
+Cross-cutting:
+state · budget · provenance · access control · tracing · evaluation
+```
+
+This architecture does not require seven independent agents.
+
+It requires seven independently testable responsibilities.
+
+---
+
+## When Agentic RAG Is Worth the Complexity
+
+Use it when:
+
+- queries vary substantially in complexity;
+- multi-hop evidence is common;
+- source selection matters;
+- retrieval quality needs runtime evaluation;
+- incorrect answers are more costly than additional latency;
+- abstention is acceptable;
+- evidence can be audited.
+
+Use simpler RAG when:
+
+- one corpus contains direct answers;
+- queries are predictable;
+- one retrieval pass performs well;
+- latency is critical;
+- extra loops do not materially improve quality.
+
+Anthropic's broader agent engineering guidance recommends increasing agentic complexity only when simpler solutions are insufficient.[^7] That principle applies directly to RAG.
+
+---
+
+## Conclusion
+
+Agentic Retrieval-Augmented Generation is best understood as an **epistemic control architecture**.
+
+Traditional RAG supplies external context.
+
+Agentic RAG decides how to acquire, evaluate, revise, and stop acquiring that context.
+
+The central loop is:
+
+```text
+question
+  ↓
+information need
+  ↓
+evidence acquisition
+  ↓
+evidence evaluation
+  ↓
+coverage decision
+  ↓
+revision or synthesis
+  ↓
+verification
+```
+
+The sophistication does not come from adding more agents.
+
+It comes from making formerly implicit decisions explicit and governable:
+
+- when to retrieve;
+- where to retrieve;
+- how to judge evidence;
+- how to represent missing information;
+- when to retry;
+- when to stop;
+- when to abstain;
+- how to verify claims;
+- how to learn from repeated failures without allowing the runtime system to rewrite itself unchecked.
+
+A trustworthy Agentic RAG system is therefore not the one that retrieves the most, reasons the longest, or uses the largest number of specialized agents.
+
+It is the one that can explain:
+
+> **What information was required, which evidence was acquired, why those sources were trusted, what remained unresolved, why the retrieval loop stopped, which claims are supported, and what the system did when the evidence was insufficient.**
+
+That is the difference between a retrieval pipeline and an engineered knowledge system.
+
+---
+
+## References
+
+[^1]: Lewis, P. et al., *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks*, 2020. https://arxiv.org/abs/2005.11401
+[^2]: Asai, A. et al., *Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection*, ICLR 2024. https://research.ibm.com/publications/self-rag-learning-to-retrieve-generate-and-critique-through-self-reflection
+[^3]: Jeong, S. et al., *Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity*, NAACL 2024. https://aclanthology.org/2024.naacl-long.389/
+[^4]: Yan, S.-Q. et al., *Corrective Retrieval Augmented Generation*, 2024. https://arxiv.org/abs/2401.15884
+[^5]: Es, S. et al., *RAGAs: Automated Evaluation of Retrieval Augmented Generation*, EACL 2024. https://aclanthology.org/2024.eacl-demo.16/
+[^6]: Zou, W. et al., *PoisonedRAG: Knowledge Corruption Attacks to Retrieval-Augmented Generation of Large Language Models*, USENIX Security 2025. https://www.usenix.org/conference/usenixsecurity25/presentation/zou-poisonedrag
+[^7]: Anthropic, *Building Effective Agents*, 2024. https://www.anthropic.com/engineering/building-effective-agents
+[^8]: Singh, A. et al., *Agentic Retrieval-Augmented Generation: A Survey on Agentic RAG*, revised 2026. https://arxiv.org/abs/2501.09136

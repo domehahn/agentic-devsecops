@@ -1,0 +1,280 @@
+---
+title: "Data Mining for Retrieval-Augmented Generation: Corpus Curation, Retrieval Quality, and Evidence Attribution"
+description: "A detailed essay on data mining across the full RAG lifecycle: source selection, corpus profiling, chunking, deduplication, embeddings, hybrid retrieval, query analysis, reranking, attribution, monitoring, and governance."
+date: "2026-08-27"
+author: "dome"
+topics: [rag, data-mining]
+tags: [RAG, Data Mining, Retrieval, Embeddings, Reranking]
+featured: false
+draft: false
+series:
+  slug: ai-foundations-to-agentic-systems
+  title: "AI Foundations to Agentic Systems"
+  order: 9
+---
+
+# Data Mining for Retrieval-Augmented Generation
+
+RAG quality is often discussed as if it were primarily a choice of embedding model.
+
+That framing is too narrow.
+
+A retrieval system can use an excellent embedding model and still fail because the corpus is incomplete, documents are stale, chunks destroy semantic boundaries, duplicates dominate ranking, metadata is missing, the query is underspecified or the reranker is miscalibrated.
+
+Data Mining addresses these problems by treating the corpus and retrieval traces as datasets to be understood.
+
+## Before Retrieval Comes Corpus Engineering
+
+The first retrieval question is not:
+
+```text
+Which vector database?
+```
+
+It is:
+
+```text
+What knowledge should exist in the retrieval universe?
+```
+
+Enterprise sources may include policies, tickets, code, runbooks, Confluence, PDFs and databases.
+
+Mine document count, age, owner, language, topic, duplication and access classification.
+
+## Source Authority Is a Ranking Dimension
+
+Two documents can be semantically relevant but have different authority.
+
+```text
+official policy v12
+old discussion thread
+```
+
+A vector retriever may rank both highly.
+
+Preserve metadata such as version, approval status, effective date and owner.
+
+## Deduplication Prevents Popularity by Repetition
+
+If a corpus contains many copies of the same outdated paragraph, dense retrieval may return several nearly identical candidates.
+
+This wastes context and creates artificial evidence weight.
+
+Detect exact duplicates, near duplicates and semantic overlap.
+
+## Chunking Is an Information-Architecture Decision
+
+Too small:
+
+```text
+high precision
+low completeness
+```
+
+Too large:
+
+```text
+more context
+lower specificity
+higher token cost
+```
+
+Fixed-size chunking is not inherently bad.
+
+Semantic and structure-aware chunking can preserve headings, paragraphs, code blocks and tables.
+
+Optimal strategy depends on document structure and query type.
+
+## Embeddings Are Features, Not Truth
+
+Cosine similarity:
+
+\[
+\cos(x,y)=\frac{x\cdot y}{\|x\|\|y\|}
+\]
+
+estimates vector similarity, not guaranteed relevance.
+
+Embedding analysis can examine neighborhood quality, domain clusters, outliers and collision patterns.
+
+## Hybrid Retrieval Combines Different Evidence
+
+BM25 captures lexical matching.
+
+Dense retrieval captures semantic similarity.
+
+Hybrid retrieval can combine both:
+
+\[
+Score(d,q)=\alpha Score_{dense}+(1-\alpha)Score_{lexical}
+\]
+
+This is useful for identifiers, error codes, product names, legal references and paraphrases.
+
+Mine historical query classes to tune strategy.
+
+## Query Understanding Is a Mining Problem
+
+Queries can be grouped by intent, domain, specificity, language, entity type and temporal sensitivity.
+
+An identifier-heavy CVE query should not necessarily use the same retrieval strategy as an ambiguous follow-up question.
+
+## Query Expansion Can Help and Harm
+
+Expansion may add synonyms, acronym expansions or related entities.
+
+But it can drift from user intent.
+
+Treat rewrites as hypotheses and compare evidence coverage.
+
+## Reranking Separates Recall from Precision
+
+First-stage retrieval should be fast and broad.
+
+Cross-encoders jointly process query-document pairs and are typically used as a second stage because they are more expensive.
+
+```text
+100 candidates
+   ↓
+cross-encoder
+   ↓
+top 8
+```
+
+Measure downstream answer quality, not only retrieval ranking metrics.
+
+## Evidence Selection Is Part of Generation
+
+Context can contain conflicts.
+
+Preserve source metadata so the system can distinguish the newest or authoritative source.
+
+Do not flatten all chunks into anonymous text.
+
+## Attribution Is a Separate Quality Dimension
+
+A correct answer can have the wrong citation.
+
+A wrong answer can cite a relevant source.
+
+Evaluate answer correctness, citation correctness and faithfulness separately.
+
+## Monitoring RAG in Production
+
+Operational metrics:
+
+```text
+retrieval latency
+empty-result rate
+candidate count
+reranker latency
+context tokens
+generation latency
+```
+
+Quality metrics:
+
+```text
+context recall
+context precision
+faithfulness
+answer relevance
+citation support
+```
+
+Data-health metrics:
+
+```text
+staleness
+duplicate rate
+orphan documents
+missing metadata
+```
+
+## Staleness Is a Time-Series Problem
+
+Track document age, last verified date, supersession and effective date.
+
+Freshness constraints should depend on query semantics.
+
+## Security: Corpus Membership Must Respect Authorization
+
+Authorization should constrain retrieval before content reaches the model:
+
+\[
+Candidates=Retrieve(q)\cap AuthorizedDocuments(user)
+\]
+
+Do not ask the LLM to filter unauthorized data after retrieval.
+
+## Retrieval Evaluation Requires Grounded Test Construction
+
+A retrieval benchmark should identify evidence required to answer each question.
+
+```yaml
+question: "Which versions are affected?"
+relevant_sources:
+  - advisory-2026-18
+required_claims:
+  - affected_versions
+```
+
+This allows retrieval recall to be measured independently from generation.
+
+## Measuring Chunk Utility
+
+A chunk can be topically relevant without containing the information needed for the answer.
+
+Distinguish topical relevance from answer-bearing relevance.
+
+The latter is more expensive to label but far more informative.
+
+## Query Sets Should Represent Production Reality
+
+Production queries include acronyms, typos, follow-ups, mixed languages and copied error messages.
+
+Build realistic query sets and segment metrics by query type.
+
+## Retrieval Regression Testing
+
+Any change to chunking, embedding model, index, reranker or metadata filters can alter ordering.
+
+Treat retrieval components as versioned software.
+
+## Explainable Retrieval
+
+Retain enough information to explain why a document entered context:
+
+```yaml
+retrieval:
+  method: hybrid
+  dense_score: 0.81
+  lexical_rank: 4
+  reranker_score: 0.92
+```
+
+The goal is operational inspectability, not perfect mathematical explanation of embeddings.
+
+## Corpus Health Dashboard
+
+Track freshness coverage, metadata completeness, duplicate rate, orphan rate, source authority distribution and access-control errors.
+
+This turns RAG into an operated knowledge system rather than a one-time indexing project.
+
+## Conclusion
+
+Data Mining is not a peripheral preprocessing step in RAG.
+
+It is the discipline that makes the knowledge layer observable.
+
+RAG quality is therefore not merely an embedding problem.
+
+It is a **knowledge-engineering and measurement problem**.
+
+## References
+
+1. Lewis, P. et al., *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks*. https://arxiv.org/abs/2005.11401
+2. Karpukhin, V. et al., *Dense Passage Retrieval*. https://arxiv.org/abs/2004.04906
+3. Robertson, S., Zaragoza, H., *BM25 and Beyond*. https://doi.org/10.1561/1500000019
+4. Nogueira, R., Cho, K., *Passage Re-ranking with BERT*. https://arxiv.org/abs/1901.04085
+5. Es, S. et al., *RAGAS*. https://arxiv.org/abs/2309.15217

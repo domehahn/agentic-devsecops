@@ -1,0 +1,1034 @@
+---
+title: "Hybrid Search: Retrieval Fusion as a Ranking, Routing, and Evidence-Selection Problem"
+description: "A deep essay on hybrid search beyond 'BM25 plus vectors': dense and sparse candidate generation, score calibration, Reciprocal Rank Fusion, late interaction, reranking, adaptive routing, multi-query retrieval, authorization, poisoning, observability, ablation testing, and DevSecOps search."
+date: "2026-08-28"
+author: "dome"
+topics:
+  - hybrid-search
+  - information-retrieval
+  - rag
+tags:
+  - Hybrid Search
+  - BM25
+  - Dense Retrieval
+  - RRF
+  - Reranking
+  - Agentic RAG
+featured: false
+draft: false
+series:
+  slug: retrieval-engineering-from-lexical-search-to-agentic-memory
+  title: "Retrieval Engineering: From Lexical Search to Agentic Memory"
+  order: 4
+---
+
+# Hybrid Search: Retrieval Fusion as a Ranking, Routing, and Evidence-Selection Problem
+
+“BM25 searches for words. Vector search searches for meaning. Hybrid search searches for both.”
+
+That slogan is useful and incomplete.
+
+A mature hybrid retrieval system is not merely two search calls followed by score addition.
+
+It is a **multi-signal ranking architecture**.
+
+It must decide:
+
+- which retrievers to invoke;
+- how many candidates each should return;
+- how incomparable score scales should be fused;
+- how duplicates should be handled;
+- when a stronger reranker should intervene;
+- which metadata filters apply;
+- which sources are authorized;
+- how the final context budget is allocated.
+
+In production RAG and agentic systems, hybrid search is therefore closer to a small decision system than a single retrieval algorithm.
+
+---
+
+## Why One Retrieval Signal Is Rarely Enough
+
+Technical queries mix different kinds of evidence.
+
+Consider:
+
+```text
+Why does GitLab Runner 18.7 fail with
+"x509: certificate signed by unknown authority"
+after our CA rotation?
+```
+
+This query contains:
+
+### Exact lexical signals
+
+```text
+GitLab Runner
+18.7
+x509
+certificate signed by unknown authority
+```
+
+### Semantic concepts
+
+```text
+custom CA
+trust store
+certificate rotation
+TLS validation
+Docker executor
+```
+
+A lexical ranker is excellent at the first class.
+
+A dense semantic retriever is excellent at the second.
+
+The query is neither purely lexical nor purely semantic.
+
+This is normal in enterprise systems.
+
+---
+
+## Hybrid Search Is Really Evidence Diversity
+
+The purpose of multiple retrievers is not redundancy for its own sake.
+
+Different retrievers model different relevance hypotheses.
+
+### Lexical hypothesis
+
+> Documents that contain rare query terms are likely relevant.
+
+### Dense hypothesis
+
+> Documents whose learned representations are close to the query representation are likely relevant.
+
+### Sparse-neural hypothesis
+
+> Learned token expansions can recover semantic relations while preserving sparse lexical structure.
+
+### Graph hypothesis
+
+> Explicitly connected entities may provide relevant evidence even without local text similarity.
+
+A hybrid architecture treats each channel as a source of candidate evidence.
+
+---
+
+## Candidate Generation Should Optimize Recall
+
+First-stage retrieval generally aims for broad coverage.
+
+Example:
+
+```text
+BM25 top 100
+Dense top 100
+Learned sparse top 100
+```
+
+The union may contain fewer than 300 documents because of overlap.
+
+The objective is:
+
+```text
+do not miss relevant evidence
+```
+
+not:
+
+```text
+produce the final ranking
+```
+
+This changes how first-stage retrievers should be tuned.
+
+A candidate generator can be slightly noisy if a later stage will rerank.
+
+---
+
+## Deduplication Is Semantically Important
+
+Duplicate candidates can come from:
+
+- repeated chunks;
+- mirrored documents;
+- multiple retrievers;
+- versioned copies;
+- parent-child structures.
+
+Deduplication should preserve provenance.
+
+Bad:
+
+```text
+doc appears twice
+→ drop one blindly
+```
+
+Better:
+
+```json
+{
+  "document_id": "incident-182",
+  "retrieved_by": ["bm25", "dense"],
+  "bm25_rank": 3,
+  "dense_rank": 8
+}
+```
+
+Agreement across retrievers can itself be a useful feature.
+
+---
+
+## Raw Scores Are Usually Not Comparable
+
+A BM25 score might be:
+
+```text
+13.7
+```
+
+A cosine similarity might be:
+
+```text
+0.82
+```
+
+A learned sparse score might be:
+
+```text
+4.31
+```
+
+Adding them directly is mathematically arbitrary.
+
+The scales depend on:
+
+- query;
+- corpus;
+- retriever;
+- model;
+- index configuration.
+
+Therefore hybrid search needs either calibrated scores or rank-based fusion.
+
+---
+
+## Weighted Score Fusion Requires Calibration
+
+A common formulation is:
+
+\[
+S(d)
+=
+\alpha S_{dense}(d)
++
+(1-\alpha)S_{lexical}(d)
+\]
+
+This only makes sense if the two score functions are normalized or calibrated.
+
+Possible approaches include:
+
+```text
+min-max normalization
+z-score normalization
+query-wise normalization
+learned calibration
+```
+
+Each has drawbacks.
+
+Min-max can be unstable when one outlier dominates.
+
+Z-scores assume meaningful distributional behavior.
+
+Fixed weights may fail across query types.
+
+This is why rank-based fusion is attractive.
+
+---
+
+## Reciprocal Rank Fusion Avoids Score-Scale Alignment
+
+Reciprocal Rank Fusion combines rankings rather than raw scores.
+
+For document \(d\):
+
+\[
+RRF(d)
+=
+\sum_{r\in R}
+\frac{1}{k + rank_r(d)}
+\]
+
+where \(R\) is the set of ranked lists.
+
+The constant \(k\) dampens the impact of very high ranks.
+
+Cormack, Clarke, and Büttcher showed that RRF could robustly combine rankings without requiring score comparability.[^1]
+
+Its practical advantage is simple:
+
+```text
+BM25 score scale      irrelevant
+dense score scale     irrelevant
+rank positions        sufficient
+```
+
+RRF is not automatically optimal.
+
+It is operationally robust.
+
+---
+
+## Fusion and Reranking Solve Different Problems
+
+Fusion answers:
+
+> How should candidates from different retrieval channels be merged?
+
+Reranking answers:
+
+> Given this candidate set, which documents best satisfy the query?
+
+A strong pipeline may be:
+
+```text
+Query
+  ├─ BM25 top 100
+  └─ Dense top 100
+          ↓
+        RRF
+          ↓
+      top 100
+          ↓
+    Cross-Encoder
+          ↓
+       top 10
+```
+
+Fusion broadens evidence.
+
+Reranking sharpens it.
+
+---
+
+## Cross-Encoder Reranking Is Expensive for a Reason
+
+A cross-encoder evaluates query and document jointly.
+
+This gives it access to fine-grained token interactions.
+
+It can distinguish:
+
+```text
+document is generally about TLS
+```
+
+from:
+
+```text
+document directly answers this x509 runner failure
+```
+
+But joint evaluation is expensive.
+
+Therefore rerank only the candidate set.
+
+---
+
+## Late Interaction Can Become a Retrieval Stage, Not Only a Reranker
+
+ColBERT and ColBERTv2 preserve token-level vector interactions while allowing document-side precomputation.[^2][^3]
+
+This creates a spectrum:
+
+```text
+BM25
+  ↓
+dense single-vector
+  ↓
+learned sparse
+  ↓
+late interaction
+  ↓
+cross-encoder
+```
+
+As interaction increases:
+
+```text
+matching fidelity ↑
+compute/storage ↑
+```
+
+Hybrid retrieval design is therefore also a resource-allocation problem.
+
+---
+
+## Learned Sparse Retrieval Expands the Design Space
+
+SPLADE learns sparse lexical representations that can include expansion terms.[^4]
+
+This can recover semantic relations while retaining sparse inverted-index execution.
+
+Now “hybrid” may mean:
+
+```text
+BM25 + dense
+dense + SPLADE
+BM25 + dense + SPLADE
+dense + ColBERT
+graph + dense + lexical
+```
+
+The architecture should be defined by evidence needs rather than by one canonical recipe.
+
+---
+
+## Query Routing Can Be Better Than Always-Hybrid
+
+Executing every retriever for every query is simple.
+
+It may be wasteful.
+
+A router can classify the information need.
+
+Example:
+
+```text
+CVE-2026-12345
+→ lexical-heavy
+
+How do agents retain long-term experience?
+→ dense-heavy
+
+CVE-2026-12345 exploitability in our Kubernetes service
+→ hybrid + graph/API
+```
+
+A deterministic first router can use regex or structural features for identifiers.
+
+A semantic router can handle ambiguous natural-language classes.
+
+The goal is not complexity.
+
+It is avoiding unnecessary work.
+
+---
+
+## Adaptive Weighting Is a Query-Dependent Policy
+
+Fixed \(\alpha\) in weighted fusion assumes every query has the same lexical/semantic balance.
+
+That is unrealistic.
+
+A more advanced system can estimate:
+
+```text
+identifier density
+query length
+language
+technical-token ratio
+entity count
+semantic ambiguity
+```
+
+and choose different retrieval weights.
+
+Example:
+
+```text
+exact identifier:
+  lexical 0.85
+  dense 0.15
+
+concept question:
+  lexical 0.25
+  dense 0.75
+```
+
+This should be learned or validated on real queries.
+
+Otherwise adaptive weighting becomes another heuristic.
+
+---
+
+## Query Rewriting Can Change Both Retrieval Channels
+
+A weak user query:
+
+```text
+Why does this keep failing?
+```
+
+may be impossible to retrieve well.
+
+The system can use context to rewrite:
+
+```text
+GitLab Runner x509 custom CA
+certificate rotation Docker executor
+```
+
+This improves lexical and dense signals.
+
+But rewriting can introduce drift.
+
+The rewritten query should remain traceable to the original information need.
+
+---
+
+## Multi-Query Retrieval Trades Compute for Recall
+
+A system can generate several retrieval formulations:
+
+```text
+Q1: GitLab Runner x509 CA bundle
+Q2: Docker executor custom certificate trust
+Q3: internal registry certificate rotation CI
+```
+
+Each query can produce its own lexical and dense candidate sets.
+
+The outputs are then fused.
+
+Conceptually:
+
+```text
+original query
+    ↓
+rewrite set
+    ↓
+retrieval × N
+    ↓
+fusion
+    ↓
+reranking
+```
+
+This can materially increase recall.
+
+It also multiplies retrieval cost and increases the chance of semantic drift.
+
+---
+
+## Hybrid Search Should Use One Authorization Semantics
+
+Dense and lexical retrieval often live in different systems.
+
+That creates a security hazard.
+
+Example:
+
+```text
+Vector DB:
+  tenant filter enforced
+
+Search Engine:
+  tenant filter accidentally omitted
+```
+
+Fusion now contains unauthorized candidates.
+
+Security must be invariant across channels.
+
+A robust design defines an admissible set:
+
+\[
+A(u)=
+\{d\mid Authorized(u,d)\}
+\]
+
+Every retriever should operate within \(A(u)\), or candidates must be filtered before any untrusted content enters later stages.
+
+---
+
+## Authorization Is Not Trust
+
+Even an authorized document may be low-trust.
+
+A user-authored wiki page can be visible and wrong.
+
+An official runbook can be visible and authoritative.
+
+A retrieval architecture can attach:
+
+```text
+source authority
+publisher identity
+freshness
+verification status
+classification
+```
+
+These may influence ranking.
+
+But authorization remains binary.
+
+---
+
+## Hybrid Retrieval Does Not Prevent Prompt Injection
+
+A poisoned document can be optimized for both channels.
+
+It may contain:
+
+```text
+exact target keywords
++
+semantically aligned content
++
+malicious instructions
+```
+
+If it ranks well lexically and semantically, fusion may actually increase its visibility.
+
+PoisonedRAG illustrates the broader knowledge-corruption risk in RAG systems.[^5]
+
+Therefore:
+
+```text
+high relevance
+≠
+safe content
+```
+
+Retrieved content should remain untrusted input to the model.
+
+---
+
+## Trust-Aware Ranking Should Remain Explainable
+
+A simple multi-signal ranking model might include:
+
+\[
+Score =
+w_1 Dense
++
+w_2 Lexical
++
+w_3 Freshness
++
+w_4 Authority
+\]
+
+But the system should preserve the components.
+
+Otherwise a final score such as:
+
+```text
+0.913
+```
+
+becomes uninterpretable.
+
+Better trace:
+
+```json
+{
+  "dense": 0.84,
+  "bm25_rank": 2,
+  "rrf": 0.029,
+  "freshness": "current",
+  "authority": "official",
+  "authorization": "allowed",
+  "reranker": 0.94
+}
+```
+
+This supports forensic analysis.
+
+---
+
+## Hybrid Search in Agent Memory
+
+Agent memory often contains both narrative and technical identity.
+
+A prior incident may be similar because:
+
+```text
+same semantic failure pattern
+```
+
+and because:
+
+```text
+same project
+same error code
+same component
+same version family
+```
+
+Hybrid retrieval is naturally suited to case retrieval.
+
+It combines episodic similarity with concrete technical anchors.
+
+---
+
+## Hybrid Search and Knowledge Graphs Solve Different Dimensions
+
+Hybrid search handles:
+
+```text
+lexical identity
++
+semantic similarity
+```
+
+It does not automatically solve multi-hop relations.
+
+For:
+
+```text
+Which production applications contain the package affected by CVE-X?
+```
+
+a graph or structured inventory may be better.
+
+The agent may route:
+
+```text
+CVE description → hybrid search
+CVE → package → image → workload → graph/SQL
+current workload state → API
+```
+
+Polyglot retrieval is stronger than forcing every step through one ranker.
+
+---
+
+## PostgreSQL Can Be a Practical Hybrid Platform
+
+For moderate workloads, PostgreSQL can combine:
+
+```text
+full-text search
++
+pgvector
++
+SQL filters
+```
+
+This is operationally attractive when PostgreSQL is already governed, backed up, monitored, and available.
+
+The trade-off is whether the workload eventually demands search-specific or vector-native scale and features.
+
+Architecture should follow measured needs.
+
+---
+
+## DevSecOps Corpora Are Naturally Hybrid
+
+DevSecOps knowledge contains unusual mixtures:
+
+```text
+natural-language explanations
+YAML
+stack traces
+CVE IDs
+package names
+commit hashes
+Kubernetes resources
+URLs
+error messages
+source code
+```
+
+Dense-only retrieval loses exactness.
+
+Lexical-only retrieval loses paraphrase and abstraction.
+
+Hybrid search is especially effective because the corpus itself is multi-signal.
+
+---
+
+## Incident Retrieval Is a Good Example
+
+New incident:
+
+```text
+runner 18.7 x509 unknown authority after certificate rotation
+```
+
+BM25 may surface:
+
+```text
+same error string
+same runner version
+same component
+```
+
+Dense search may surface:
+
+```text
+custom CA bundle failures
+registry trust issues
+certificate rotation incidents
+```
+
+The union creates a stronger evidence set.
+
+A reranker can then determine which historical case is genuinely analogous.
+
+---
+
+## Evaluation Must Compare Against Simpler Baselines
+
+Hybrid search adds complexity.
+
+It should earn that complexity.
+
+Benchmark at least:
+
+```text
+BM25 only
+dense only
+hybrid
+hybrid + reranker
+```
+
+Use the same query set and relevance judgments.
+
+This is an ablation study.
+
+If hybrid produces no measurable gain, the additional infrastructure is unjustified.
+
+---
+
+## Retrieval Metrics Need Query Classes
+
+Aggregate NDCG can hide important trade-offs.
+
+Segment:
+
+```text
+exact identifiers
+natural-language concepts
+mixed technical questions
+cross-language queries
+code search
+incident retrieval
+```
+
+The likely pattern is:
+
+```text
+BM25 wins some slices
+dense wins others
+hybrid reduces worst-case failures
+```
+
+That last property—robustness across query classes—is often the real reason hybrid systems win in production.
+
+---
+
+## RAG Evaluation Should Separate Retrieval from Generation
+
+Measure retrieval:
+
+```text
+Precision@K
+Recall@K
+MRR
+NDCG
+```
+
+Then generation:
+
+```text
+faithfulness
+citation correctness
+answer quality
+```
+
+If final answer quality improves after hybrid search, the trace should reveal whether the gain came from:
+
+- higher recall;
+- better ranking;
+- more authoritative evidence;
+- improved citation support.
+
+This supports rational tuning.
+
+---
+
+## Latency Is Additive
+
+A hybrid pipeline may include:
+
+\[
+T =
+T_{routing}
++
+\max(T_{BM25},T_{dense})
++
+T_{fusion}
++
+T_{rerank}
++
+T_{context}
+\]
+
+Parallel first-stage retrieval can hide some latency.
+
+Reranking often becomes the dominant online cost.
+
+Latency budgets should therefore be assigned by stage.
+
+---
+
+## Caching Must Include Security Context
+
+Caching:
+
+```text
+query → results
+```
+
+is unsafe when result eligibility depends on:
+
+```text
+tenant
+user
+role
+classification
+time
+```
+
+A cache key must incorporate the relevant authorization context or cache only pre-authorization candidate data.
+
+Freshness also matters.
+
+A cached retrieval from yesterday may reintroduce a superseded policy.
+
+---
+
+## Retrieval Traces Are the Operational Contract
+
+A production trace should preserve:
+
+```text
+query
+rewrites
+router decision
+retrievers invoked
+top candidates from each
+fusion method
+filter decisions
+reranker scores
+final context
+latency
+versions
+```
+
+This allows a team to answer:
+
+> Why did this document reach the LLM?
+
+Without that ability, hybrid search becomes a black box made from multiple black boxes.
+
+---
+
+## A Robust Enterprise Pipeline
+
+```text
+User / Agent
+     ↓
+Query Classification
+     ↓
+Query Rewrite / Expansion
+     ↓
+┌───────────────┬────────────────┐
+│ BM25 / Sparse │ Dense Retrieval│
+└───────┬───────┴───────┬────────┘
+        │               │
+        └───────┬───────┘
+                ↓
+            Candidate Union
+                ↓
+          ACL / Tenant Gate
+                ↓
+        Rank Fusion / Features
+                ↓
+         Cross-Encoder / ColBERT
+                ↓
+          Trust / Freshness
+                ↓
+           Context Builder
+                ↓
+              LLM / Agent
+```
+
+Some deployments move ACL filtering earlier for efficiency and stronger isolation.
+
+The invariant is that unauthorized content must not leak into downstream untrusted processing.
+
+---
+
+## Retrieval Becomes a Decision Process in Agentic RAG
+
+An agent can observe the first result set and decide:
+
+```text
+insufficient evidence
+→ rewrite query
+
+exact version missing
+→ use lexical search
+
+relationship question
+→ query graph
+
+current state required
+→ call API
+```
+
+At that point, “hybrid search” expands into **adaptive retrieval orchestration**.
+
+The system is no longer choosing only how to fuse BM25 and vectors.
+
+It is choosing the correct evidence mechanism.
+
+---
+
+## Conclusion
+
+Hybrid search is most valuable when treated as a ranking architecture rather than a feature checkbox.
+
+The mature design separates:
+
+```text
+routing
+candidate generation
+fusion
+reranking
+authorization
+trust
+context construction
+```
+
+BM25 contributes lexical exactness.
+
+Dense retrieval contributes semantic reach.
+
+Learned sparse models contribute expanded lexical semantics.
+
+Late interaction contributes fine-grained matching.
+
+Rerankers contribute high-precision judgment over a reduced candidate set.
+
+The result is not merely “search by words and meaning.”
+
+It is a controlled pipeline for selecting the evidence an AI system is allowed to reason over.
+
+## References
+
+[^1]: Cormack, G. V., Clarke, C. L. A., Büttcher, S., *Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods*, SIGIR 2009. https://research.google/pubs/reciprocal-rank-fusion-outperforms-condorcet-and-individual-rank-learning-methods/
+[^2]: Khattab, O., Zaharia, M., *ColBERT*. https://arxiv.org/abs/2004.12832
+[^3]: Santhanam, K. et al., *ColBERTv2*. https://aclanthology.org/2022.naacl-main.272/
+[^4]: Formal, T. et al., *SPLADE*. https://arxiv.org/abs/2107.05720
+[^5]: Zou, W. et al., *PoisonedRAG*. https://www.usenix.org/conference/usenixsecurity25/presentation/zou-poisonedrag

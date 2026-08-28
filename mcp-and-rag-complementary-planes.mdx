@@ -1,0 +1,463 @@
+---
+title: "MCP and RAG as Complementary Planes: Designing Knowledge, Action, and Authority in Agentic Systems"
+description: "An architectural essay that reframes MCP and RAG as complementary planes in agentic systems: knowledge, capability, authority, state, and observability, with design patterns for secure enterprise integration."
+date: "2026-08-28"
+author: "dome"
+topics: [mcp, rag, software-architecture]
+tags: [MCP, RAG, Agent Architecture, Policy, Capability Plane]
+featured: false
+draft: false
+series:
+  slug: agentic-ai-architecture-security
+  title: "Agentic AI Architecture and Security"
+  order: 13
+---
+
+# MCP and RAG as Complementary Planes: Designing Knowledge, Action, and Authority in Agentic Systems
+
+A useful agentic architecture becomes easier to reason about when it is divided into **planes** rather than products.
+
+RAG and MCP are often compared because both connect models to external systems. A better design separates at least four concerns:
+
+```text
+Knowledge Plane
+Capability Plane
+Authority Plane
+State / Orchestration Plane
+```
+
+RAG primarily belongs to the knowledge plane.
+
+MCP primarily belongs to the capability plane.
+
+Neither should own the authority plane by itself.
+
+This framing resolves many false debates about whether MCP “replaces” RAG or whether RAG makes tools unnecessary.
+
+## The Knowledge Plane Answers “What Evidence Should the Model See?”
+
+The knowledge plane manages external information used for inference.
+
+Its responsibilities include:
+
+```text
+ingestion
+indexing
+retrieval
+ranking
+freshness
+source authority
+access filtering
+citation
+```
+
+A RAG service is one implementation of this plane.
+
+It can expose an interface such as:
+
+```json
+{
+  "query": "production registry policy",
+  "scope": "platform-docs",
+  "top_k": 8
+}
+```
+
+and return evidence with provenance.
+
+The essential security property is that the retrieved data is authorized and identifiable as evidence, not instruction authority.
+
+## The Capability Plane Answers “What Can the Agent Ask the World to Do?”
+
+The capability plane represents external operations.
+
+Examples:
+
+```text
+read pipeline
+query service health
+create issue
+run test
+prepare deployment
+scale application
+```
+
+MCP provides a standardized way for AI applications to discover and invoke tools and resources through machine-readable contracts.
+
+The capability plane should expose **semantic operations** rather than forcing the agent to reconstruct infrastructure details.
+
+## The Authority Plane Answers “What Is Allowed?”
+
+This is the plane most often omitted from architecture diagrams.
+
+A model can decide that a tool is useful.
+
+An MCP server can describe the tool correctly.
+
+Neither fact means the call is authorized.
+
+The authority plane evaluates:
+
+```text
+principal
+agent identity
+delegation
+action
+resource
+parameters
+risk class
+approval state
+```
+
+Then it returns:
+
+```text
+allow
+deny
+require approval
+reduce scope
+```
+
+This should be deterministic wherever practical.
+
+## The State Plane Answers “Where Are We in the Task?”
+
+Long-running agents need durable state:
+
+```text
+current goal
+completed steps
+retrieved evidence
+open hypotheses
+approval state
+tool results
+budgets
+```
+
+This belongs in a workflow engine, graph runtime, or transactional state store—not only in the model's context window.
+
+The model can reason over a projection of state.
+
+The runtime remains the source of truth.
+
+## Observability Cuts Across Every Plane
+
+A production trace should connect:
+
+```text
+knowledge retrieval
+model decision
+capability proposal
+authority decision
+execution
+state transition
+```
+
+Without this chain, an incident looks like “the AI did something strange.”
+
+With it, engineers can identify whether the root cause was a stale source, poor retrieval, wrong tool selection, weak authorization, execution failure, or bad state transition.
+
+## Why RAG Should Not Execute Business Effects
+
+It is tempting to put actions behind retrieval-like abstractions: retrieve a “procedure” and let the model execute it.
+
+That creates dangerous ambiguity.
+
+Knowledge such as:
+
+```text
+"To restart the service, run ..."
+```
+
+is not authorization to restart the service.
+
+Keep the transition explicit:
+
+```text
+RAG evidence
+   ↓
+model proposes action
+   ↓
+authority plane
+   ↓
+capability invocation
+```
+
+This ensures instructions found in documents cannot directly become operational authority.
+
+## Why MCP Should Not Become the Knowledge Model
+
+MCP can expose resources and read tools, but the presence of a protocol does not solve retrieval quality.
+
+If an organization has millions of documents, it still needs:
+
+```text
+chunking
+indexing
+hybrid search
+reranking
+freshness
+citation
+```
+
+MCP can provide the transport or access contract to that retrieval service.
+
+It does not replace the RAG discipline.
+
+## Pattern 1: RAG Behind MCP
+
+```text
+Agent
+  ↓
+MCP: search_internal_knowledge(query)
+  ↓
+RAG Service
+  ↓
+Authorized Corpus
+```
+
+Advantages:
+
+- multiple AI clients reuse one governed retrieval capability;
+- access policy is centralized;
+- RAG implementation can change without changing agent contracts.
+
+The tool should return provenance, not only text.
+
+## Pattern 2: MCP for Live State, RAG for Stable Knowledge
+
+```text
+Agent
+  ├─ RAG → policies / runbooks / architecture docs
+  └─ MCP → logs / deployments / tickets / metrics
+```
+
+This is especially strong for DevOps and SRE.
+
+Static knowledge and live operational state have different freshness and access characteristics.
+
+The architecture reflects that difference.
+
+## Pattern 3: Agentic RAG over Multiple MCP Sources
+
+An investigative agent can use MCP tools as retrieval sources:
+
+```text
+question
+  ↓
+retrieve policy
+  ↓
+query GitLab
+  ↓
+query telemetry
+  ↓
+inspect service catalog
+  ↓
+update evidence state
+```
+
+The RAG behavior is agentic because the evidence path is chosen dynamically.
+
+MCP standardizes the integrations.
+
+## Pattern 4: Read and Write Capabilities Must Be Separated
+
+A single server may expose both:
+
+```text
+read_pipeline
+retry_pipeline
+```
+
+The authority plane should classify them differently.
+
+A research step can automatically use `read_pipeline`.
+
+`retry_pipeline` may require:
+
+```text
+specific project scope
+failure-state validation
+rate limit
+approval for protected environments
+```
+
+The protocol should not blur the distinction merely because both are tools.
+
+## The 2026 Stateless MCP Core Improves the Capability Plane
+
+The MCP `2026-07-28` revision moved the protocol core toward stateless request/response semantics, introduced self-describing requests, routing headers, cacheable list results, authorization hardening, and formal extensions.[^1]
+
+For architecture, this means the capability plane can fit more naturally into standard infrastructure:
+
+```text
+Agent Clients
+    ↓
+API / MCP Gateway
+    ↓
+load-balanced server instances
+    ↓
+Domain services
+```
+
+Stateful business workflows can still exist in the state plane without forcing protocol-level session affinity.
+
+## Knowledge and Capability Discovery Have Similar Scaling Problems
+
+A RAG corpus with millions of chunks cannot put all documents into context.
+
+An MCP ecosystem with thousands of tools cannot put all schemas into context.
+
+Both need **retrieval over their own metadata**.
+
+```text
+Knowledge:
+query → retrieve relevant documents
+
+Capabilities:
+goal → retrieve relevant tools
+```
+
+This suggests a unifying principle for agentic architecture:
+
+> Context should be constructed progressively from both knowledge and capability catalogs.
+
+Eager loading is the enemy of scale.
+
+## Authority Must Survive Abstraction
+
+Semantic tools are useful:
+
+```text
+resolve_incident(service="payments")
+```
+
+but abstraction can hide high-impact operations underneath.
+
+A tool implementation might internally:
+
+```text
+query logs
+restart pod
+modify ticket
+```
+
+The authority plane needs visibility into the actual effect class or the semantic capability must be narrowly specified enough that policy can reason about it.
+
+An attractive high-level name is not a security boundary.
+
+## Provenance Must Exist on Both Knowledge and Tools
+
+For evidence:
+
+```yaml
+source:
+  document: policy-14
+  version: 14
+  owner: security
+```
+
+For capabilities:
+
+```yaml
+tool:
+  server: gitlab-mcp
+  version: 3.2.1
+  publisher: platform-team
+  digest: ...
+```
+
+Both can be poisoned or changed.
+
+A mature platform tracks provenance across both planes.
+
+## Security Threats Cross Planes
+
+A realistic chain:
+
+```text
+Knowledge Plane:
+  poisoned retrieved document
+        ↓
+Model:
+  intent altered
+        ↓
+Capability Plane:
+  selects powerful tool
+        ↓
+Authority Plane:
+  overly broad rule allows call
+        ↓
+External System:
+  sensitive data exfiltrated
+```
+
+No single layer fully explains the incident.
+
+That is why security tracing must cross plane boundaries.
+
+## The Architectural Decision Matrix
+
+| Requirement | Primary Plane / Pattern |
+| --- | --- |
+| Search internal docs | RAG / Knowledge |
+| Query live system state | MCP read capability |
+| Execute business action | MCP/API + Authority |
+| Multi-step investigation | Agentic orchestration |
+| Enforce permissions | Authority plane |
+| Preserve task progress | State plane |
+| Explain why an answer was made | Knowledge provenance + trace |
+| Explain why an action happened | Full trajectory trace |
+
+The table clarifies why one technology should not be expected to solve all concerns.
+
+## A Production Reference Architecture
+
+```text
+                ┌───────────────────┐
+                │ User / Event      │
+                └─────────┬─────────┘
+                          ↓
+                ┌───────────────────┐
+                │ Agent / Flow      │  State Plane
+                └──────┬─────┬──────┘
+                       │     │
+            ┌──────────┘     └──────────┐
+            ↓                           ↓
+   ┌────────────────┐          ┌────────────────┐
+   │ Knowledge      │          │ Capability     │
+   │ RAG / Graph    │          │ MCP / APIs     │
+   └───────┬────────┘          └───────┬────────┘
+           │                           ↓
+           │                  ┌────────────────┐
+           │                  │ Authority      │
+           │                  │ IAM / Policy   │
+           │                  └───────┬────────┘
+           └──────────────┐           ↓
+                          ↓   ┌────────────────┐
+                        Model │ External System │
+                              └────────────────┘
+```
+
+Observability spans every component.
+
+## Conclusion
+
+The most productive way to compare MCP and RAG is to stop treating them as replacements.
+
+RAG governs the **knowledge plane**: which external evidence becomes available to inference.
+
+MCP standardizes much of the **capability plane**: how AI applications discover and invoke external tools and resources.
+
+A separate **authority plane** must decide which effects are permitted.
+
+A **state plane** must preserve long-running task truth outside the model context.
+
+Once these responsibilities are explicit, hybrid architectures become obvious rather than awkward. RAG can sit behind MCP. Agentic RAG can use multiple MCP sources. Read and write tools can share transport while receiving different policies. Stable knowledge and live operational state can be handled according to their own semantics.
+
+The architecture becomes easier to secure because every layer has a narrower question to answer.
+
+## References
+
+[^1]: Model Context Protocol Core Maintainers, *The 2026-07-28 Specification*. https://blog.modelcontextprotocol.io/posts/2026-07-28/
+2. Lewis, P. et al., *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks*. https://arxiv.org/abs/2005.11401

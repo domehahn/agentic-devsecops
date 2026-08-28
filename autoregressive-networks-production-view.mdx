@@ -1,0 +1,326 @@
+---
+title: "Autoregressive Networks in Production: Inference Dynamics, Drift, Resource Economics, and Governance"
+description: "A systems-oriented essay on running large autoregressive models in production, focusing on prefill/decode architecture, KV caching, latency, hallucination, long-context behavior, observability, model serving, governance, and hybrid system design."
+date: "2026-08-27"
+author: "dome"
+topics: [llmops, generative-ai]
+tags: [Autoregression, LLMOps, Inference, KV Cache, Governance]
+featured: false
+draft: false
+series:
+  slug: ai-foundations-to-agentic-systems
+  title: "AI Foundations to Agentic Systems"
+  order: 5
+---
+
+# Autoregressive Networks in Production: Inference Dynamics, Drift, Resource Economics, and Governance
+
+The mathematical definition of an autoregressive model is compact.
+
+The operational reality is not.
+
+Once a large causal Transformer enters production, autoregression becomes a systems problem involving compute scheduling, cache memory, request batching, latency, token budgets, safety policies, observability and downstream authority.
+
+## The Inference Server Has Two Different Workloads
+
+A production request typically has two phases.
+
+### Prefill
+
+The input context is processed and attention state is initialized.
+
+Prefill tends to be compute-intensive.
+
+### Decode
+
+The model generates new tokens sequentially while reusing cached state.
+
+Decode tends to be memory-bandwidth-sensitive and latency-sensitive.
+
+A workload with 100,000 input tokens and 100 output tokens has very different economics from one with 500 input tokens and 5,000 output tokens.
+
+## KV Cache Is a Capacity-Planning Variable
+
+A simplified memory relationship:
+
+\[
+M_{KV}\propto L\times T\times H\times B
+\]
+
+where \(L\) is layers, \(T\) sequence length, \(H\) effective attention dimension and \(B\) concurrent sequences.
+
+Long-context workloads therefore consume serving memory aggressively.
+
+Context-window marketing numbers are not equivalent to economical production context lengths.
+
+## Batching Creates a Latency–Throughput Trade-Off
+
+Serving systems optimize metrics such as:
+
+```text
+time to first token
+inter-token latency
+tokens per second
+requests per second
+GPU utilization
+```
+
+Continuous batching and scheduling attempt to reconcile throughput with interactive latency.
+
+LLMOps therefore resembles distributed high-performance serving more than ordinary REST hosting.
+
+## Autoregressive Generation Is Stateful
+
+For one request:
+
+```text
+prompt
+ ↓
+cache state
+ ↓
+token 1
+ ↓
+updated cache
+ ↓
+token 2
+ ↓
+...
+```
+
+Long-running agents add task state, tool state, memory and authorization state.
+
+The model's KV state and the application's semantic state are different and should not be conflated.
+
+## Context Windows Are Not Long-Term Memory
+
+Context is ephemeral working state.
+
+Long-term memory requires explicit storage, provenance, retrieval, retention and access control.
+
+A large context can reduce some retrieval pressure, but it does not eliminate memory architecture.
+
+## Autoregressive Drift Becomes an Operational Risk
+
+Long outputs can drift from initial intent.
+
+Agent loops amplify the effect:
+
+```text
+model proposes action
+   ↓
+tool changes environment
+   ↓
+new observation
+   ↓
+model proposes next action
+```
+
+Control drift using explicit goals, state checkpoints, stop conditions, tool scopes, verification and approval for high-impact actions.
+
+## Hallucination Should Be Treated as a Pipeline Failure Mode
+
+At product level, a wrong answer can originate from:
+
+```text
+knowledge gap
+retrieval failure
+context pollution
+reasoning error
+generation error
+citation mismatch
+stale source
+```
+
+A model-centric metric cannot identify all of these.
+
+Production observability should classify failures by layer.
+
+## Long Context Introduces Security Risk
+
+Untrusted context may contain prompt injection, conflicting instructions, stale data, malicious tool descriptions, secrets and noise.
+
+Context engineering must preserve source authority:
+
+```text
+system policy        high authority
+user request         user intent
+tool output          data
+retrieved document   untrusted evidence
+memory               persisted evidence
+```
+
+The runtime must preserve these distinctions outside language.
+
+## Model Serving Is a Versioned Dependency
+
+A production request should ideally be attributable to:
+
+```text
+model identifier
+model version
+prompt version
+tool version
+retrieval index version
+policy version
+```
+
+This enables replay and incident analysis.
+
+## Quantization and Distillation Change the Performance Envelope
+
+Serving cost can be reduced using lower precision, quantization, speculative decoding, distillation and routing.
+
+Optimization can change accuracy or capability distribution.
+
+Measure before assuming one model size fits every workload.
+
+## Resource Governance Is Safety Governance
+
+Unbounded generation can create runaway cost, denial of service, long latency and tool loops.
+
+Agents should expose deterministic budgets:
+
+```yaml
+budget:
+  max_input_tokens: 64000
+  max_output_tokens: 4000
+  max_tool_calls: 20
+  max_runtime_seconds: 300
+```
+
+Budgets are control-plane constraints, not merely finance settings.
+
+## Generation Configuration Must Be Observable
+
+Temperature, top-p, tool choice, reasoning modes and structured-output settings can materially change behavior.
+
+A production trace should capture relevant inference configuration.
+
+## Autoregressive Models Should Not Own Critical Invariants
+
+Critical invariants such as payment limits, access control, network allowlists, schema checks and signature verification should remain deterministic.
+
+A robust architecture uses:
+
+```text
+model proposes
+   ↓
+validator
+   ↓
+policy
+   ↓
+effect
+```
+
+## Retrieval and Tools Convert a Closed Model into an Open System
+
+With retrieval and tools, the system gains fresh evidence and external action capabilities.
+
+That also introduces authorization, credentials, network trust, data governance and supply-chain risk.
+
+## Observability Must Be Trajectory-Aware
+
+Traditional metrics remain necessary, but generative systems also need tokens, retrieval traces, tool calls, model outputs and evaluator results.
+
+Agents add state transitions, approvals, memory events, retries and handoffs.
+
+The debugging unit becomes the trajectory.
+
+## Capacity Planning by Workload Shape
+
+Classify workloads:
+
+```text
+interactive chat:
+  moderate prompt
+  short decode
+
+document analysis:
+  very long prompt
+  moderate decode
+
+code generation:
+  moderate prompt
+  long decode
+```
+
+These compete differently for GPU resources.
+
+Measure p50/p95 time-to-first-token, inter-token latency, KV bytes per active request, output-token distribution and cancellation rate.
+
+## Failure Containment for Generative Services
+
+A generative request can return:
+
+```text
+HTTP 200
++
+well-formed prose
++
+incorrect claim
+```
+
+Infrastructure monitoring sees success while semantic evaluation sees failure.
+
+Production systems therefore need layered SLOs:
+
+```text
+availability SLO
+latency SLO
+semantic-quality SLO
+policy-compliance SLO
+```
+
+## Governance: Model Risk Is Not Enough
+
+Risk is a property of model plus authority.
+
+```text
+strong model
++
+unrestricted shell
++
+production credential
+=
+high-risk agent
+```
+
+Governance must cover identity, tools, environment, side effects, data and monitoring.
+
+## Hybrid Architecture Is the Mature End State
+
+```text
+User / Event
+    ↓
+Context Builder
+    ↓
+LLM
+    ↓
+Structured Proposal
+    ↓
+Policy / Validator
+    ↓
+Tool / Workflow
+    ↓
+Verifier
+    ↓
+Trace
+```
+
+The model is central. It is not sovereign.
+
+## Conclusion
+
+Autoregression in production is a stateful serving workload with distinctive compute economics, sequential latency, cache pressure, context-security concerns and probabilistic failure modes.
+
+The production discipline is to **surround generative freedom with deterministic structure**.
+
+Use autoregression for interpretation, synthesis and planning. Use infrastructure for identity, budgets, policy, persistence, verification and audit.
+
+## References
+
+1. Vaswani, A. et al., *Attention Is All You Need*. https://arxiv.org/abs/1706.03762
+2. Kwon, W. et al., *Efficient Memory Management for Large Language Model Serving with PagedAttention*. https://arxiv.org/abs/2309.06180
+3. Dao, T. et al., *FlashAttention*. https://arxiv.org/abs/2205.14135
+4. Leviathan, Y. et al., *Fast Inference from Transformers via Speculative Decoding*. https://arxiv.org/abs/2211.17192
+5. NIST, *AI Risk Management Framework (AI RMF 1.0)*. https://doi.org/10.6028/NIST.AI.100-1

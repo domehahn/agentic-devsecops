@@ -1,0 +1,476 @@
+---
+title: "The Technical Architecture of AI Agents from a DevOps Perspective: Stateful Orchestration, Tools, Policy, and Operations"
+description: "A production architecture essay for engineers building AI agents: event sources, orchestration, reasoning, memory, tool brokers, guardrails, identity, sandboxing, telemetry, evaluation, deployment, and SRE concerns."
+date: "2026-08-27"
+author: "dome"
+topics: [agentic-engineering, devops, platform-engineering]
+tags: [AI Agents, DevOps, Orchestration, Observability, Security]
+featured: false
+draft: false
+series:
+  slug: ai-foundations-to-agentic-systems
+  title: "AI Foundations to Agentic Systems"
+  order: 16
+---
+
+# The Technical Architecture of AI Agents from a DevOps Perspective
+
+From a DevOps perspective, an AI agent is not primarily a chatbot.
+
+It is a **stateful, tool-capable workload orchestrator whose control decisions are partly probabilistic**.
+
+That definition immediately changes platform requirements.
+
+A chat endpoint can often be deployed as:
+
+```text
+request
+→ inference
+→ response
+```
+
+An agent may execute:
+
+```text
+event
+→ load state
+→ reason
+→ call tool
+→ persist result
+→ wait
+→ resume
+→ request approval
+→ execute
+→ evaluate
+```
+
+This resembles a workflow platform more than a stateless inference service.
+
+## Event-Driven Before Chat-Driven
+
+Agents become operationally valuable when they react to real system events.
+
+Examples:
+
+```text
+Pull Request
+new CVE
+SIEM alert
+Jira ticket
+Git push
+CI failure
+Kubernetes drift
+scheduled audit
+```
+
+A production ingestion layer may include API gateways, event buses, webhook receivers, schedulers and queues.
+
+Normalize events into structured tasks rather than pushing raw event payloads directly into a long prompt.
+
+## Orchestration Is the Core Platform Responsibility
+
+The orchestration layer should own:
+
+- state;
+- retries;
+- timeouts;
+- branching;
+- resumption;
+- idempotency;
+- handoffs;
+- policy gates.
+
+The model should not implement all of these in natural language.
+
+A durable orchestrator may use a state machine, workflow engine, graph runtime or queue workers.
+
+LangGraph explicitly emphasizes persistence, durable execution and Human-in-the-Loop for long-running stateful workflows.[^1]
+
+The principle is broader than the framework:
+
+> Long-running agent state should live in durable infrastructure, not only in model context.
+
+## Separate Macro-Control from Micro-Control
+
+A mature pattern is:
+
+```text
+Workflow defines:
+  inspect
+  plan
+  implement
+  verify
+  review
+
+Agent decides inside:
+  which files
+  which query
+  which tool
+  which hypothesis
+```
+
+This creates bounded autonomy.
+
+The workflow owns lifecycle control.
+
+The agent owns local exploration.
+
+## Reasoning Is a Service, Not the Workflow Engine
+
+The reasoning layer receives goal, state, context and allowed capabilities, then returns a proposal.
+
+```json
+{
+  "next_action": "read_ci_logs",
+  "arguments": {
+    "job": "test"
+  }
+}
+```
+
+The proposal should be treated as untrusted until policy validates it.
+
+```text
+LLM output
+=
+candidate control decision
+```
+
+not execution authority.
+
+## Memory Has Multiple Storage Semantics
+
+Agent architectures often put all memory into a vector database.
+
+That is rarely sufficient.
+
+### Workflow state
+Exact structured state such as current step, approval and resource IDs.
+
+Use transactional storage or a workflow engine.
+
+### Episodic memory
+Past experiences and summaries.
+
+### Semantic knowledge
+Documentation and facts.
+
+### Secrets
+Do not store as agent memory. Use a secret manager and scoped credentials.
+
+Different data classes deserve different stores.
+
+## Context Building Is an Access-Control Decision
+
+An agent's context may include repository files, tickets, logs, documentation and prior memory.
+
+Every retrieval should enforce authorization before data reaches the model.
+
+Secure sequence:
+
+```text
+identity
+ ↓
+authorized retrieval
+ ↓
+context
+ ↓
+model
+```
+
+not:
+
+```text
+retrieve everything
+ ↓
+model decides what it may see
+```
+
+## Tools Should Be Capability-Oriented
+
+DevOps tools are powerful: Git, Kubernetes, Terraform, Vault, CI/CD, cloud APIs and SIEM systems.
+
+Model-facing tools should expose the narrowest useful capability.
+
+Bad:
+
+```text
+shell(command)
+```
+
+Better:
+
+```text
+run_ci_job(project, job)
+```
+
+Bad:
+
+```text
+kubernetes_api(method, path, body)
+```
+
+Better:
+
+```text
+read_pod_logs(namespace, pod)
+restart_deployment(namespace, deployment)
+```
+
+This reduces action space and simplifies authorization.
+
+## Tool Broker as Security Boundary
+
+The tool broker should enforce identity, scope, parameter schema, resource allowlists, rate limits and approval requirements.
+
+A model can request a production restart.
+
+The broker can return:
+
+```text
+approval_required
+```
+
+This is stronger than relying on a system prompt saying “do not restart production.”
+
+## Identity and Delegation
+
+Every agent action should have an actor.
+
+```text
+human principal
+   ↓ delegates
+agent runtime identity
+   ↓ invokes
+tool identity
+   ↓ accesses
+resource
+```
+
+Preserve delegation context.
+
+Avoid one global administrator token across agents.
+
+Prefer workload identity, short-lived credentials and per-tool authorization.
+
+## Sandbox Execution
+
+Coding agents may need command execution.
+
+The general principle is:
+
+```text
+reasoning plane
+≠
+execution plane
+```
+
+Execute code in isolated environments with filesystem boundaries, network policy, CPU/memory limits, timeouts and credential isolation.
+
+A container alone should not be assumed to provide every necessary boundary.
+
+## Policy Layer
+
+Policies should answer:
+
+```text
+Can this agent perform this action
+on this resource
+for this user
+at this time
+with these parameters?
+```
+
+Use IAM, policy engines or workflow approvals.
+
+The model may provide context.
+
+The policy decision should be deterministic.
+
+## High-Risk Actions Need Stronger Gates
+
+Classify actions:
+
+```text
+read
+reversible write
+shared-state modification
+production change
+credential action
+destructive action
+```
+
+Each class can have different approval, scope and evidence requirements.
+
+## Telemetry Must Capture the Trajectory
+
+A useful trace includes:
+
+```text
+trigger
+state load
+model call
+tool proposal
+policy decision
+tool result
+evaluation
+state write
+```
+
+Record model, tokens, latency, tool, arguments, resource, result, approval and cost.
+
+Observability is not optional for autonomous workflows.
+
+## Evaluation Should Run Like CI
+
+Agent changes should have regression suites with gold tasks, edge cases, security cases, tool failures and policy cases.
+
+Run them when changing model, prompt, skills, tools, retrieval or policy.
+
+Agent engineering needs EvalOps analogous to test automation.
+
+## Deployment Architecture
+
+A production deployment may separate:
+
+```text
+control API
+orchestrator
+model gateway
+tool workers
+sandbox workers
+state DB
+vector DB
+policy engine
+trace backend
+```
+
+This enables independent scaling and isolation.
+
+## Failure Recovery
+
+Long-running tasks fail.
+
+Design for checkpoint resumption, idempotent tools, bounded retries, compensation and human escalation.
+
+A model should not need to remember progress after a process restart.
+
+## SRE Metrics
+
+Platform metrics:
+
+```text
+run success rate
+time to completion
+step latency
+tool error rate
+retry count
+queue depth
+cost per run
+```
+
+Agent-specific metrics:
+
+```text
+steps per task
+tool calls per task
+policy denial rate
+approval rate
+goal drift
+human correction
+```
+
+## Change Management
+
+Version model, instructions, skills, tool schemas, policy, retrieval index and workflow.
+
+A production incident should be attributable to the exact combination that ran.
+
+## Kubernetes and Agent Runtime Separation
+
+In Kubernetes, separate control-plane orchestration from execution workers:
+
+```text
+agent-orchestrator namespace
+        ↓
+job request
+        ↓
+sandbox worker namespace
+        ↓
+ephemeral Job
+```
+
+Workers can use dedicated ServiceAccounts, NetworkPolicies, read-only roots, seccomp/AppArmor and resource quotas.
+
+The orchestrator should not need cluster-admin simply because some workflows deploy workloads.
+
+## Disaster Recovery and Run Resumption
+
+Back up workflow checkpoints, task metadata, approval state, memory stores and artifact references.
+
+After recovery, the orchestrator rebuilds context from durable state and resumes from a known checkpoint.
+
+## GitOps for Agent Configuration
+
+Store flow definitions, tool policies, skill versions, model routing and approval rules in version control.
+
+Changes go through pull requests and automated validation.
+
+The platform reconciles to approved configuration.
+
+## Secret Handling
+
+Do not put long-lived credentials into prompts or memory.
+
+Prefer:
+
+```text
+agent requests capability
+→ broker obtains short-lived credential
+→ tool executes
+→ credential expires
+```
+
+The model may never need to see the secret value.
+
+## A DevSecOps Reference Flow
+
+```text
+GitLab MR
+   ↓
+Agent Runtime
+   ↓
+Repository Analysis
+   ↓
+Plan
+   ↓
+Implementation in Sandbox
+   ↓
+Tests
+   ↓
+SAST / Dependency Scan
+   ↓
+Policy Gate
+   ↓
+Human Review
+   ↓
+MR Update
+```
+
+The agent provides adaptive interpretation.
+
+The CI/security stack provides deterministic evidence.
+
+## Conclusion
+
+A production AI agent is best treated as **distributed workflow infrastructure with a probabilistic planner inside it**.
+
+The platform must own state, identity, permissions, execution isolation, policy, telemetry and recovery.
+
+The model should own only decisions that benefit from semantic flexibility.
+
+## References
+
+[^1]: LangChain, *LangGraph Persistence*. https://docs.langchain.com/oss/python/langgraph/persistence
+2. OpenAI, *The Next Evolution of the Agents SDK*. https://openai.com/index/the-next-evolution-of-the-agents-sdk/
+3. OpenAI, *New Tools for Building Agents*. https://openai.com/index/new-tools-for-building-agents/

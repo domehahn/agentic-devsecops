@@ -1,0 +1,524 @@
+---
+title: "Production MCP Server Architecture: Protocol, Capabilities, Execution, Security, and Observability"
+description: "A production-oriented deep dive into MCP server architecture, updated for the 2026-07-28 stateless protocol core, covering host-client-server boundaries, tools and resources, routing, authorization, execution brokers, observability, scaling, and DevSecOps patterns."
+date: "2026-08-28"
+author: "dome"
+topics: [mcp, platform-engineering, devsecops]
+tags: [MCP Server, Model Context Protocol, Agent Infrastructure, Authorization, Observability]
+featured: false
+draft: false
+series:
+  slug: agentic-ai-architecture-security
+  title: "Agentic AI Architecture and Security"
+  order: 14
+---
+
+# Production MCP Server Architecture: Protocol, Capabilities, Execution, Security, and Observability
+
+An MCP server is often drawn as a small box between an LLM and an API. That diagram is useful for orientation and insufficient for production.
+
+A serious MCP deployment is closer to an **agent-facing integration service** with protocol handling, capability publication, execution adapters, identity, policy, telemetry, and data-governance responsibilities.
+
+The architecture also changed materially in 2026. The `2026-07-28` specification introduced a stateless protocol core and removed several assumptions inherited from earlier session-oriented deployments. Any production design should therefore be explicit about the protocol revision it implements.[^1]
+
+## The Host–Client–Server Boundary
+
+A useful conceptual model separates three roles:
+
+```text
+User / Application
+       ↓
+MCP Host
+  └─ MCP Client
+       ↓
+MCP Server
+       ↓
+Domain System
+```
+
+The **host** owns the AI application experience and usually decides which server connections and capabilities are available.
+
+The **client** implements the MCP protocol interaction for one server relationship.
+
+The **server** exposes capabilities and resources backed by real systems.
+
+This separation matters because security responsibilities differ. The host may own user consent and model context. The server owns resource-level enforcement. A gateway may own identity and centralized policy.
+
+## Do Not Put the LLM on the Trust Boundary
+
+The source architecture correctly emphasizes separation between model, context, and execution.
+
+A production path should look like:
+
+```text
+Model proposes tool call
+      ↓
+Host validates structure
+      ↓
+Policy / authorization
+      ↓
+MCP request
+      ↓
+Server validates again
+      ↓
+Execution adapter
+      ↓
+Backend
+```
+
+The server should not assume that a tool call is legitimate merely because a model generated it.
+
+The model is a decision component, not an authentication system.
+
+## The 2026-07-28 Stateless Core
+
+Older MCP diagrams frequently show an initialization handshake, persistent session identifier, and long-lived session semantics. The current `2026-07-28` core changes that picture.
+
+The maintainers describe the revision as a move from a bidirectional stateful protocol core toward request/response statelessness.[^1]
+
+Important changes include:
+
+- requests carry protocol and client metadata without requiring the old initialize/initialized exchange;
+- `Mcp-Session-Id` is retired in the new core;
+- optional `server/discover` supports capability discovery when desired;
+- `Mcp-Method` and `Mcp-Name` headers improve routing and gateway policy;
+- list responses can carry caching hints and deterministic ordering;
+- authorization is hardened around current OAuth/OIDC patterns;
+- Multi Round-Trip Requests and extensions handle richer interactions without restoring mandatory session affinity;
+- legacy HTTP+SSE is deprecated on a defined migration timeline.
+
+This matters operationally because an ordinary load balancer can route requests to multiple equivalent server instances without sticky sessions simply to preserve protocol state.
+
+## Stateless Protocol Does Not Mean Stateless Business Logic
+
+A long-running deployment operation may still require state:
+
+```text
+operation_id
+current phase
+approval
+progress
+result
+```
+
+That state should live in an explicit workflow or service store.
+
+```text
+MCP request
+  ↓
+create operation
+  ↓
+return operation handle
+  ↓
+workflow engine persists state
+```
+
+Protocol statelessness improves infrastructure scaling while encouraging application state to be modeled intentionally.
+
+## Capability Layer: Tools, Resources, and the Semantic Contract
+
+An MCP server can expose several classes of model-consumable capability. Tools represent callable operations; resources expose contextual data; other protocol features and extensions may provide additional interaction patterns depending on revision and implementation.
+
+A production architecture should not treat every backend endpoint as a tool.
+
+The capability layer should model **domain intent**.
+
+Poor:
+
+```text
+http_get(path)
+http_post(path, body)
+```
+
+Better:
+
+```text
+read_pipeline(project, pipeline_id)
+create_security_issue(project, finding)
+propose_deployment(application, environment)
+```
+
+The semantic interface is smaller, easier for models to select, easier to audit, and easier to authorize.
+
+## Tool Registry Design
+
+A tool registry should preserve:
+
+```yaml
+name: create_security_issue
+description: Create an issue from a verified security finding
+input_schema: ...
+risk_class: reversible_write
+owner: appsec-platform
+backend: gitlab
+version: 3
+```
+
+The protocol schema describes invocation shape.
+
+Enterprise metadata can add ownership, risk, policy class, and provenance.
+
+This additional control-plane information does not need to be visible to the model in full.
+
+## Resource Registry Design
+
+Resources are useful when the model needs context without an imperative side effect.
+
+Examples:
+
+```text
+runbooks
+logs
+documents
+repository files
+configuration snapshots
+```
+
+Resource access should still be authorization-aware.
+
+A server that exposes `resource://incident/1842/logs` must verify whether the caller is allowed to access incident 1842.
+
+Authentication answers who the caller is.
+
+Authorization answers whether that identity may access the specific object.
+
+The distinction remains ordinary application security.
+
+## Execution Layer: Keep Backends Replaceable
+
+An MCP tool may internally call:
+
+```text
+REST API
+SDK
+CLI
+SQL query
+workflow engine
+serverless function
+```
+
+This is a feature, not a compromise.
+
+The server creates a semantic façade:
+
+```text
+Agent intent
+    ↓
+MCP tool
+    ↓
+Domain adapter
+    ↓
+CLI / SDK / API
+    ↓
+Platform
+```
+
+The agent-facing contract can remain stable while implementation changes.
+
+For example, `deploy_application` might use Argo CD today and a different deployment service later.
+
+## Separate Tool Dispatch from Raw Execution
+
+A secure internal architecture can use:
+
+```text
+Protocol Handler
+      ↓
+Tool Dispatcher
+      ↓
+Policy Decision
+      ↓
+Execution Worker
+      ↓
+Backend Adapter
+```
+
+This allows high-risk execution to occur in separate workers or sandboxes rather than inside the network-facing protocol process.
+
+It also makes timeouts and resource limits easier to enforce.
+
+## Authentication and Authorization Are First-Class Layers
+
+A production MCP deployment needs answers to:
+
+```text
+Who is calling?
+Which agent?
+On whose behalf?
+Which tool?
+Which object?
+Which parameters?
+Which delegated scope?
+```
+
+The 2026 protocol line includes authorization hardening, issuer validation, and movement toward modern client metadata mechanisms.[^1]
+
+Application authorization still needs domain logic.
+
+A valid OAuth token does not imply permission to delete every document reachable through the server.
+
+## Delegated Identity Is Better Than Shared Service Authority
+
+Avoid one universal MCP credential with administrator rights.
+
+A stronger architecture uses:
+
+```text
+human identity
+   ↓ delegated scope
+agent workload identity
+   ↓
+MCP gateway
+   ↓
+short-lived backend token
+```
+
+This preserves accountability and limits blast radius.
+
+The backend can enforce permissions even if the model is manipulated.
+
+## Secret Handling: Use the Server as a Credential Boundary
+
+A valuable MCP pattern is **secret encapsulation**.
+
+The model does not need the GitLab token in context. It only needs the capability to create an issue.
+
+```text
+Agent
+  ↓ create_issue(...)
+MCP server
+  ↓ obtains scoped credential
+GitLab
+```
+
+The server can store or obtain secrets through a secret manager and ensure tool output never returns them.
+
+This dramatically reduces exfiltration opportunities.
+
+## Sandboxing Is Required for Executable Tools
+
+If a tool executes scripts, code, or repository commands, it should run in an isolated execution plane.
+
+Controls can include:
+
+```text
+ephemeral worker
+read-only inputs
+restricted filesystem
+network allowlist
+resource quotas
+no ambient host credentials
+execution timeout
+```
+
+The MCP server is the dispatcher; the sandbox is the execution boundary.
+
+## Prompt Injection Still Crosses MCP
+
+MCP does not make returned text trustworthy.
+
+A resource can contain malicious instructions. A tool description can be poisoned. A tool result can include untrusted user content.
+
+The server should mark provenance where possible, while the host preserves authority distinctions.
+
+Most importantly, the final effect must remain constrained by policy independent of text.
+
+## Routing and Gateways Become More Powerful in 2026
+
+With method and name information exposed in protocol headers in the current revision, gateways can route and potentially apply coarse policy without parsing deeply into arbitrary bodies.[^1]
+
+Conceptually:
+
+```text
+MCP request
+Mcp-Method: tools/call
+Mcp-Name: deploy_application
+       ↓
+Gateway policy
+       ↓
+Deployment MCP service
+```
+
+This is useful for centralized observability, rate limiting, service routing, and risk-class enforcement.
+
+The application server must still perform resource-level authorization.
+
+## Capability Discovery Should Be Lazy at Scale
+
+A server or gateway exposing hundreds of capabilities can overwhelm model context if every schema is loaded eagerly.
+
+A scalable design uses:
+
+```text
+catalog metadata
+   ↓
+capability search / filtering
+   ↓
+small relevant set
+   ↓
+full schema
+```
+
+The 2026 list caching improvements can reduce repeated discovery overhead at the protocol level, but context selection remains a host/application concern.[^1]
+
+## Observability Is Part of the Contract
+
+A tool call trace should answer:
+
+```text
+which user initiated the run
+which agent instance called
+which MCP server/version
+which tool/version
+which parameters
+which policy decision
+which backend operation
+which result
+which latency
+```
+
+Avoid logging secrets merely to improve debugging.
+
+Use structured trace IDs that connect the model run to gateway, server, worker, and backend events.
+
+## Audit Logging Differs from Debug Logging
+
+Debug logs help engineers troubleshoot.
+
+Audit logs establish accountability.
+
+An audit event should be stable and structured:
+
+```yaml
+time: ...
+principal: user-42
+agent: security-agent-9
+tool: gitlab.create_issue
+resource: project-17
+decision: allowed
+result: success
+policy_version: 8
+```
+
+It should not depend on interpreting a long model transcript.
+
+## Rate Limiting and Budgets Constrain Runaway Agents
+
+An agent can enter loops even without malicious intent.
+
+Server-side controls should enforce:
+
+```text
+requests per principal
+requests per tool
+cost-sensitive backend quotas
+concurrency limits
+operation timeouts
+```
+
+The host may also set run-level tool budgets.
+
+Distributed protection is stronger than relying on the model to stop itself.
+
+## DevSecOps Example: A Platform MCP Gateway
+
+```text
+Coding / Security Agents
+       ↓
+Enterprise MCP Gateway
+  authentication
+  capability allowlist
+  routing
+  rate limits
+  audit
+       ↓
+Domain MCP Servers
+  ├─ GitLab
+  ├─ Kubernetes Read
+  ├─ Security Findings
+  └─ Service Catalog
+       ↓
+Policy + Workload Identities
+       ↓
+Enterprise Platforms
+```
+
+High-risk write operations can live in separate servers or tool namespaces from read-only capabilities.
+
+This reduces accidental authority mixing.
+
+## Incident Analysis Sequence
+
+```text
+User: "Why is payments-api failing?"
+   ↓
+Agent calls service.get_health
+   ↓
+MCP server validates identity and scope
+   ↓
+returns structured health data
+   ↓
+Agent calls deployment.get_recent_changes
+   ↓
+Agent correlates evidence
+   ↓
+proposes remediation
+   ↓
+workflow requires approval before write tool
+```
+
+The protocol supports the interaction.
+
+The flow, policy, and identity architecture make it safe enough to operate.
+
+## Anti-Pattern: The MCP Server as a Thin Security-Free Wrapper
+
+A server that simply converts:
+
+```text
+MCP call
+→ arbitrary shell
+```
+
+without capability reduction, authorization, isolation, or output filtering adds protocol overhead without adding meaningful control.
+
+Likewise, wrapping every REST endpoint one-to-one can create an unusably large tool surface.
+
+The server should be a **domain adapter**, not merely a syntax adapter.
+
+## Production Checklist
+
+A production MCP server should answer yes to questions such as:
+
+```text
+Are tools narrowly scoped?
+Are schemas validated?
+Is resource authorization enforced?
+Are credentials hidden from model context?
+Are write operations risk-classified?
+Can execution be sandboxed?
+Is egress controlled?
+Are versions and provenance recorded?
+Can requests be traced end-to-end?
+Are tool catalogs discoverable progressively?
+Can incomplete / failed operations resume safely?
+```
+
+The exact controls depend on risk, but the architecture should make them possible.
+
+## Conclusion
+
+A production MCP server is much more than an API wrapper for an LLM.
+
+It is an **agent-facing capability service** that sits at a consequential trust boundary between probabilistic reasoning and deterministic infrastructure.
+
+The `2026-07-28` specification improves the transport and scaling model through a stateless core, routing-friendly metadata, caching, extension mechanisms, and authorization hardening. Those protocol improvements are important, but the hard enterprise problems remain application-level: identity, resource authorization, secret isolation, tool scope, execution safety, audit, and governance.
+
+The strongest design therefore treats MCP as one layer in a larger control plane. The model proposes. The host orchestrates. Policy authorizes. The server validates. Sandboxed workers execute. Observability records the effect.
+
+That separation is what turns an integration protocol into production infrastructure.
+
+## References
+
+[^1]: Model Context Protocol Core Maintainers, *The 2026-07-28 Specification*. https://blog.modelcontextprotocol.io/posts/2026-07-28/
+2. Model Context Protocol, *Documentation*. https://modelcontextprotocol.io/

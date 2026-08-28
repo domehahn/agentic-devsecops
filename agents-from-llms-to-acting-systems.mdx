@@ -1,0 +1,509 @@
+---
+title: "Agents: From Language Models to Acting Software Systems"
+description: "A deep essay on the architectural transition from LLMs to agents, including agency as a spectrum, tool-mediated effects, memory, planning, identity, Human-in-the-Loop, security boundaries, multi-agent systems, and agentic computing."
+date: "2026-08-27"
+author: "dome"
+topics: [agentic-ai, software-architecture]
+tags: [AI Agents, Agency, Tools, Memory, Security]
+featured: false
+draft: false
+series:
+  slug: ai-foundations-to-agentic-systems
+  title: "AI Foundations to Agentic Systems"
+  order: 20
+---
+
+# Agents: From Language Models to Acting Software Systems
+
+A language model answers.
+
+An agent can act.
+
+That difference is one sentence long, but it transforms the architecture.
+
+Consider:
+
+```text
+Why is my CI pipeline failing?
+```
+
+A language model can analyze logs supplied by the user.
+
+Now consider:
+
+```text
+Fix my CI pipeline.
+```
+
+The system may need to inspect the repository, read logs, run tests, identify configuration, edit files, rerun CI and decide whether the fix worked.
+
+The task is no longer one inference.
+
+It is a **goal-directed process**.
+
+## The Agent as the Layer Between Goal and Effect
+
+A useful loop:
+
+```text
+Goal
+ ↓
+Observe
+ ↓
+Reason / Plan
+ ↓
+Select Action
+ ↓
+Authorize
+ ↓
+Execute
+ ↓
+Observe Result
+ ↓
+Evaluate
+ ↺
+```
+
+The model is only one component.
+
+The agent system also needs state, tools, policy, memory, runtime and evaluation.
+
+An LLM and an agent are not synonyms.
+
+## LLM Versus Agent
+
+```text
+LLM:
+context → inference → output
+
+Agent:
+goal + state
+→ inference
+→ action
+→ new state
+→ repeat
+```
+
+The same model can be used in a chatbot, classifier, RAG assistant or agent.
+
+Agency is produced by system architecture.
+
+## Agency Is a Spectrum
+
+There is no single threshold where software suddenly becomes an agent.
+
+### Level 0
+Model generates text only.
+
+### Level 1
+Model chooses among read-only tools.
+
+### Level 2
+Model performs reversible writes.
+
+### Level 3
+Model plans multi-step workflows.
+
+### Level 4
+Model acts over long periods with broad authority.
+
+A useful conceptual measure:
+
+\[
+Agency \propto DecisionScope \times ActionAuthority \times ExecutionDuration
+\]
+
+A highly intelligent model with no tools may have low operational agency.
+
+A weaker model with administrator credentials may have dangerous agency.
+
+## Tools Turn Reasoning into Effects
+
+Tools create the bridge:
+
+```text
+model output
+→ real system
+```
+
+Examples include Git, Jira, databases, email, Kubernetes, browsers and cloud APIs.
+
+Tool design is therefore security architecture.
+
+## Capability Design
+
+Bad interface:
+
+```text
+execute_shell(command)
+```
+
+Narrower interface:
+
+```text
+run_tests(project)
+```
+
+The first exposes enormous action space.
+
+The second exposes one semantic capability.
+
+## Model Proposal Versus Authorization
+
+The core invariant:
+
+```text
+model proposes
+policy authorizes
+runtime executes
+```
+
+The model may decide that deleting a resource is useful.
+
+That does not mean the user authorized deletion.
+
+Authorization should use identity, scope, policy and approval.
+
+## Memory Changes the Agent Fundamentally
+
+Without memory, the agent has only current context.
+
+With persistent memory, previous sessions influence future behavior.
+
+Memory can contain user preferences, task history, domain facts and lessons from failures.
+
+This enables continuity and creates governance obligations.
+
+## Memory Is Not One Store
+
+### Task state
+Exact structured state.
+
+### Episodic memory
+Prior experiences.
+
+### Semantic memory
+Facts and documentation.
+
+### Procedural memory
+Skills and runbooks.
+
+A vector database is not automatically the right store for every category.
+
+## Memory Poisoning
+
+Persisted information can be wrong or malicious.
+
+A retrieved document may cause a false “lesson” to be written into memory.
+
+Future tasks retrieve it.
+
+Memory-write authority should therefore require provenance, validation, scope and expiry.
+
+## Planning Is Useful Because the Environment Is Uncertain
+
+A fixed workflow knows the path.
+
+An agent may need to discover it.
+
+Planning decomposes:
+
+```text
+goal
+→ subgoals
+→ actions
+```
+
+Long initial plans can become stale.
+
+A robust pattern is:
+
+```text
+plan a little
+act
+observe
+replan
+```
+
+## Evaluation Determines Whether the Loop Stops
+
+The agent needs to know whether a tool succeeded, whether the task succeeded and whether to continue.
+
+Model self-evaluation can help but should not be the only signal.
+
+Use external evidence such as tests, compilers, health checks and policy engines.
+
+## Human-in-the-Loop Is a Boundary
+
+High-impact actions can transition to approval:
+
+```text
+proposal
+ ↓
+approval request
+ ↓
+human
+ ↓
+authorized action
+```
+
+Approval should bind to exact parameters.
+
+If the action changes, approval should be re-evaluated.
+
+## The Agent as a Security Identity
+
+Traditional security systems authenticate users and services.
+
+Agents introduce another actor.
+
+Questions include whose authority the agent uses, what it may access, how long credentials live and whether it can delegate.
+
+Use workload identity and short-lived credentials.
+
+Avoid shared agent administrator tokens.
+
+## Delegated Identity
+
+A trace should preserve:
+
+```text
+human user
+→ agent
+→ tool
+→ resource
+```
+
+This enables accountability.
+
+## Sandboxing
+
+If an agent executes code, isolate it with filesystem restrictions, network restrictions, resource limits, credential isolation and time limits.
+
+Sandboxing reduces blast radius.
+
+It does not solve prompt injection or authorization by itself.
+
+## Agents Are Not Digital Employees
+
+Anthropomorphic language can obscure engineering.
+
+Treat the agent as software.
+
+Ask:
+
+```text
+What are its inputs?
+What state does it hold?
+What permissions?
+What failure modes?
+```
+
+## Agents and Traditional Automation
+
+A shell script follows coded control flow.
+
+A workflow engine follows modeled transitions.
+
+An agent can choose among actions based on semantic context.
+
+The strongest systems combine them:
+
+```text
+deterministic flow
+   ↓
+agentic decision node
+   ↓
+deterministic verification
+```
+
+## Multi-Agent Systems
+
+Multiple agents can provide specialization, parallelism and independent review.
+
+They also create communication overhead, duplicated context and authority confusion.
+
+Use explicit roles, permissions, handoff contracts and termination rules.
+
+## Observability
+
+Agent behavior is a trajectory.
+
+Trace goal, plan, model calls, tool calls, policy decisions, memory, approvals and results.
+
+Without this, debugging becomes speculation.
+
+## Evaluation
+
+Agent evaluation must measure task success, steps, cost, tool errors, policy violations, human intervention and recovery.
+
+Two agents can reach the same final answer with very different safety and cost.
+
+## Skills
+
+Skills provide reusable procedural guidance:
+
+```text
+Agent
+ ↓
+activates skill
+ ↓
+skill guides tool use
+```
+
+They encode organizational practice but do not replace the control loop.
+
+## Flows
+
+Flows provide macro orchestration:
+
+```text
+Flow
+ ↓
+Agent
+ ↓
+Skill
+ ↓
+Tool
+```
+
+This layering reduces uncontrolled autonomy.
+
+## The Agent as a Computing Paradigm
+
+Traditional software:
+
+```text
+developer encodes process
+```
+
+Agentic software:
+
+```text
+developer encodes goals, capabilities, constraints
+model helps choose process at runtime
+```
+
+This shifts some control-flow synthesis from development time to execution time.
+
+## What Should Remain Deterministic
+
+Do not delegate mechanically enforceable invariants merely because a model can reason about them.
+
+Examples:
+
+```text
+access control
+financial limits
+network allowlists
+schema checks
+signature verification
+```
+
+Use the agent for judgment.
+
+Use software for guarantees.
+
+## The Economics of Agency
+
+A run may contain planning calls, tool calls, verification, retries and human approval.
+
+\[
+C_{run}=C_{model}+C_{tools}+C_{infra}+C_{human}
+\]
+
+A highly autonomous agent is not automatically economically superior.
+
+Value appears when it replaces expensive variable human coordination, not cheap deterministic computation.
+
+## Reversibility as a Design Variable
+
+Actions can be classified by reversibility.
+
+```text
+read logs              no state change
+create draft           easy to reverse
+merge code             harder
+delete production DB   potentially irreversible
+```
+
+The autonomy envelope should narrow as reversibility decreases.
+
+## Interruptibility
+
+A trustworthy agent must be interruptible.
+
+Support cancellation, pause, credential revocation and rollback where possible.
+
+An agent that cannot be stopped once started is not operationally mature.
+
+## Trust Boundaries Around External Content
+
+Agents read web pages, issue descriptions, repositories and email.
+
+These sources can contain instructions.
+
+Treat them as data, not authority.
+
+```yaml
+content:
+  source: repository
+  trust: untrusted-data
+```
+
+The model may reason over the content.
+
+The policy layer should prevent it from granting new permissions.
+
+## Agent Lifecycle
+
+Agents have a lifecycle:
+
+```text
+design
+→ evaluation
+→ deployment
+→ monitoring
+→ incident response
+→ retirement
+```
+
+Retirement matters because deprecated agents may still retain credentials, schedules, memory and webhooks.
+
+Decommissioning should revoke them.
+
+## Accountability
+
+The organization remains accountable for deployed agents.
+
+A useful ownership record:
+
+```yaml
+agent: security-fix-agent
+owner: appsec-platform
+risk_class: high
+approved_tools: [...]
+```
+
+Anthropomorphic labels should never obscure operational ownership.
+
+## Conclusion
+
+The transition from LLM to agent is not a model upgrade.
+
+It is an architectural upgrade in authority.
+
+A model becomes operationally agentic when software gives it goal, state, tools and a loop.
+
+The mature architecture treats agency as bounded delegation.
+
+The agent may decide **how** to pursue a goal.
+
+The surrounding system decides **what it is allowed to do**.
+
+## References
+
+1. Anthropic, *Building Effective Agents*. https://www.anthropic.com/engineering/building-effective-agents
+2. OpenAI, *A Practical Guide to Building Agents*. https://openai.com/business/guides-and-resources/a-practical-guide-to-building-ai-agents/
+3. OpenAI, *Running Codex Safely*. https://openai.com/index/running-codex-safely/
+4. Debenedetti, E. et al., *AgentDojo*. https://arxiv.org/abs/2406.13352

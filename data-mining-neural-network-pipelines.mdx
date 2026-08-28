@@ -1,0 +1,278 @@
+---
+title: "Data Mining in Neural Network Pipelines: Data Quality, Representation Learning, and Post-Deployment Diagnosis"
+description: "A deep essay on the role of data mining before, during, and after neural-network training, including dataset profiling, imbalance, outliers, feature learning, curriculum, hard-example mining, robustness, drift, and root-cause analysis."
+date: "2026-08-27"
+author: "dome"
+topics: [deep-learning, data-mining]
+tags: [Neural Networks, Data Mining, Data Quality, Drift, MLOps]
+featured: false
+draft: false
+series:
+  slug: ai-foundations-to-agentic-systems
+  title: "AI Foundations to Agentic Systems"
+  order: 14
+---
+
+# Data Mining in Neural Network Pipelines
+
+Deep learning reduced the need for hand-crafted features.
+
+It did not reduce the need to understand the data.
+
+A neural network may learn internal representations automatically, but training remains constrained by which examples exist, how often they appear, how they are labeled and how they are sampled.
+
+Data Mining makes those conditions visible.
+
+## The Pipeline Begins Before the Model
+
+A realistic lifecycle:
+
+```text
+acquisition
+→ profiling
+→ cleaning
+→ sampling
+→ transformation
+→ training
+→ evaluation
+→ deployment
+→ monitoring
+```
+
+The model occupies the center.
+
+Data Mining operates across the whole lifecycle.
+
+## Dataset Profiling
+
+Before training, understand sample counts, missing values, class distributions, feature ranges, duplicates, source domains and temporal coverage.
+
+This prevents expensive training runs from discovering obvious data problems late.
+
+## Class Imbalance
+
+Suppose:
+
+```text
+99.9% normal
+0.1% fraud
+```
+
+A model predicting normal always reaches 99.9% accuracy and is useless.
+
+Mining class distributions informs resampling, weighting and metric selection.
+
+Use precision, recall, PR curves and domain-specific cost.
+
+## Outliers: Error or Signal?
+
+An outlier may be corrupted data, a rare legitimate case, an adversarial example or an emerging class.
+
+Removing all outliers can erase the most valuable edge cases.
+
+Classify them before cleaning.
+
+## Latent Structure Before Representation Learning
+
+Clustering can reveal hidden subpopulations.
+
+Example:
+
+```text
+class = "failure"
+├─ network
+├─ auth
+├─ database
+└─ memory
+```
+
+If labels collapse these subtypes, the model may struggle.
+
+Mining can motivate richer labels or separate treatment.
+
+## Feature Engineering Did Not Disappear
+
+Deep networks learn features, but input representation still matters.
+
+Image normalization, audio spectrograms, tokenization and categorical encoding shape the learning problem.
+
+Architecture also encodes inductive bias.
+
+Data Mining informs whether those assumptions fit the data.
+
+## Hard Example Mining
+
+Some samples repeatedly produce high loss.
+
+They may be mislabeled, ambiguous, rare or adversarial.
+
+Mine high-loss examples for debugging.
+
+Do not blindly oversample them; this can overfit noise.
+
+## Curriculum Learning
+
+Curriculum learning orders examples deliberately.[^1]
+
+A mining layer can estimate difficulty using loss, complexity, confidence or metadata.
+
+But “easy first” is not universally optimal.
+
+Curricula require experimental validation.
+
+## Validation Mining
+
+Aggregate metrics hide structure.
+
+Analyze errors by class, source, time, device, region and input quality.
+
+A model may fail only on one scanner type or language.
+
+Slice-based evaluation matters.
+
+## Representation Mining
+
+Intermediate embeddings can be clustered or projected to reveal class separation, unexpected groups and potential spurious structure.
+
+Visualization does not prove semantics.
+
+Interpret cautiously.
+
+## Robustness Analysis
+
+Create stress datasets with noise, occlusion, compression, lighting changes, typos or distribution shifts.
+
+Mine which failure modes appear, not only how much aggregate accuracy drops.
+
+## Deployment Drift
+
+Production input distribution may move away from training distribution.
+
+Monitoring tracks known statistics.
+
+Mining can reveal new clusters.
+
+A change is not automatically harmful; the important question is whether performance changes.
+
+## Concept Drift
+
+Concept drift means the relation between inputs and targets changes.
+
+For example, fraud strategies evolve.
+
+Unsupervised drift metrics alone cannot prove concept drift; new ground truth is often needed.
+
+## Root Cause Analysis
+
+If error rate rises, causes may include data-source changes, preprocessing bugs, model version, environment or label definitions.
+
+Correlate model metrics with lineage and deployment events.
+
+## Bias and Fairness Mining
+
+Aggregate accuracy can hide subgroup disparities.
+
+Where lawful and appropriate, evaluate performance across operationally important groups.
+
+The goal is to understand unacceptable disparate outcomes, not blindly optimize metric equality.
+
+## Security
+
+Training pipelines are supply chains.
+
+Risks include poisoned data, malicious labels, compromised storage and model artifacts.
+
+Mining can identify anomalies but cannot guarantee absence of poisoning.
+
+Use provenance, access control and signed artifacts.
+
+## Data-Centric Iteration
+
+A common response to failure is to change architecture.
+
+Often the better intervention is:
+
+```text
+failure cluster
+ ↓
+inspect examples
+ ↓
+discover label ambiguity
+ ↓
+fix labeling guideline
+ ↓
+retrain
+```
+
+Systematic data improvement can outperform adding complexity.
+
+## Calibration
+
+A classifier may be accurate but poorly calibrated.
+
+If predictions with confidence 0.9 are correct only 60% of the time, confidence is misleading.
+
+Calibration compares predicted probability with empirical correctness.
+
+## Shadow Deployment
+
+Before replacing a production model:
+
+```text
+production input
+  ├─ current model → user
+  └─ candidate model → telemetry only
+```
+
+Mine differences in predictions, subgroup behavior and latency.
+
+## Label Quality Audits
+
+Suspicious labels can be identified through high-loss examples, nearest-neighbor disagreement, annotator disagreement and prediction consensus.
+
+These signals identify review candidates; they should not automatically relabel data.
+
+## Dataset Slices as First-Class Artifacts
+
+Define important slices explicitly:
+
+```yaml
+slice: low-light-images
+criteria: brightness < threshold
+owner: vision-team
+minimum_samples: 500
+```
+
+Track metrics by model version.
+
+## Drift Response Policy
+
+Not every detected drift should trigger retraining.
+
+```text
+drift detected
+   ↓
+performance changed?
+  / \
+ no  yes
+ |    ↓
+monitor  investigate ground truth
+          ↓
+       adapt if justified
+```
+
+Automatic retraining on drift alone can amplify noise.
+
+## Conclusion
+
+Data Mining remains essential in deep learning because representation learning is not self-explanation.
+
+The network can learn features.
+
+It cannot tell engineers whether the dataset is representative, labels are broken, rare groups fail or production drift matters.
+
+## References
+
+[^1]: Bengio, Y. et al., *Curriculum Learning*. https://dl.acm.org/doi/10.1145/1553374.1553380
+2. Sculley, D. et al., *Hidden Technical Debt in Machine Learning Systems*. NeurIPS 2015.
+3. NIST, *AI Risk Management Framework 1.0*. https://doi.org/10.6028/NIST.AI.100-1

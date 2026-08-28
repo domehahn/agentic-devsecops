@@ -1,0 +1,453 @@
+---
+title: "MCP vs. RAG: Context Provisioning and Runtime Capability Are Different Architectural Problems"
+description: "A deep architectural comparison showing why Retrieval-Augmented Generation and the Model Context Protocol solve different problems: evidence provisioning versus standardized runtime capabilities, tool use, authority, and iterative interaction."
+date: "2026-08-28"
+author: "dome"
+topics: [mcp, rag, agentic-architecture]
+tags: [MCP, RAG, Tool Use, Context Engineering, Agent Architecture]
+featured: false
+draft: false
+series:
+  slug: agentic-ai-architecture-security
+  title: "Agentic AI Architecture and Security"
+  order: 11
+---
+
+# MCP vs. RAG: Context Provisioning and Runtime Capability Are Different Architectural Problems
+
+RAG and MCP are frequently placed in the same comparison because both connect language models to information outside their weights. The similarity ends there.
+
+Retrieval-Augmented Generation is primarily a **knowledge acquisition pattern**.
+
+The Model Context Protocol is primarily a **standardized integration contract for capabilities and contextual resources**.
+
+A RAG system asks:
+
+> Which evidence should be added to the model's context?
+
+An MCP-enabled agent asks a broader runtime question:
+
+> Which external capability or resource should be invoked now, under which contract and authority?
+
+These are complementary architectural problems, not mutually exclusive technologies.
+
+## RAG Externalizes Knowledge Selection
+
+A typical RAG path is:
+
+```text
+User
+ ↓
+Retrieval Orchestrator
+ ↓
+Knowledge Store
+ ↓
+Selected Evidence
+ ↓
+LLM
+ ↓
+Answer
+```
+
+The retrieval system determines what context is relevant before or around the model call.
+
+The model is grounded in evidence but normally does not need direct operational access to the underlying systems.
+
+This architecture is ideal for document-centric use cases:
+
+```text
+FAQ
+internal knowledge
+policy search
+research corpus
+support documentation
+```
+
+## MCP Externalizes Capability Discovery and Invocation
+
+MCP creates a standardized interface between an AI application and external servers that expose tools and contextual resources.
+
+Conceptually:
+
+```text
+Agent Host
+   ↓
+MCP Client
+   ↓
+MCP Server
+   ↓
+Tool / Resource / Backend
+```
+
+The agent or host can decide at runtime that it needs a capability.
+
+That capability may return information, create a side effect, or expose structured resources.
+
+The important architectural addition is **runtime agency over external interaction**.
+
+## The Simplistic Comparison Is Useful—but Too Narrow
+
+A common shorthand is:
+
+```text
+RAG:
+context is enriched before generation
+
+MCP:
+model obtains context or invokes actions dynamically
+```
+
+This captures an important difference but should not be interpreted too literally.
+
+Modern RAG can be iterative and agentic.
+
+MCP resources can be used simply to fetch data with no external side effect.
+
+The deeper distinction is:
+
+```text
+RAG = retrieval architecture
+MCP = integration protocol / capability interface
+```
+
+Agentic RAG may use MCP as one of its retrieval mechanisms.
+
+## RAG Does Not Need to Know Every Fact—But It Needs a Retrieval Policy
+
+The source correctly highlights a classic RAG challenge: the upstream system must decide what to search.
+
+If a user asks:
+
+```text
+"Why is Service X down?"
+```
+
+a predefined RAG pipeline might retrieve:
+
+```text
+service documentation
+recent logs
+known incidents
+```
+
+If the real cause is a deployment change and deployment history is not part of the retrieval strategy, the model may never see the necessary evidence.
+
+This is not a weakness unique to RAG. It is the consequence of a **fixed evidence-acquisition policy**.
+
+Agentic RAG addresses it by making that policy adaptive.
+
+## MCP Enables Runtime Choice—But Choice Is Not Automatically Correct
+
+An MCP-enabled agent may reason:
+
+```text
+I need logs.
+Now I need deployment history.
+Now I need current Kubernetes events.
+```
+
+This can improve evidence coverage.
+
+It also introduces new failure modes:
+
+```text
+wrong tool selected
+unnecessary calls
+expensive loops
+unauthorized resource request
+tool poisoning
+indirect prompt injection
+```
+
+Dynamic choice increases flexibility and requires stronger runtime governance.
+
+## Information Retrieval and Action Have Different Risk Classes
+
+This is one of the most important reasons not to treat RAG and MCP as direct substitutes.
+
+A RAG retriever typically performs read-oriented knowledge access.
+
+An MCP tool can expose:
+
+```text
+read_logs
+create_issue
+restart_service
+delete_project
+transfer_funds
+```
+
+Once side effects are possible, architecture must add:
+
+```text
+identity
+authorization
+approval
+idempotency
+audit
+rollback
+```
+
+The knowledge plane and action plane deserve different controls.
+
+## MCP Can Be the Transport for RAG Sources
+
+Consider an enterprise with multiple knowledge systems:
+
+```text
+Confluence
+GitLab
+Jira
+service catalog
+incident database
+```
+
+Instead of integrating each source directly into every RAG application, an organization can expose read capabilities or resources through governed MCP servers.
+
+Then:
+
+```text
+Agentic RAG
+    ↓
+MCP capability search
+    ↓
+read-only knowledge tools
+    ↓
+retrieved evidence
+    ↓
+answer
+```
+
+MCP standardizes access; RAG still describes how evidence is selected and used for generation.
+
+## Context Engineering Versus Capability Engineering
+
+RAG primarily optimizes **what information enters context**.
+
+Important variables include:
+
+```text
+chunking
+retrieval recall
+reranking
+context budget
+source authority
+citation
+```
+
+MCP primarily optimizes **how external capabilities are described and invoked**.
+
+Important variables include:
+
+```text
+tool schema
+server discovery
+resource contracts
+authorization
+routing
+side effects
+```
+
+An agent platform needs both disciplines.
+
+## Security: RAG and MCP Have Different Primary Attack Paths
+
+### RAG attack path
+
+```text
+poisoned document
+  ↓
+retrieval ranking
+  ↓
+model context
+  ↓
+false claim / prompt injection
+```
+
+### MCP attack path
+
+```text
+malicious tool metadata or result
+  ↓
+agent planning
+  ↓
+capability invocation
+  ↓
+side effect / data flow
+```
+
+The two can compose:
+
+```text
+poisoned RAG document
+      ↓
+agent changes plan
+      ↓
+MCP tool invoked
+      ↓
+external effect
+```
+
+This combined path is why runtime policy must remain outside the model.
+
+## Incident Analysis Illustrates the Difference
+
+Question:
+
+```text
+"Why is Service X down?"
+```
+
+### Classical RAG
+
+```text
+predefined retrieval
+  → logs
+  → runbook
+  → model analysis
+```
+
+### MCP-enabled agent
+
+```text
+model observes symptom
+  → calls read_logs
+  → sees deployment-related error
+  → calls get_deployment_history
+  → checks service health
+  → synthesizes root cause
+```
+
+### Best hybrid
+
+```text
+Agent
+  ↓
+RAG for stable knowledge
+  ↓
+MCP for live system evidence
+  ↓
+Policy-limited operational tools
+  ↓
+Verified diagnosis
+```
+
+This separates stable knowledge from live state and action.
+
+## The 2026 MCP Specification Strengthens the Infrastructure Story
+
+The `2026-07-28` MCP revision introduced a stateless protocol core, self-describing requests, routing-oriented headers, cacheable list results, authorization hardening, and a formal extensions framework.[^1]
+
+These changes make remote MCP deployments fit more naturally into conventional enterprise gateways and horizontally scalable infrastructure.
+
+They do not change MCP's basic role: standardized interaction between AI applications and external capabilities.
+
+## RAG Can Stay Deterministic While MCP Can Stay Read-Only
+
+Architecture exists on a spectrum.
+
+A RAG system may use fully deterministic retrieval rules.
+
+An MCP server may expose only read-only resources.
+
+The presence of MCP does not imply autonomous destructive tools.
+
+The presence of RAG does not imply a one-shot fixed prompt.
+
+Security and autonomy should therefore be described explicitly rather than inferred from the technology name.
+
+## Governance Model
+
+A production architecture can separate three concerns:
+
+```text
+Knowledge Governance
+  corpus provenance
+  freshness
+  access control
+  citation
+
+Capability Governance
+  approved MCP servers
+  tool schemas
+  identity
+  authorization
+
+Action Governance
+  policy
+  approval
+  execution sandbox
+  audit
+```
+
+This is a stronger model than “MCP is the next generation of RAG.”
+
+## When RAG Is Enough
+
+Prefer a classical RAG architecture when:
+
+- the task is read-only;
+- evidence sources are known;
+- query patterns are stable;
+- one retrieval round usually suffices;
+- latency and predictability matter;
+- no external side effects are required.
+
+Adding agentic tool choice to a simple FAQ system is unnecessary complexity.
+
+## When MCP Adds Value
+
+MCP becomes attractive when:
+
+- several AI clients need the same external integration;
+- tools/resources should be discovered through a common contract;
+- live systems must be queried;
+- multiple backend technologies should be hidden behind semantic capabilities;
+- centralized authorization and audit matter.
+
+## When Both Belong Together
+
+The most interesting enterprise architecture is often:
+
+```text
+User / Event
+   ↓
+Agent Runtime
+   ↓
+Knowledge decision
+   ├─ RAG index
+   └─ MCP read tools
+   ↓
+Reasoning
+   ↓
+Action proposal
+   ↓
+MCP action tool
+   ↓
+Policy + Authorization
+   ↓
+External System
+```
+
+The same protocol can expose both read and action capabilities, while RAG remains the evidence-selection pattern.
+
+## Conclusion
+
+MCP and RAG solve different architectural problems.
+
+RAG answers:
+
+> **How do we ground generation in external evidence?**
+
+MCP answers:
+
+> **How does an AI application discover and invoke external capabilities through a standardized interface?**
+
+RAG can be static or agentic. MCP can be read-only or action-capable. They can operate independently, but their combination is particularly powerful: RAG governs knowledge acquisition; MCP standardizes access to live systems and tools; deterministic policy governs authority.
+
+The correct architecture therefore does not ask “MCP or RAG?” It asks **which knowledge, capability, and authority planes the application actually needs**.
+
+## References
+
+[^1]: Model Context Protocol Core Maintainers, *The 2026-07-28 Specification*. https://blog.modelcontextprotocol.io/posts/2026-07-28/
+2. Lewis, P. et al., *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks*. https://arxiv.org/abs/2005.11401

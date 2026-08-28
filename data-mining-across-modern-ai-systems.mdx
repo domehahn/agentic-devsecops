@@ -1,0 +1,340 @@
+---
+title: "Data Mining Across Modern AI Systems: From Dataset Structure to Agent Telemetry"
+description: "A systems essay on how data mining changes across classical AI, neural networks, LLMs, RAG, agentic RAG, autonomous agents, and self-improving systems."
+date: "2026-08-27"
+author: "dome"
+topics: [data-mining, ai-engineering]
+tags: [Data Mining, MLOps, LLMOps, RAG, Agentic AI]
+featured: false
+draft: false
+series:
+  slug: ai-foundations-to-agentic-systems
+  title: "AI Foundations to Agentic Systems"
+  order: 7
+---
+
+# Data Mining Across Modern AI Systems
+
+Data mining has survived several predictions of irrelevance.
+
+As AI systems became more complex, Data Mining moved **up the stack**.
+
+It is no longer only a pre-training activity. It now analyzes:
+
+```text
+training corpora
+model errors
+retrieval behavior
+agent trajectories
+tool calls
+human feedback
+cost
+drift
+security events
+```
+
+Data Mining has become a diagnostic and epistemic control layer.
+
+## Data Mining Is Not the Same as Machine Learning
+
+Machine learning often asks:
+
+> Can we learn a function that predicts or generates?
+
+Data Mining often asks:
+
+> What structure exists in the data or process, and what does it tell us?
+
+Outputs may include clusters, association rules, anomaly groups, frequent sequences, drift signals and failure taxonomies.
+
+This distinction follows the KDD tradition, in which Data Mining is the pattern-extraction core of a broader knowledge-discovery process.[^1]
+
+## The KDD View Is Surprisingly Modern
+
+A classical KDD pipeline:
+
+```text
+selection
+→ preprocessing
+→ transformation
+→ data mining
+→ interpretation
+```
+
+Modern AI telemetry follows almost the same pattern:
+
+```text
+collect traces
+→ clean and normalize
+→ derive features
+→ cluster failures
+→ interpret root causes
+→ change system
+```
+
+The tooling changed. The epistemic workflow did not.
+
+## In Classical ML, Mining Examines Data and Errors
+
+Before training:
+
+- class balance;
+- missingness;
+- outliers;
+- leakage;
+- correlations;
+- duplicates.
+
+During evaluation:
+
+- confusion patterns;
+- subgroup performance;
+- calibration;
+- robustness.
+
+After deployment:
+
+- input drift;
+- output drift;
+- error changes.
+
+Mining creates visibility into distributions that aggregate accuracy hides.
+
+## In Deep Learning, Mining Compensates for Representation Opacity
+
+Deep networks learn features internally.
+
+That reduces manual feature engineering but does not remove the need to ask:
+
+```text
+Which examples dominate loss?
+Which classes are underrepresented?
+Which samples are duplicates?
+Which clusters fail?
+Where is the model overconfident?
+```
+
+## In LLM Training, Mining Operates at Corpus Scale
+
+Tasks include source analysis, deduplication, quality filtering, contamination analysis, safety analysis and domain coverage.
+
+These decisions influence the learned distribution.
+
+The model objective may be self-supervised, but the corpus is not epistemically neutral.
+
+## In LLM Production, the Mining Target Becomes Interaction
+
+Post-deployment telemetry includes:
+
+```text
+prompts
+responses
+retrieval traces
+tool calls
+feedback
+latency
+cost
+errors
+```
+
+Mining can discover recurring failure clusters, prompt sensitivity, topics with high hallucination rates, tool retry loops and cost bottlenecks.
+
+## The Data Flywheel
+
+A controlled flywheel:
+
+```text
+production
+   ↓
+telemetry
+   ↓
+mining
+   ↓
+hypothesis
+   ↓
+experiment
+   ↓
+evaluation
+   ↓
+deployment
+```
+
+The crucial step is **hypothesis**.
+
+A naive flywheel that automatically trains and redeploys on production data can reinforce error and bias.
+
+## RAG Creates a Retrieval Dataset
+
+A RAG system generates:
+
+```text
+query
+candidate documents
+ranking scores
+selected context
+answer
+citations
+user feedback
+```
+
+This supports separate measurement of retrieval precision, recall, coverage, staleness and attribution.
+
+## Agentic RAG Creates Sequential Data
+
+Agentic RAG produces trajectories:
+
+\[
+\tau=(q_0,r_0,e_0,q_1,r_1,e_1,\dots)
+\]
+
+Mining can analyze query refinement, repeated searches, evidence gain per step and stopping behavior.
+
+This is closer to process mining than static search analytics.
+
+## Agents Turn Telemetry into Digital Process Traces
+
+A general agent may:
+
+```text
+plan
+→ search
+→ call API
+→ modify file
+→ run test
+→ replan
+```
+
+Process-mining techniques can identify frequent paths, loops, bottlenecks and deviations from intended workflows.[^2]
+
+## Security Mining
+
+Agent traces are also security telemetry.
+
+Useful patterns include unusual tool sequences, privilege escalation attempts, high-risk actions after untrusted documents, secret access followed by network calls and unexpected cross-agent communication.
+
+Static analysis detects what code *can* do.
+
+Runtime mining reveals what systems *actually did*.
+
+## Self-Improving Systems Make Data Mining a Governance Mechanism
+
+When mined patterns influence future configuration, data mining becomes part of the control loop.
+
+A biased analytical pipeline can optimize the system toward the wrong objective.
+
+## Goodhart's Law Appears Quickly
+
+If a metric becomes the optimization target, systems can improve the metric without improving the real objective.
+
+Examples:
+
+```text
+maximize answer length → verbose answers
+maximize retrieval coverage → retrieve everything
+maximize thumbs-up → overagree
+minimize latency → skip verification
+```
+
+Use multiple metrics plus qualitative review.
+
+## Root Cause Requires Joining Multiple Layers
+
+A wrong answer may originate from a missing source, retrieval miss, reranker failure, context truncation, generation error, tool failure or evaluator false positive.
+
+Trace IDs should join retrieval, model, tool, evaluation and feedback.
+
+## Drift Has Different Meanings
+
+### Input drift
+User or sensor distribution changes.
+
+### Concept drift
+The relationship between inputs and desired outputs changes.
+
+### Retrieval drift
+Corpus or ranking behavior changes.
+
+### Model drift
+Model version or configuration changes.
+
+### Agent-policy drift
+Tool-selection or action patterns change.
+
+Always name the object being measured.
+
+## Data Mining Does Not Replace Causal Analysis
+
+A pattern such as “failed sessions use Tool B more often” does not prove Tool B causes failures.
+
+Difficult tasks may simply require Tool B.
+
+Mining generates hypotheses; experiments and causal reasoning provide stronger answers.
+
+## A Modern Mining Architecture
+
+```text
+Sources
+├─ training data
+├─ evaluation runs
+├─ production traces
+├─ retrieval logs
+├─ tool events
+└─ human feedback
+      ↓
+Normalization / Feature Layer
+      ↓
+Mining
+├─ clustering
+├─ anomaly detection
+├─ sequence mining
+├─ drift
+└─ association analysis
+      ↓
+Interpretation
+      ↓
+Experiment / Policy Change
+```
+
+## Mining Outputs Should Carry Statistical Context
+
+Instead of:
+
+```text
+"Tool A causes failures."
+```
+
+report:
+
+```yaml
+pattern:
+  tool: A
+  failure_rate: 0.24
+  baseline_failure_rate: 0.08
+  sample_size: 4821
+```
+
+Include time window, population definition and known confounders where possible.
+
+## The Mining Layer Needs Its Own Data Contracts
+
+Telemetry schemas evolve.
+
+Agent frameworks can change field names and event structures quickly.
+
+A normalized internal event schema helps preserve historical analytics.
+
+## Conclusion
+
+Data Mining has not been replaced by machine learning, deep learning or LLMs.
+
+Its role has expanded.
+
+Models create behavior.
+
+Data Mining helps explain **what behavior is emerging, where it fails, and which changes deserve investigation**.
+
+## References
+
+[^1]: Fayyad, U., Piatetsky-Shapiro, G., Smyth, P., *From Data Mining to Knowledge Discovery in Databases*. https://doi.org/10.1609/aimag.v17i3.1230
+[^2]: van der Aalst, W., *Process Mining: Data Science in Action*. https://doi.org/10.1007/978-3-662-49851-4
+3. NIST, *AI Risk Management Framework 1.0*. https://doi.org/10.6028/NIST.AI.100-1

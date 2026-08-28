@@ -1,0 +1,850 @@
+---
+title: "Hallucinations in Self-Improving Agentic RAG: When Epistemic Errors Become Feedback Loops"
+description: "A deep technical essay on hallucination and epistemic failure in self-improving Agentic RAG systems: retrieval errors, planning failures, evaluator bias, optimization drift, poisoning, evidence architecture, regression testing, and governance."
+date: "2026-08-27"
+author: "dome"
+topics:
+  - agentic-engineering
+  - rag
+  - ai-security
+tags:
+  - Agentic RAG
+  - Hallucination
+  - Self-Improving AI
+  - RAG Evaluation
+  - Epistemic Security
+  - Governance
+featured: false
+draft: false
+---
+
+# Hallucinations in Self-Improving Agentic RAG: When Epistemic Errors Become Feedback Loops
+
+Retrieval-Augmented Generation was introduced to give language models access to explicit non-parametric knowledge and to make generated answers more specific, updatable, and grounded in retrieved evidence.[^1] In practice, RAG can reduce some forms of unsupported generation, but it does not abolish hallucination. It moves part of the factuality problem into a larger system whose failure modes include retrieval, ranking, source quality, context construction, generation, citation, evaluation, and—in self-improving systems—optimization itself.
+
+That distinction matters.
+
+A conventional language-model hallucination is usually discussed as an output problem: the model produces a plausible statement that is unsupported or false.
+
+A self-improving Agentic RAG system can fail **before generation, during generation, after generation, and during the learning loop that decides how future generations should behave**.
+
+The source paper captures this important architectural shift by expanding the discussion from model-induced hallucination to retrieval, planning, self-assessment, and optimization failures. The word *hallucination*, however, becomes too broad if every system error is placed under the same label. A more precise terminology is useful:
+
+```text
+hallucination
+    = unsupported or false generated content
+
+epistemic system failure
+    = a failure in the process by which the system acquires,
+      ranks, interprets, verifies, or learns from evidence
+```
+
+The second category includes the first, but it is larger.
+
+This essay therefore treats hallucination as one visible symptom of a broader **epistemic control problem**.
+
+---
+
+## A RAG Answer Is the End of a Causal Chain
+
+A RAG response does not emerge from the model alone.
+
+A simplified pipeline is:
+
+```text
+question
+   ↓
+query construction
+   ↓
+retrieval
+   ↓
+ranking / filtering
+   ↓
+context construction
+   ↓
+generation
+   ↓
+answer
+```
+
+An agentic architecture adds decisions:
+
+```text
+question
+   ↓
+should I retrieve?
+   ↓
+what should I search for?
+   ↓
+which source or tool?
+   ↓
+are the results sufficient?
+   ↓
+should I reformulate the query?
+   ↓
+should I retrieve again?
+   ↓
+what evidence supports the answer?
+   ↓
+should I answer, qualify, or abstain?
+```
+
+A self-improving architecture adds one more loop:
+
+```text
+trajectory
+   ↓
+evaluation
+   ↓
+optimization
+   ↓
+changed retrieval / prompt / routing / evaluator
+   ↓
+future trajectories
+```
+
+The correctness of the final answer therefore depends on a chain of conditional decisions.
+
+The key risk is no longer simply:
+
+```text
+model invents fact
+```
+
+It becomes:
+
+```text
+system constructs a false epistemic state
+and then learns from it
+```
+
+---
+
+## Six Failure Classes Are More Useful Than One Hallucination Bucket
+
+### 1. Generative hallucination
+
+The model produces a claim not supported by the available evidence.
+
+```text
+retrieved evidence: A, B
+answer claims: C
+```
+
+This is the familiar form.
+
+RAG reduces the need to rely solely on parametric memory, but generated text can still ignore, distort, combine, or overgeneralize retrieved passages.
+
+### 2. Retrieval failure
+
+The system fails to retrieve the evidence needed to answer correctly.
+
+Subtypes include:
+
+```text
+false negative retrieval
+    relevant document not retrieved
+
+false positive retrieval
+    irrelevant document ranked highly
+
+coverage failure
+    retrieved context addresses only part of the question
+
+freshness failure
+    authoritative newer source exists but stale material wins
+```
+
+The important nuance is that these are not necessarily *hallucinations* in the narrow linguistic sense. They are **evidence acquisition failures**.
+
+The output may still become hallucinatory because the generator operates over a distorted evidence set.
+
+### 3. Attribution failure
+
+The answer may be factually correct but cite the wrong source, or the cited source may not entail the claim.
+
+This is a distinct failure:
+
+```text
+claim true
+citation present
+citation does not support claim
+```
+
+A system that measures only answer accuracy can miss it.
+
+### 4. Agentic planning failure
+
+The system chooses the wrong information-gathering strategy.
+
+Examples:
+
+- decomposes the question incorrectly;
+- queries the wrong corpus;
+- over-retrieves on an irrelevant subproblem;
+- stops before critical evidence is collected;
+- chooses a generic web search where an authoritative internal source is required.
+
+The error occurs **before** the answer is generated.
+
+### 5. Evaluation failure
+
+The system incorrectly concludes that the result is good.
+
+```text
+wrong answer
+   ↓
+evaluator: "faithful and complete"
+   ↓
+accepted
+```
+
+This is especially dangerous in a self-improving architecture because the false positive can enter the optimization dataset.
+
+### 6. Optimization drift
+
+Persistent changes improve the measured proxy while worsening the real objective.
+
+```text
+metric improves
+truthfulness degrades
+```
+
+Examples:
+
+- query rewrite becomes optimized for benchmark vocabulary;
+- reranker overfits to source style rather than relevance;
+- generator learns to quote more text to satisfy a faithfulness judge;
+- system abstains excessively to avoid factuality penalties;
+- evaluator and generator co-adapt to the same blind spot.
+
+This is the failure class that turns local epistemic errors into long-term system behavior.
+
+---
+
+## RAG Is Grounding, Not a Truth Oracle
+
+The original RAG work combined parametric generation with retrieved non-parametric memory and reported gains on knowledge-intensive tasks.[^1] That established retrieval as a powerful grounding mechanism.
+
+But grounding has conditions.
+
+A response can be grounded in:
+
+- an irrelevant source;
+- an outdated source;
+- a malicious source;
+- a contradictory source;
+- an authoritative-looking but false source.
+
+Therefore:
+
+```text
+retrieved ≠ relevant
+relevant ≠ authoritative
+authoritative ≠ current
+current ≠ correctly interpreted
+```
+
+This is why the source paper's phrase “external truth anchors” needs a careful definition.
+
+A corpus is not a truth anchor merely because it is external to the model.
+
+A useful source model includes:
+
+```yaml
+source:
+  identity: "policy-repository"
+  authority: "normative"
+  owner: "legal-governance"
+  version: "2026.08"
+  freshness: "current"
+  integrity: "verified"
+  access_scope: "tenant-42"
+```
+
+Epistemic quality is partly a data-governance property.
+
+---
+
+## Retrieval Can Be Attacked
+
+RAG creates an explicit knowledge surface, and that surface can be manipulated.
+
+PoisonedRAG demonstrated that injecting a small number of malicious texts into a large retrieval corpus can steer a RAG system toward attacker-chosen answers under studied conditions.[^2]
+
+The broader lesson is not the specific attack success rate.
+
+It is that:
+
+> **Retrieval increases controllability and updateability by moving knowledge outside model weights, but that same externalization creates a supply-chain and integrity boundary.**
+
+A self-improving system can amplify the damage if poisoned outputs are later treated as training or optimization evidence.
+
+The failure chain becomes:
+
+```text
+poisoned document
+   ↓
+retrieved
+   ↓
+answer influenced
+   ↓
+evaluator accepts
+   ↓
+trajectory labeled successful
+   ↓
+optimizer reinforces behavior
+```
+
+This is **feedback poisoning through the knowledge layer**.
+
+---
+
+## Agentic Retrieval Should Be Modeled as Evidence Acquisition
+
+The source paper describes Agentic RAG as approaching a scientific process of hypothesis, evidence search, evaluation, and revision.
+
+That analogy is useful if it is not romanticized.
+
+A practical control loop is:
+
+```text
+information need
+     ↓
+query hypothesis
+     ↓
+retrieve evidence
+     ↓
+score evidence quality
+     ↓
+identify unresolved claims
+     ↓
+new query or stop
+```
+
+Self-RAG demonstrated an adaptive retrieval-and-critique architecture in which the model learns whether retrieval is needed and uses reflection tokens to assess retrieved passages and its own generation.[^3]
+
+CRAG adds a retrieval evaluator that classifies retrieval quality and can trigger corrective retrieval actions.[^4]
+
+Adaptive-RAG chooses among different retrieval strategies based on question complexity rather than applying the same pipeline to every query.[^5]
+
+These systems support a broader conclusion:
+
+```text
+retrieval policy itself is a decision problem
+```
+
+That decision can be optimized—but only if evaluation is trustworthy.
+
+---
+
+## The Most Dangerous Hallucination May Be the Evaluator's
+
+A generator that is wrong once damages one output.
+
+An evaluator that systematically approves the wrong property damages the optimization loop.
+
+Suppose the system uses an LLM judge for faithfulness:
+
+```text
+answer + context → judge → score
+```
+
+The optimizer then selects configurations maximizing the score.
+
+If the judge rewards lexical overlap rather than entailment, the generator may learn to copy more retrieved language without becoming more correct.
+
+Research on LLM-as-a-judge evaluation has shown that judge models can exhibit multiple biases and can be sensitive to perturbations and presentation effects.[^6]
+
+Therefore evaluator independence is not binary.
+
+A second LLM is not automatically independent if it shares:
+
+- the same model family;
+- the same prompt assumptions;
+- the same context;
+- the same source errors.
+
+A stronger evaluation stack mixes modalities:
+
+```text
+deterministic checks
++ retrieval metrics
++ citation entailment
++ independent model judge
++ human sample
++ task outcome
+```
+
+---
+
+## Multi-Level Evaluation Prevents Category Errors
+
+RAG evaluation should not collapse the whole system into one score.
+
+RAGAS was explicitly designed to evaluate multiple dimensions of RAG, including retrieval quality and faithfulness of generation.[^7]
+
+For Agentic RAG, the stack should be even more decomposed.
+
+### Retrieval level
+
+Measure:
+
+- context precision;
+- context recall;
+- source diversity;
+- freshness;
+- authority coverage.
+
+### Evidence level
+
+Measure:
+
+- whether each key claim has support;
+- whether sources contradict each other;
+- whether citations entail claims;
+- whether source trust is appropriate to the domain.
+
+### Answer level
+
+Measure:
+
+- factuality;
+- relevance;
+- completeness;
+- calibration;
+- abstention quality.
+
+### Agent level
+
+Measure:
+
+- unnecessary retrieval loops;
+- query quality;
+- tool selection;
+- stopping decisions;
+- cost and latency.
+
+### System-improvement level
+
+Measure:
+
+- regression against frozen baselines;
+- performance on holdouts;
+- metric stability;
+- evaluator drift;
+- safety regressions.
+
+A candidate should not be promoted because `faithfulness +2%` if context recall collapsed by 15%.
+
+---
+
+## Coverage Illusion Is a First-Class Failure
+
+One of the most useful concepts in the source paper is *coverage illusion*: the system has retrieved enough text to appear well grounded, while the evidence does not actually cover the core question.
+
+This failure is common because context volume feels like evidence.
+
+A better representation is claim-oriented:
+
+```text
+Question
+  ↓
+Required claims
+  ├─ Claim A → supported
+  ├─ Claim B → supported
+  ├─ Claim C → unresolved
+  └─ Claim D → contradictory evidence
+```
+
+The system should reason over **coverage of required propositions**, not only token count or number of retrieved chunks.
+
+This leads to a more useful stopping rule:
+
+```text
+stop retrieval when:
+    required evidence coverage sufficient
+AND contradictions resolved or exposed
+AND marginal retrieval value < cost threshold
+```
+
+Not:
+
+```text
+stop after k documents
+```
+
+---
+
+## Abstention Is a Success Mode
+
+Agentic RAG should be able to conclude:
+
+```text
+insufficient evidence
+```
+
+That is not failure.
+
+In knowledge-critical environments, forced answer generation is often the failure.
+
+A calibrated system can emit:
+
+```yaml
+answerability:
+  status: insufficient_evidence
+  missing:
+    - "current jurisdiction-specific guidance"
+  retrieved:
+    - source_a
+    - source_b
+  next_action:
+    request_human_source
+```
+
+This is more valuable than a fluent unsupported answer.
+
+The source paper's “abort instead of guess” principle should therefore be implemented as a formal output state, not merely a prompt instruction.
+
+---
+
+## Self-Improvement Must Be Asymmetric
+
+The optimizer should have more freedom to **propose** than to **promote**.
+
+```text
+proposal threshold      = low
+experiment threshold    = medium
+production threshold    = high
+high-risk promotion     = very high
+```
+
+A candidate retrieval strategy can be generated cheaply.
+
+Promoting it requires evidence.
+
+This is the correct interpretation of asymmetric self-improvement:
+
+> Exploration may be broad; production promotion must be conservative.
+
+For high-risk knowledge systems, improvements should satisfy:
+
+```text
+no material factuality regression
+no source-isolation regression
+no citation regression
+no safety regression
+no unacceptable cost increase
+```
+
+---
+
+## The Optimizer Must Not Train on Its Own Unfiltered Judgments
+
+A dangerous architecture is:
+
+```text
+generator
+   ↓
+same-model evaluator
+   ↓
+optimizer
+   ↓
+updated generator
+```
+
+The loop has no external epistemic reference.
+
+A safer architecture introduces separation:
+
+```text
+Generator
+   ↓
+Evidence Verifier
+   ↓
+Task Outcome / Gold Sample / Human Review
+   ↓
+Evaluation Store
+   ↓
+Optimizer
+   ↓
+Candidate
+   ↓
+Independent Holdout
+```
+
+The source paper calls for role separation among actor, evaluator, and optimizer. That is a strong design principle, but physical separation alone is insufficient.
+
+If all three consume the same flawed benchmark, they can still converge on the same error.
+
+The **data and objective boundaries** matter as much as the process boundaries.
+
+---
+
+## Drift Can Occur Without Any Model Weight Change
+
+Self-improving Agentic RAG may change only configuration, yet drift substantially.
+
+Imagine gradual changes:
+
+```text
+week 1: top-k 5 → 8
+week 2: reranker threshold lowered
+week 3: citation judge prompt changed
+week 4: query rewrite becomes more aggressive
+week 5: abstention threshold lowered
+```
+
+No model was retrained.
+
+But the system's epistemic behavior may be completely different.
+
+Therefore configuration changes deserve model-like governance:
+
+- versioning;
+- evaluation;
+- change review;
+- rollout;
+- rollback;
+- audit trail.
+
+---
+
+## High-Risk Domains Need External Authority Hierarchies
+
+The source correctly identifies medicine, law, finance, and security as domains where self-improvement without external validation is especially dangerous.
+
+The architecture should encode source authority.
+
+A legal research agent might use:
+
+```text
+Tier 1: statute / regulation / court decision
+Tier 2: official regulator guidance
+Tier 3: authoritative commentary
+Tier 4: secondary analysis
+Tier 5: open web / informal discussion
+```
+
+The retriever should not treat all passages as interchangeable embedding neighbors.
+
+Likewise, a medical system should distinguish:
+
+- approved clinical guidelines;
+- peer-reviewed literature;
+- hospital protocols;
+- general web content.
+
+The source hierarchy is an epistemic policy.
+
+---
+
+## Governance Is About Change Control as Much as Answer Control
+
+NIST's Generative AI Profile emphasizes lifecycle risk management and continued evaluation rather than a one-time trust decision.[^8]
+
+For self-improving Agentic RAG, governance should answer two separate questions:
+
+### Runtime governance
+
+```text
+May the system answer?
+May it retrieve this source?
+May it call this tool?
+May it expose this data?
+```
+
+### Improvement governance
+
+```text
+May this component change?
+Who proposed the change?
+Which evidence supports it?
+Which benchmark version certified it?
+What is the rollback artifact?
+```
+
+The second class is often neglected.
+
+---
+
+## A Reference Architecture for Hallucination Control
+
+```text
+User Question
+    ↓
+Intent / Risk Classifier
+    ↓
+Retrieval Planner
+    ↓
+Source-Policy Filter
+    ↓
+Retriever(s)
+    ↓
+Reranker
+    ↓
+Evidence Coverage Analyzer
+    ├─ insufficient → query refinement / abstain
+    └─ sufficient
+           ↓
+       Generator
+           ↓
+    Claim / Citation Verifier
+           ↓
+    Task-Level Evaluator
+           ↓
+      Final Response
+
+Telemetry from every stage
+           ↓
+Offline Error Analysis
+           ↓
+Candidate Optimizer
+           ↓
+Holdout + Adversarial Evaluation
+           ↓
+Governed Deployment
+```
+
+The architecture contains multiple critics because there are multiple kinds of error.
+
+No single “faithfulness agent” can certify the entire system.
+
+---
+
+## Testing the Learning Loop Itself
+
+Self-improving systems need **meta-evaluation**.
+
+Do not only test whether the current system performs well.
+
+Test whether the improvement process rejects bad candidates.
+
+Examples:
+
+### Deliberate regression candidate
+
+Inject a candidate that increases answer fluency but reduces factual accuracy.
+
+Expected result:
+
+```text
+promotion rejected
+```
+
+### Judge-gaming candidate
+
+Create an answer style known to score highly with the judge but poorly with humans.
+
+Expected result:
+
+```text
+independent evaluation catches divergence
+```
+
+### Poisoned retrieval candidate
+
+Insert malicious or low-authority evidence into the corpus.
+
+Expected result:
+
+```text
+source policy / provenance / retrieval evaluation limits impact
+```
+
+### Stale-source candidate
+
+Prefer an outdated source with high lexical relevance.
+
+Expected result:
+
+```text
+freshness or authority policy penalizes it
+```
+
+A system that cannot reject known bad improvements is not ready to optimize itself.
+
+---
+
+## The Transition Is from Self-Improving to Evidence-Governed Self-Correction
+
+The source paper predicts a movement away from unconstrained self-improvement toward discrete, verifiable changes and stronger separation of knowledge, decision, and optimization.
+
+That is the more plausible production direction.
+
+The future architecture is likely not:
+
+```text
+AI continuously changes itself
+```
+
+but:
+
+```text
+AI continuously observes
+AI frequently proposes
+AI selectively corrects
+AI cautiously promotes persistent changes
+```
+
+This makes self-correction and self-improvement complementary.
+
+Runtime correction protects the current interaction.
+
+Offline improvement reduces recurrence.
+
+---
+
+## Conclusion
+
+Hallucination in self-improving Agentic RAG is not adequately described as a model inventing facts.
+
+The system can be wrong because:
+
+```text
+retrieval was wrong
+ranking was wrong
+source authority was wrong
+planning was wrong
+coverage was incomplete
+generation was unsupported
+citation was mismatched
+evaluation was wrong
+optimization learned the wrong lesson
+```
+
+The final generated sentence is only the visible endpoint.
+
+The deepest risk arises when the architecture **feeds an epistemic mistake back into the mechanism that determines future behavior**.
+
+That is why a self-improving knowledge system requires stronger controls than a static RAG pipeline:
+
+- source provenance and authority;
+- retrieval and answer evaluation as separate layers;
+- claim-level evidence coverage;
+- explicit abstention;
+- independent verification;
+- frozen holdouts;
+- adversarial retrieval testing;
+- evaluator diversity;
+- conservative promotion;
+- complete change lineage.
+
+The governing principle can be stated simply:
+
+> **A system may use its own experience to generate hypotheses about how to improve, but it must not be the sole authority that decides whether those hypotheses are true.**
+
+That is the boundary between adaptive knowledge engineering and automated epistemic drift.
+
+---
+
+## References
+
+[^1]: Lewis, P. et al., *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks*, 2020. https://arxiv.org/abs/2005.11401
+[^2]: Zou, W. et al., *PoisonedRAG: Knowledge Corruption Attacks to Retrieval-Augmented Generation of Large Language Models*, USENIX Security 2025. https://www.usenix.org/conference/usenixsecurity25/presentation/zou-poisonedrag
+[^3]: Asai, A. et al., *Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection*, ICLR 2024. https://research.ibm.com/publications/self-rag-learning-to-retrieve-generate-and-critique-through-self-reflection
+[^4]: Yan, S.-Q. et al., *Corrective Retrieval Augmented Generation*, 2024. https://arxiv.org/abs/2401.15884
+[^5]: Jeong, S. et al., *Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity*, NAACL 2024. https://aclanthology.org/2024.naacl-long.389/
+[^6]: Chen, G. H. et al., *Humans or LLMs as the Judge? A Study on Judgement Bias*, EMNLP 2024. https://aclanthology.org/2024.emnlp-main.474/
+[^7]: Es, S. et al., *RAGAs: Automated Evaluation of Retrieval Augmented Generation*, EACL 2024. https://aclanthology.org/2024.eacl-demo.16/
+[^8]: NIST, *Artificial Intelligence Risk Management Framework: Generative Artificial Intelligence Profile*, NIST AI 600-1. https://doi.org/10.6028/NIST.AI.600-1

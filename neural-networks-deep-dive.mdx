@@ -1,0 +1,265 @@
+---
+title: "Neural Networks: Function Approximation, Representation Learning, and the Engineering Limits of Learned Systems"
+description: "A deep technical essay on artificial neural networks, from perceptrons and backpropagation to modern deep architectures, optimization, universal approximation, generalization, representation learning, and governance."
+date: "2026-08-27"
+author: "dome"
+topics: [machine-learning, deep-learning]
+tags: [Neural Networks, Backpropagation, Deep Learning, Optimization, Generalization]
+featured: false
+draft: false
+series:
+  slug: ai-foundations-to-agentic-systems
+  title: "AI Foundations to Agentic Systems"
+  order: 2
+---
+
+# Neural Networks: Function Approximation, Representation Learning, and the Engineering Limits of Learned Systems
+
+Neural networks are often explained through two metaphors that become misleading when taken literally: that they are artificial brains, or that they are opaque magical boxes that “learn by themselves.”
+
+A better starting point is mathematical:
+
+> An artificial neural network is a parameterized function whose parameters are adjusted by optimization so that the function performs well on examples drawn from a data distribution.
+
+## A Neuron Is a Small Function, Not a Biological Cell
+
+A basic artificial neuron computes:
+
+\[
+z = w^\top x + b,\qquad a = \phi(z)
+\]
+
+where \(x\) is the input vector, \(w\) the learned weights, \(b\) a bias and \(\phi\) a nonlinear activation.
+
+Stacking layers gives:
+
+\[
+h^{(1)} = \phi(W^{(1)}x + b^{(1)})
+\]
+
+\[
+h^{(2)} = \phi(W^{(2)}h^{(1)} + b^{(2)})
+\]
+
+The decisive ingredient is nonlinearity. Without it, multiple linear layers collapse into one linear transformation.
+
+## The Historical Path Was Not a Straight Line
+
+The perceptron, associated with Frank Rosenblatt's work in the late 1950s, demonstrated that adaptive linear classifiers could learn from examples.[^1]
+
+The historical story is sometimes compressed into “Perceptron → XOR → AI winter → backpropagation → deep learning.” Reality is more complicated. Research funding, hardware limits, data availability, symbolic-AI trends, expectations, and algorithmic challenges all mattered.
+
+Backpropagation also has a longer lineage than a single 1986 paper. Reverse-mode differentiation appeared earlier, and Paul Werbos discussed applying the idea to neural networks before Rumelhart, Hinton, and Williams popularized it in the 1980s.[^2]
+
+## Learning Is an Optimization Problem
+
+Given examples \(\{(x_i,y_i)\}_{i=1}^N\), training minimizes a loss:
+
+\[
+\theta^* = \arg\min_\theta \mathcal{L}(\theta)
+\]
+
+For regression, mean-squared error may be appropriate. For multi-class classification, cross-entropy is common.
+
+The network does not “understand its mistake” in a human sense. It receives a differentiable objective.
+
+## Backpropagation Is Efficient Credit Assignment
+
+Backpropagation applies the chain rule to compute gradients efficiently.
+
+A simplified training step:
+
+```text
+input batch
+   ↓
+forward pass
+   ↓
+prediction
+   ↓
+loss
+   ↓
+reverse-mode gradient computation
+   ↓
+optimizer update
+```
+
+This answers a core problem: which parameters deserve credit or blame for the output error?
+
+## Optimization Is More Than “Gradient Descent”
+
+The simplest update is:
+
+\[
+\theta_{t+1}=\theta_t-\eta\nabla_\theta\mathcal{L}
+\]
+
+Modern training uses SGD, momentum, RMSProp, Adam, AdamW and other methods.[^3]
+
+Performance depends not only on optimizer choice but on learning-rate schedules, batch size, initialization, normalization, regularization, precision, gradient clipping and architecture.
+
+## Why Depth Helps
+
+The Universal Approximation Theorem is often abused. It does not mean a network can *learn* any function efficiently.
+
+Results by Cybenko and Hornik show that sufficiently expressive feed-forward networks can approximate broad classes of functions under defined conditions.[^4][^5]
+
+Approximation capacity is not the same as learnability, efficient training, finite-data generalization, numerical stability, robustness or interpretability.
+
+Depth can represent some functions more efficiently through hierarchical composition.
+
+## Representation Learning Replaced Much Manual Feature Engineering
+
+Classical pipelines often used hand-designed features:
+
+```text
+human defines features
+→ model learns mapping
+```
+
+Deep learning shifts toward:
+
+```text
+model learns representation
++
+model learns mapping
+```
+
+This is one of its most important conceptual advances.
+
+## Specialized Architectures Encode Inductive Bias
+
+### Convolutional networks
+
+CNNs exploit locality and weight sharing. LeNet and later architectures demonstrated their effectiveness for images.[^6]
+
+### Recurrent networks
+
+RNNs maintain sequential state:
+
+\[
+h_t=f(h_{t-1},x_t)
+\]
+
+### LSTMs
+
+LSTMs introduce gates to improve long-range information flow.[^7]
+
+### Transformers
+
+Transformers replace recurrence as the dominant representation mechanism for many sequence tasks with attention.[^8]
+
+They enable much greater training-time parallelism, although autoregressive generation remains sequential.
+
+## Generalization Is the Real Objective
+
+Low training loss is not enough.
+
+Generalization depends on dataset representativeness, inductive bias, capacity, regularization, optimization, label quality and distribution shift.
+
+Large networks can have enough capacity to memorize training data and still generalize surprisingly well. Understanding why overparameterized networks generalize remains an active research area.
+
+## Dataset Quality Is Part of the Model
+
+Operational behavior is determined by:
+
+```text
+architecture
++
+training algorithm
++
+training data
++
+objective
++
+post-training
++
+deployment context
+```
+
+If rare classes are absent, if labels are biased, or if production inputs shift, model quality changes.
+
+Therefore data mining, monitoring, drift detection and error analysis belong to neural-network engineering.
+
+## Epistemic Limits
+
+A network estimates patterns from data. It does not automatically distinguish causation from stable correlation.
+
+A classifier may use a watermark instead of pathology. A vision model may rely on background texture rather than the intended object. A language model may reproduce stereotypes because they predict text effectively.
+
+The network optimizes the objective it was given.
+
+## Robustness and Adversarial Behavior
+
+High test accuracy does not imply robustness.
+
+Neural networks can be sensitive to adversarial perturbations, distribution shifts, spurious correlations, corrupted sensors and out-of-distribution inputs. Adversarial examples demonstrated that small input perturbations can dramatically alter predictions.[^9]
+
+A learned model should not be treated as a security boundary merely because average predictive performance is high.
+
+## Neural Networks as Components, Not Whole Systems
+
+A production application usually contains:
+
+```text
+data ingestion
+     ↓
+input processing
+     ↓
+model inference
+     ↓
+post-processing
+     ↓
+business rules
+     ↓
+storage / action
+     ↓
+monitoring
+```
+
+System behavior emerges from the whole chain.
+
+## Governance Is a Lifecycle Property
+
+Governance begins before training.
+
+Questions cover data provenance, representation, labels, objectives, evaluation sets, deployment consequences, override paths and production drift.
+
+NIST's AI Risk Management Framework emphasizes lifecycle risk management rather than one-time certification.[^10]
+
+## The Universal Approximation Theorem Is Not an Engineering Specification
+
+A theorem that says a network *can represent* a function does not tell us:
+
+```text
+how much data is needed
+how much compute is needed
+whether SGD will find it
+whether the solution generalizes
+whether it is robust
+whether it is explainable
+```
+
+Engineering lives in that gap.
+
+## Conclusion
+
+Neural networks are powerful adaptive function approximators whose internal representations are shaped through optimization.
+
+Their success comes from expressive parameterized architectures, gradient-based learning at scale, and representation learning from data.
+
+Their limitations come from the same foundations.
+
+The mature engineering stance is to embed neural networks inside deterministic software, data-governance processes, monitoring systems, and explicit safety boundaries.
+
+## References
+
+[^1]: Rosenblatt, F., *The Perceptron*, Psychological Review, 1958. https://doi.org/10.1037/h0042519
+[^2]: Rumelhart, D. E., Hinton, G. E., Williams, R. J., *Learning Representations by Back-Propagating Errors*, Nature, 1986. https://doi.org/10.1038/323533a0
+[^3]: Kingma, D. P., Ba, J., *Adam: A Method for Stochastic Optimization*. https://arxiv.org/abs/1412.6980
+[^4]: Cybenko, G., *Approximation by Superpositions of a Sigmoidal Function*. https://doi.org/10.1007/BF02551274
+[^5]: Hornik, K., *Approximation Capabilities of Multilayer Feedforward Networks*. https://doi.org/10.1016/0893-6080(91)90009-T
+[^6]: LeCun, Y. et al., *Gradient-Based Learning Applied to Document Recognition*. https://doi.org/10.1109/5.726791
+[^7]: Hochreiter, S., Schmidhuber, J., *Long Short-Term Memory*. https://doi.org/10.1162/neco.1997.9.8.1735
+[^8]: Vaswani, A. et al., *Attention Is All You Need*. https://arxiv.org/abs/1706.03762
+[^9]: Goodfellow, I. et al., *Explaining and Harnessing Adversarial Examples*. https://arxiv.org/abs/1412.6572
+[^10]: NIST, *Artificial Intelligence Risk Management Framework (AI RMF 1.0)*. https://doi.org/10.6028/NIST.AI.100-1
